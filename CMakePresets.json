@@ -34,6 +34,7 @@
     { "name": "windows-release", "configurePreset": "windows-release" }
   ],
   "testPresets": [
-    { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } }
+    { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } },
+    { "name": "windows-release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } }
   ]
 }

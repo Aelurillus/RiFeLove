@@ -71,14 +71,17 @@ TaskState taskStateFromString(const std::string& state) {
     throw std::invalid_argument("unknown persisted task state: " + state);
 }
 
-TaskStore::TaskStore(const std::string& databasePath) {
-    if (sqlite3_open_v2(databasePath.c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
+TaskStore::TaskStore(const std::string& databasePath, OpenMode mode) : mode_(mode) {
+    const int access = mode == OpenMode::readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
+    const int create = mode == OpenMode::create ? SQLITE_OPEN_CREATE : 0;
+    if (sqlite3_open_v2(databasePath.c_str(), &db_, access | create | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
         const std::string message = db_ ? sqlite3_errmsg(db_) : "could not allocate SQLite handle";
         if (db_) sqlite3_close(db_);
         db_ = nullptr;
         throw std::runtime_error(message);
     }
     sqlite3_busy_timeout(db_, 5000);
+    if (mode_ == OpenMode::readOnly) return;
     try {
         execute(db_, "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;");
         execute(db_, "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, output_path TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','running','paused','interrupted','failed','cancelled','completed')), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, error TEXT NOT NULL DEFAULT ''); CREATE INDEX IF NOT EXISTS tasks_state_created ON tasks(state, created_at);");
@@ -86,7 +89,12 @@ TaskStore::TaskStore(const std::string& databasePath) {
 }
 TaskStore::~TaskStore() { if (db_) sqlite3_close(db_); }
 
+void TaskStore::requireWritable() const {
+    if (mode_ == OpenMode::readOnly) throw std::logic_error("task store is read-only");
+}
+
 std::string TaskStore::create(const std::string& sourcePath, const std::string& outputPath) {
+    requireWritable();
     if (sourcePath.empty() || outputPath.empty()) throw std::invalid_argument("source and output paths must not be empty");
     Statement statement(db_, "INSERT INTO tasks(id,source_path,output_path,state) VALUES(lower(hex(randomblob(16))),?,?, 'queued') RETURNING id");
     bindText(db_, statement.get(), 1, sourcePath); bindText(db_, statement.get(), 2, outputPath);
@@ -95,6 +103,7 @@ std::string TaskStore::create(const std::string& sourcePath, const std::string& 
 }
 
 void TaskStore::transition(const std::string& id, TaskState next, const std::string& error) {
+    requireWritable();
     Statement read(db_, "SELECT state FROM tasks WHERE id=?"); bindText(db_, read.get(), 1, id);
     if (sqlite3_step(read.get()) != SQLITE_ROW) throw std::invalid_argument("task does not exist: " + id);
     const auto current = taskStateFromString(columnText(read.get(), 0));
@@ -105,6 +114,7 @@ void TaskStore::transition(const std::string& id, TaskState next, const std::str
 }
 
 std::size_t TaskStore::recoverInterrupted() {
+    requireWritable();
     execute(db_, "UPDATE tasks SET state='interrupted',error='Process ended while task was running; checkpoint resume is not yet implemented.',updated_at=CURRENT_TIMESTAMP WHERE state='running'");
     return static_cast<std::size_t>(sqlite3_changes(db_));
 }

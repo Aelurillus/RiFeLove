@@ -2,6 +2,8 @@
 
 Status as of 2026-10-17. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
 
+Current execution mode: local project, local Git, local builds/tests and local reports. Hosted CI, remote repository setup and publishing are deferred until requested. The final product scope remains the Master Plan baseline.
+
 ## Phase 1 — foundation (active)
 
 - [x] Create C++20/CMake/Ninja layout and reproducible configure presets.
@@ -10,8 +12,10 @@ Status as of 2026-10-17. This task list expands the Master Plan into reviewable 
 - [x] Add CLI entry points for timeline plans and persisted tasks.
 - [x] Add unit tests for arithmetic, VFR/non-integer timeline mapping and task transitions.
 - [ ] Add structured logging/configuration, service/backend interfaces and Qt app shell.
-- [ ] Add GitHub Actions Windows build/test job and development/build documentation.
-- [ ] Validate MSVC + Qt + vcpkg release-toolchain configuration.
+- [x] Add offline-by-default local build/test runner and local JSON/JUnit reports.
+- [x] Add read-only queue inspection and Windows Unicode CLI regression coverage.
+- [ ] Activate hosted Windows CI when remote development is requested (template prepared).
+- [ ] Validate MSVC + Qt + vcpkg release-toolchain configuration locally.
 
 ## Phase 2 — media engine
 

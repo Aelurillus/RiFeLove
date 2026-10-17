@@ -3,6 +3,7 @@ project(RifeLove VERSION 0.1.0 LANGUAGES C CXX)
 
 option(RIFELOVE_BUILD_TESTS "Build automated tests" ON)
 option(RIFELOVE_BUILD_DESKTOP "Build the Qt Quick desktop shell when Qt is available" ON)
+option(RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS "Allow configure to download build dependencies" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +11,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+if(RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS)
+  set(FETCHCONTENT_FULLY_DISCONNECTED OFF)
+else()
+  set(FETCHCONTENT_FULLY_DISCONNECTED ON)
+  if(NOT FETCHCONTENT_SOURCE_DIR_SQLITE3 AND NOT EXISTS "${FETCHCONTENT_BASE_DIR}/sqlite3-src/sqlite3.c")
+    message(FATAL_ERROR "Offline configure needs a local SQLite source cache. Seed the cache or explicitly set RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=ON for initial setup.")
+  endif()
+  if(RIFELOVE_BUILD_TESTS AND NOT FETCHCONTENT_SOURCE_DIR_GOOGLETEST AND NOT EXISTS "${FETCHCONTENT_BASE_DIR}/googletest-src/CMakeLists.txt")
+    message(FATAL_ERROR "Offline configure needs a local GoogleTest source cache. Seed the cache or explicitly set RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=ON for initial setup.")
+  endif()
+endif()
 FetchContent_Declare(sqlite3
   URL https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip
   URL_HASH SHA256=1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032
@@ -42,6 +54,9 @@ endif()
 
 add_executable(rifelove-cli apps/cli/main.cpp)
 target_link_libraries(rifelove-cli PRIVATE rifelove_core)
+if(WIN32)
+  target_link_libraries(rifelove-cli PRIVATE shell32)
+endif()
 
 if(RIFELOVE_BUILD_DESKTOP)
   find_package(Qt6 QUIET COMPONENTS Quick QuickControls2)
@@ -60,4 +75,12 @@ if(RIFELOVE_BUILD_TESTS)
   target_link_libraries(rifelove-tests PRIVATE rifelove_core GTest::gtest_main)
   include(GoogleTest)
   gtest_discover_tests(rifelove-tests)
+  find_package(Python3 QUIET COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME CLI.LocalWorkflow
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_test.py $<TARGET_FILE:rifelove-cli>)
+    set_tests_properties(CLI.LocalWorkflow PROPERTIES TIMEOUT 30)
+  else()
+    message(STATUS "Python was not found; CLI integration checks are unavailable (product runtime does not require Python).")
+  endif()
 endif()

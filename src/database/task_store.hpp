@@ -23,7 +23,8 @@ struct TaskRecord {
 
 class TaskStore final {
 public:
-    explicit TaskStore(const std::string& databasePath);
+    enum class OpenMode { create, readWrite, readOnly };
+    explicit TaskStore(const std::string& databasePath, OpenMode mode = OpenMode::create);
     ~TaskStore();
     TaskStore(const TaskStore&) = delete;
     TaskStore& operator=(const TaskStore&) = delete;
@@ -35,6 +36,8 @@ public:
 
 private:
     sqlite3* db_{};
+    OpenMode mode_;
+    void requireWritable() const;
 };
 
 } // namespace rifelove

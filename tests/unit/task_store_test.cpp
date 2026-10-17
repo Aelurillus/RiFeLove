@@ -3,17 +3,55 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <random>
 
 namespace {
 struct TemporaryDatabase {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / ("rifelove-test-" + std::to_string(std::rand()) + ".sqlite");
+    std::filesystem::path directory;
+    std::filesystem::path path;
+    TemporaryDatabase() {
+        std::random_device random;
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            directory = std::filesystem::temp_directory_path() / ("rifelove-test-" + std::to_string(random()) + "-" + std::to_string(random()));
+            if (std::filesystem::create_directory(directory)) {
+                path = directory / "queue.sqlite";
+                return;
+            }
+        }
+        throw std::runtime_error("could not reserve temporary test directory");
+    }
     ~TemporaryDatabase() {
         std::error_code error;
         std::filesystem::remove(path, error);
         std::filesystem::remove(path.string() + "-wal", error);
         std::filesystem::remove(path.string() + "-shm", error);
+        std::filesystem::remove(directory, error);
     }
 };
+}
+
+TEST(TaskStore, ReadOnlyInspectionDoesNotChangeActiveTasks) {
+    TemporaryDatabase database;
+    std::string id;
+    {
+        rifelove::TaskStore writable(database.path.string());
+        id = writable.create("input.mp4", "output.mp4");
+        writable.transition(id, rifelove::TaskState::running);
+    }
+    rifelove::TaskStore reader(database.path.string(), rifelove::TaskStore::OpenMode::readOnly);
+    const auto tasks = reader.list();
+    ASSERT_EQ(tasks.size(), 1U);
+    EXPECT_EQ(tasks.front().state, rifelove::TaskState::running);
+    EXPECT_THROW((void)reader.recoverInterrupted(), std::logic_error);
+    EXPECT_THROW(reader.transition(id, rifelove::TaskState::cancelled), std::logic_error);
+    EXPECT_THROW((void)reader.create("another.mp4", "out.mp4"), std::logic_error);
+}
+
+TEST(TaskStore, InspectionAndMaintenanceDoNotCreateMissingDatabases) {
+    TemporaryDatabase database;
+    EXPECT_THROW((rifelove::TaskStore(database.path.string(), rifelove::TaskStore::OpenMode::readOnly)), std::runtime_error);
+    EXPECT_THROW((rifelove::TaskStore(database.path.string(), rifelove::TaskStore::OpenMode::readWrite)), std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(database.path));
 }
 
 TEST(TaskStore, EnforcesStateMachineAndPersistsHistory) {
