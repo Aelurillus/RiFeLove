@@ -1,0 +1,39 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows-dev",
+      "displayName": "RifeLove Windows development",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "RIFELOVE_BUILD_TESTS": "ON",
+        "RIFELOVE_BUILD_DESKTOP": "ON"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "RifeLove Windows release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "RIFELOVE_BUILD_TESTS": "ON",
+        "RIFELOVE_BUILD_DESKTOP": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-dev", "configurePreset": "windows-dev" },
+    { "name": "windows-release", "configurePreset": "windows-release" }
+  ],
+  "testPresets": [
+    { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } }
+  ]
+}

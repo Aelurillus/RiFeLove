@@ -1,0 +1,9 @@
+/build/
+/out/
+/work/
+/models/weights/
+/models/engines/
+/models/cache/
+*.user
+*.suo
+*.log
