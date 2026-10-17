@@ -15,16 +15,16 @@ Version 0.1 implementation baseline. The authoritative complete scope is [the or
 | R09 | GPU/driver/VRAM/compute/codec detection; safe precision/backend selection with truthful unavailable states | Not implemented |
 | R10 | NVDEC/NVENC, software fallbacks, FP16, VRAM pool/budget, bounded concurrency and OOM handling | Not implemented |
 | R11 | Version/GPU/model/options keyed TensorRT cache, profiles, streams/graphs and optional overlapping tiling evaluated by repeatable benchmarks | Not implemented |
-| R12 | MP4/MKV/MOV and H.264/HEVC/AV1 according to actual hardware; CRF/CQ/bitrate/expert encoder settings | Stream-copy muxing tested; encoding pending |
-| R13 | Preserve compatible multi-audio/subtitles, chapters, language, rotation and metadata; explicit incompatibility and sync checks | Stream copy tested on synthetic subset; full matrix pending |
-| R14 | Preserve bit depth/HDR and perform correct color conversions; explicitly validated SDR/HDR pipeline | Original decode precision and tags retained; conversion/interpolation pending |
+| R12 | MP4/MKV/MOV and H.264/HEVC/AV1 according to actual hardware; CRF/CQ/bitrate/expert encoder settings | Native frame writer and software codec cases tested; local NVENC SDK/driver mismatch and full device policy unresolved |
+| R13 | Preserve compatible multi-audio/subtitles, chapters, language, rotation and metadata; explicit incompatibility and sync checks | Stream-copy and video-reencode auxiliary timing/hashes tested on synthetic subset; full matrix pending |
+| R14 | Preserve bit depth/HDR and perform correct color conversions; explicitly validated SDR/HDR pipeline | Original precision and 10-bit PQ FFV1/AV1 encoding verified on fixtures; full conversion/neural HDR pipeline pending |
 | R15 | Cut detection and protection; abnormal motion, occlusion, duplicate, animation, HUD/text, flicker, border/seam policies | Not implemented |
 | R16 | Queue, pause/resume/cancel/retry/history, persistent configuration/model/file identity and progress | Task record state machine only |
 | R17 | Crash ownership detection and safe segment-boundary checkpoint/resume/stitching; multi-hour and fault-injection tests | Explicit interrupted-state maintenance only |
 | R18 | Home, Studio, Comparison Viewer, Queue and Model Center; simple normal controls and explained/resettable advanced settings | Placeholder shell only |
 | R19 | Preview/split comparison, synchronized playback, frame stepping and artifact navigation | Not implemented |
-| R20 | CLI batch automation and JSON progress; processing speed distinguished from output FPS | JSON inspection commands only |
-| R21 | Artifact/performance reports and diagnostics; truthful telemetry and end-to-end speed measurements | Local development test reports only |
+| R20 | CLI batch automation and JSON progress; processing speed distinguished from output FPS | JSON inspection and transcode progress/results implemented; batch orchestration pending |
+| R21 | Artifact/performance reports and diagnostics; truthful telemetry and end-to-end speed measurements | Local test reports and elapsed-time/transcode throughput fields; quality reports/complete pipeline benchmarks pending |
 | R22 | Model/pre/postprocessing extension interfaces; zh-CN, zh-TW, en and ja UI | Not implemented |
 | R23 | Resolution/FPS/content/codec/color/length/failure matrix; PSNR/SSIM/LPIPS with ground truth and blind/temporal review otherwise | Unit and small synthetic media suite only |
 | R24 | Controlled compatibility success target, no unreported sync errors, detectable crash states, repeatable benchmarks | Release goals unproven |

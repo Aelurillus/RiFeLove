@@ -26,7 +26,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.
 - [ ] Complete codec/container coverage, missing-PTS recovery and full mastering/rotation metadata fixture coverage.
 - [ ] Add explicit color/pixel-format and HDR metadata handling.
-- [ ] Encode generated/replaced video frames and mux with compatible original audio/subtitle streams.
+- [x] Add a model-independent CPU-frame encoder/mux writer and transcode path with compatible original audio/subtitle stream copy.
+- [x] Validate software H.264/HEVC/AV1, FFV1 lossless/HDR, encoder B-frame drain, VFR and exact 60000/1001 scheduling across 1000 generated frames.
 - [ ] Validate duration, frame count, PTS monotonicity, audio sync and container integrity.
 - [x] Add synthetic media integration tests for 10-bit/PQ, tracks/chapters, VFR/B-frames, packet hashes/timing, Unicode paths, corrupt files and output protection.
 - [ ] Add the complete licensed fixture corpus, long-video and disk-full fault-injection suite.
@@ -45,6 +46,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 - [ ] Probe GPU/driver/compute and codec capabilities at runtime.
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
+  - Local NVENC probe currently fails: SDK requires API 13.0; installed driver exposes 12.2. This is an unresolved compatibility item, not a GPU-success result.
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
 - [ ] Evaluate CUDA Graph, FP16, profiles and optional overlapped tiling.

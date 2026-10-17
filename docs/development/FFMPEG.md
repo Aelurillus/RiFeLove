@@ -1,6 +1,6 @@
 # Local FFmpeg media engine
 
-The C++ media engine calls libavformat, libavcodec and libavutil directly. The FFmpeg command-line tools are only used by the integration suite to generate synthetic fixtures and independently inspect results. No video is uploaded or processed remotely.
+The C++ media engine calls libavformat, libavcodec, libavutil and libswscale directly. The FFmpeg command-line tools are only used by development probes and the integration suite to generate synthetic fixtures and independently inspect results. No video is uploaded or processed remotely.
 
 ## SDK and provenance
 
@@ -28,6 +28,7 @@ If that archive has not been supplied locally, an explicit `-AllowDownload` perf
 - `media-probe INPUT`: JSON media/track time bases, rates, dimensions, metadata, audio channels, subtitles, chapters, rotation, color and available static HDR side data.
 - `media-scan INPUT [--frames] [--stream INDEX]`: native software decode, decoder reordering/drain, original pixel format/bit depth, presentation timestamps and observed cadence. It holds only reference-counted frames requested by a callback. It does not convert decoded frames to 8-bit RGB.
 - `remux INPUT OUTPUT`: stream copy into MP4, MOV or MKV; metadata, stream parameters, side data, dispositions and chapters are copied. Incompatible streams are reported instead of silently dropped. Output is written to a unique temporary file, finalized, structurally checked and then published without replacing an existing file.
+- `transcode INPUT OUTPUT`: the selected video is decoded and re-encoded at its original PTS; compatible auxiliary streams are copied. The public frame writer also accepts generated frames at explicit timestamps. See [encoding](ENCODING.md) for supported settings, evidence and limits.
 
 Inputs must be local regular files and libavformat's input protocol whitelist contains only `file`. APIs accept `std::stop_token` and check it around decode, packet I/O and output publication. Cancellation from the CLI's console control handler and interrupted-output recovery remain future work.
 
@@ -41,4 +42,4 @@ Decoded frame storage owns original planes and side data. Shared ownership keeps
 
 The integration suite generates 10-bit PQ FFV1 video, two AAC tracks, SRT captions, chapter metadata, MPEG-4 B frames and VFR video. It checks native probe results, frame counts, actual decoded PTS against ffprobe, quantized CFR/VFR classification, compressed packet hashes and timestamps, audio packet timing, metadata retention, Unicode paths, MP4/MOV/MKV round trips, incompatible streams, corrupt input and no-overwrite output behavior. Unit tests cover decoder-buffer lifetime and cancellation.
 
-This is not the complete Phase 2 gate. Video encoding/replacement, color conversion, timestamp reconstruction for missing-PTS sources, full HDR mastering metadata fixtures, rotation fixtures, broad codec/container coverage, disk-full injection and long-duration A/V validation remain required. Structural remux validation does not prove all compressed payloads are uncorrupted. No RIFE inference or frame-rate-changing pixel processing is implemented yet.
+This is not the complete Phase 2 gate. Full color conversion, timestamp reconstruction for missing-PTS sources, full HDR mastering metadata fixtures, rotation fixtures, broad codec/container coverage, disk-full injection and multi-hour A/V validation remain required. Structural remux validation does not prove all compressed payloads are uncorrupted. No RIFE inference is implemented yet; generated-frame writer tests exercise timing and encoding, not interpolation quality.

@@ -8,11 +8,12 @@ RifeLove is an offline Windows video frame interpolation application in active d
 - A persistent SQLite task store with validated state transitions and interrupted-task recovery.
 - A JSON-lines CLI for planning an output timeline and inspecting/recovering tasks.
 - A native FFmpeg media engine for local inspection, original-precision video decode and MP4/MKV/MOV stream-copy remuxing, with audio/subtitle/chapter retention and no-overwrite outputs.
+- A model-independent generated-frame encoder/mux writer and native transcode path, with exact timestamps, bounded encoder lookahead tracking, auxiliary stream copy and JSON progress.
 - CMake/Ninja builds and automated unit tests. Qt desktop shell is enabled automatically when Qt 6 Quick is present.
 
 Development currently stays on the local machine: local Git commits, local builds, local test reports and local task databases. Remote repositories, hosted CI and release publishing are deferred. A future Windows CI template is kept under `docs/development/templates/` and is not active.
 
-Video encoding/replacement, RIFE inference, CUDA/TensorRT integration, the desktop workflow, full color/quality processing and packaging remain roadmap work. The software does not yet generate interpolated video. See the [SRS](docs/SRS.md) and [architecture design](docs/architecture/ADD.md) for the full requirements and current evidence.
+RIFE inference, CUDA/TensorRT integration, the desktop workflow, full color/quality processing and packaging remain roadmap work. The software does not yet generate AI-interpolated video. See the [SRS](docs/SRS.md) and [architecture design](docs/architecture/ADD.md) for the full requirements and current evidence.
 
 ## Build
 
@@ -38,6 +39,8 @@ Enable the media engine by supplying a local FFmpeg SDK with `check.ps1 -FFmpegR
 `rifelove-cli tasks-recover <database-path>` is a separate maintenance operation for an existing database, to be used after all workers have stopped. It marks `running` records as `interrupted`; it does not resume video processing. Automatic recovery with worker ownership and safe segment checkpoints remains roadmap work.
 
 With the media engine enabled, `media-probe INPUT` reports streams/metadata, `media-scan INPUT --frames` decodes and reports rational PTS/color, and `remux INPUT OUTPUT` copies compatible streams into a new MP4/MOV/MKV file. Remuxing preserves compressed streams; it does not change frame rate or generate AI frames.
+
+`transcode INPUT OUTPUT --encoder NAME --progress` re-encodes the selected video at its original presentation times while copying other compatible streams. Software H.264/HEVC/AV1 and FFV1 are covered by the local suite. The current FFmpeg SDK's NVENC path is incompatible with this machine's driver; no successful GPU encoding or automatic fallback is claimed. See [encoding contracts and tests](docs/development/ENCODING.md).
 
 ## Licensing
 

@@ -1,6 +1,7 @@
 #include "media_commands.hpp"
 #include "common/json.hpp"
 #include "media/media_engine.hpp"
+#include "media/video_writer.hpp"
 
 #include <charconv>
 #include <iomanip>
@@ -89,6 +90,46 @@ void writeProbe(std::ostream& out, const MediaInfo& info) {
 }
 
 int runMediaCommand(const std::vector<std::string>& args) {
+    if (args[1] == "transcode") {
+        if (args.size() < 4) throw std::invalid_argument("transcode requires INPUT OUTPUT and optional encoding settings");
+        VideoEncodingSettings settings;
+        bool progress = false;
+        auto parseInteger = [](const std::string& value) {
+            std::int64_t number = 0;
+            const auto [end, status] = std::from_chars(value.data(), value.data() + value.size(), number);
+            if (status != std::errc{} || end != value.data() + value.size()) throw std::invalid_argument("invalid integer encoding setting");
+            return number;
+        };
+        for (std::size_t i = 4; i < args.size(); ++i) {
+            const auto& option = args[i];
+            if (option == "--progress") { progress = true; continue; }
+            if (option == "--allow-precision-loss") { settings.allowPrecisionLoss = true; continue; }
+            if (i + 1 >= args.size()) throw std::invalid_argument("missing value for " + option);
+            const auto& value = args[++i];
+            if (option == "--encoder") settings.encoder = value;
+            else if (option == "--pixel-format") settings.pixelFormat = value;
+            else if (option == "--bitrate") settings.bitRate = parseInteger(value);
+            else if (option == "--bframes") {
+                const auto number = parseInteger(value);
+                if (number < 0 || number > 16) throw std::invalid_argument("B-frame count must be between 0 and 16");
+                settings.maxBFrames = static_cast<int>(number);
+            } else if (option == "--option") {
+                const auto equal = value.find('=');
+                if (equal == std::string::npos || equal == 0) throw std::invalid_argument("encoder options must be KEY=VALUE");
+                settings.encoderOptions[value.substr(0, equal)] = value.substr(equal + 1);
+            } else throw std::invalid_argument("unknown transcode option: " + option);
+        }
+        const auto result = transcodeVideo(args[2], args[3], settings, progress ? std::function<void(const EncodeProgress&)>([](const EncodeProgress& current) {
+            std::cout << "{\"event\":\"encode_progress\",\"frames_submitted\":" << current.framesSubmitted << ",\"pts\":" << jsonString(current.timestamp.toString())
+                << ",\"processing_fps\":" << current.processingFps << "}\n";
+        }) : std::function<void(const EncodeProgress&)>());
+        std::cout << "{\"event\":\"transcode_completed\",\"encoder\":" << jsonString(result.encoder)
+            << ",\"frames_submitted\":" << result.framesSubmitted << ",\"video_packets\":" << result.videoPackets
+            << ",\"copied_packets\":" << result.copiedPackets << ",\"first_pts\":" << jsonString(result.firstTimestamp.toString())
+            << ",\"end_exclusive\":" << jsonString(result.endExclusive.toString())
+            << ",\"elapsed_seconds\":" << result.elapsedSeconds << ",\"processing_fps\":" << result.processingFps << "}\n";
+        return 0;
+    }
     if (args[1] == "media-probe") {
         if (args.size() != 3) throw std::invalid_argument("media-probe requires INPUT");
         std::ostringstream json;

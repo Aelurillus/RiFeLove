@@ -16,9 +16,13 @@ Input I/O is restricted to local regular files and the `file` protocol. Cancella
 
 `remux` copies existing compressed streams and metadata; it does not perform interpolation or video encoding. Timestamp rescaling occurs after mux header creation, when final output time bases are known. Incompatible streams fail visibly. Output is written under a unique same-directory reservation, finalized and structurally probed, then atomically published without replacement on Windows. Exceptions/cancellation clean up the temporary file. Process-kill recovery requires the future checkpoint/ownership system.
 
+`VideoMuxWriter` accepts owned CPU pixel planes at explicit rational timestamps/durations, encodes the selected video and copies the reference input's other streams. The time base must represent submitted times exactly; overlapping or unknown timestamps are rejected. Encoder output is drained in DTS order, with submitted PTS/duration associations retained through reordering. The pending association table is capped at 1024 entries. A separate input handle pumps auxiliary packets according to source-video DTS so they need not be retained for the entire job. This implementation prioritizes correctness; shared-demux and GPU-surface optimizations remain required.
+
+Encoding copies color properties to both frames and encoder context, rebuilds available static HDR frame metadata and retains codec-independent stream side data. Pre-publication checks verify stream presence, output bit depth and known color tags. Implicit precision reduction is rejected; HDR bit-depth reduction and RGB/YUV color transforms require the future validated color pipeline. Basic same-color pixel layout changes use libswscale. The selected encoder must open successfully; a registered encoder name is not a hardware capability claim. See `docs/development/ENCODING.md` for the current NVENC incompatibility.
+
 ## Required next contracts
 
-- An encoder/mux writer that accepts generated frames and copies compatible auxiliary streams while preserving the source timeline and color metadata.
+- GPU-surface encoder submission, source-shared demux, comprehensive color conversions and full compatibility/fault coverage for the implemented CPU-frame writer.
 - An asynchronous interpolation request carrying two owned GPU frames, rationally scheduled timestep, device/stream context, destination buffers and stop/error handling.
 - A model registry/adaptor schema with checksum-verifiable provenance, exact license/weight rights, tensor layouts, shape/timestep/precision capabilities and versioned cache keys.
 - A bounded scheduler with explicit buffer ownership and backpressure across decode, preprocessing, quality, inference, postprocessing and encode stages.

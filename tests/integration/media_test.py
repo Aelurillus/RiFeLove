@@ -153,6 +153,84 @@ class NativeMediaIntegration(unittest.TestCase):
         result = invoke(CLI, "media-probe", "https://example.invalid/video.mp4", expected=2)
         self.assertIn("local regular file", result.stderr)
 
+    def test_lossless_transcode_preserves_hdr_pixels_auxiliary_packets_and_timing(self):
+        output = self.root / "重新编码 HDR.mkv"
+        records = [json.loads(line) for line in invoke(CLI, "transcode", self.source, output, "--encoder", "ffv1", "--progress").stdout.splitlines()]
+        self.assertEqual(records[-1]["event"], "transcode_completed")
+        self.assertEqual(records[-1]["frames_submitted"], 12)
+        self.assertGreater(records[-1]["elapsed_seconds"], 0)
+        self.assertGreater(records[-1]["processing_fps"], 0)
+        self.assertEqual(len([r for r in records if r["event"] == "encode_progress"]), 12)
+        self.assertEqual([r["pts"] for r in self.scan(self.source)[:-1]], [r["pts"] for r in self.scan(output)[:-1]])
+        info = self.probe(output)
+        self.assertEqual(len(info["streams"]), 4)
+        self.assertTrue(info["streams"][0]["color"]["hdr_transfer"])
+        self.assertEqual(info["streams"][0]["color"]["bit_depth"], 10)
+        self.assertEqual(info["streams"][1]["metadata"]["language"], "zho")
+        self.assertEqual(info["chapters"][0]["metadata"]["title"], "Opening")
+        def pixels(path):
+            text = invoke(FFMPEG, "-v", "error", "-nostdin", "-i", path, "-map", "0:v:0", "-f", "framemd5", "-").stdout
+            return [line.rsplit(",", 1)[-1].strip() for line in text.splitlines() if line and not line.startswith("#")]
+        self.assertEqual(pixels(self.source), pixels(output))
+        for selector in ("a", "s"):
+            before = reference(self.source, "-select_streams", selector, "-show_packets", "-show_data_hash", "sha256", "-show_entries", "packet=stream_index,pts,dts,duration,data_hash")
+            after = reference(output, "-select_streams", selector, "-show_packets", "-show_data_hash", "sha256", "-show_entries", "packet=stream_index,pts,dts,duration,data_hash")
+            self.assertEqual(before["packets"], after["packets"])
+
+    def test_h264_hevc_and_av1_software_encoding(self):
+        for encoder, codec, options in (
+            ("libopenh264", "h264", []),
+            ("libkvazaar", "hevc", []),
+            ("libaom-av1", "av1", ["--option", "cpu-used=8", "--option", "threads=2"]),
+        ):
+            with self.subTest(encoder=encoder):
+                output = self.root / f"{codec}-encoded.mp4"
+                result = json.loads(invoke(CLI, "transcode", self.reordered, output, "--encoder", encoder, *options).stdout)
+                self.assertEqual(result["frames_submitted"], 12)
+                self.assertEqual(self.probe(output)["streams"][0]["codec"], codec)
+                self.assertEqual([r["pts"] for r in self.scan(self.reordered)[:-1]], [r["pts"] for r in self.scan(output)[:-1]])
+                expected_audio = reference(self.reordered, "-select_streams", "a:0", "-show_packets", "-show_entries", "packet=pts_time,dts_time,duration_time")
+                actual_audio = reference(output, "-select_streams", "a:0", "-show_packets", "-show_entries", "packet=pts_time,dts_time,duration_time")
+                self.assertEqual(expected_audio["packets"], actual_audio["packets"])
+
+    def test_encoder_b_frame_drain_and_vfr(self):
+        output = self.root / "b-frame-encoded.mp4"
+        invoke(CLI, "transcode", self.reordered, output, "--encoder", "mpeg4", "--bframes", "2")
+        self.assertEqual([r["pts"] for r in self.scan(self.reordered)[:-1]], [r["pts"] for r in self.scan(output)[:-1]])
+        output_vfr = self.root / "vfr-encoded.mkv"
+        invoke(CLI, "transcode", self.vfr, output_vfr, "--encoder", "ffv1")
+        before, after = self.scan(self.vfr), self.scan(output_vfr)
+        self.assertEqual([r["pts"] for r in before[:-1]], [r["pts"] for r in after[:-1]])
+        self.assertEqual(after[-1]["cadence"], "variable")
+
+    def test_invalid_encoder_and_hdr_precision_reduction_do_not_publish(self):
+        for name, extra in (
+            ("missing-encoder", ["--encoder", "does-not-exist"]),
+            ("hdr-reduction", ["--encoder", "libopenh264", "--pixel-format", "yuv420p"]),
+            ("hdr-reduction-override", ["--encoder", "libopenh264", "--pixel-format", "yuv420p", "--allow-precision-loss"]),
+            ("bad-option", ["--encoder", "ffv1", "--option", "no-such-option=1"]),
+        ):
+            with self.subTest(name=name):
+                output = self.root / f"{name}.mkv"
+                invoke(CLI, "transcode", self.source, output, *extra, expected=2)
+                self.assertFalse(output.exists())
+                self.assertEqual(list(self.root.glob("*.rifelove-*.partial")), [])
+
+    def test_av1_encoding_retains_ten_bit_hdr_and_timing(self):
+        output = self.root / "hdr-av1.mkv"
+        invoke(CLI, "transcode", self.source, output, "--encoder", "libaom-av1", "--bitrate", "0", "--option", "crf=40", "--option", "cpu-used=8", "--option", "threads=2")
+        video = self.probe(output)["streams"][0]
+        self.assertEqual(video["codec"], "av1")
+        self.assertEqual(video["color"]["bit_depth"], 10)
+        self.assertTrue(video["color"]["hdr_transfer"])
+        self.assertEqual([f["pts"] for f in self.scan(self.source)[:-1]], [f["pts"] for f in self.scan(output)[:-1]])
+
+    def test_transcode_preserves_existing_output(self):
+        output = self.root / "existing-transcode.mp4"
+        output.write_bytes(b"existing file")
+        invoke(CLI, "transcode", self.reordered, output, "--encoder", "libopenh264", expected=2)
+        self.assertEqual(output.read_bytes(), b"existing file")
+
 
 if __name__ == "__main__":
     unittest.main()
