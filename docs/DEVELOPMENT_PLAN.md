@@ -34,7 +34,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 ## Phase 3 — interpolation
 
-- [ ] Audit model code/weight provenance and license; select candidate RIFE models.
+- [x] Verify the author's MIT scope statement and pin/acquire RIFE 4.25 network, checkpoint, warp source and license files.
+- [ ] Complete the multi-model provenance audit and quality/profile selection.
 - [ ] Define async interpolation/backend contracts, cancellation and reusable frame buffers.
 - [ ] Build PyTorch reference exporter and numerical comparison harness.
 - [ ] Integrate ONNX Runtime CUDA and validate supported model operators/shapes.

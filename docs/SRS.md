@@ -8,10 +8,10 @@ Version 0.1 implementation baseline. The authoritative complete scope is [the or
 | R02 | C++20, Qt6/QML, FFmpeg libraries, CUDA, RIFE, ONNX CUDA, TensorRT, SQLite, CMake/Ninja, vcpkg, spdlog; Python only for development | Partial native core and FFmpeg integration |
 | R03 | File/drop/folder batch import; accurate video, rate/VFR/HDR, audio and subtitle inspection | Native probe and scan implemented; desktop/batch import pending |
 | R04 | Integer/non-integer/fractional targets, VFR input, CFR and advanced source-like output; unchanged duration with validated final-frame/audio boundary | Rational planner and scan tested; processing output modes pending |
-| R05 | Real multi-model RIFE at arbitrary timestep, Fast/Balanced/Quality/Custom presets | Not implemented |
-| R06 | PyTorch reference, ONNX export/operator/shape/timestep checks, ONNX CUDA numerical parity, TensorRT/FP16 validation | Not implemented |
+| R05 | Real multi-model RIFE at arbitrary timestep, Fast/Balanced/Quality/Custom presets | RIFE 4.25 sources pinned/acquired; runtime interpolation and preset qualification pending |
+| R06 | PyTorch reference, ONNX export/operator/shape/timestep checks, ONNX CUDA numerical parity, TensorRT/FP16 validation | CPU export/check tooling prepared; numerical validation still pending dependency setup |
 | R07 | Async inference, CUDA streams, cancellation/error contracts and output-buffer reuse | Decoder cancellation/ownership only; inference interfaces pending |
-| R08 | Model download/checksum/version/import/manifest/license/capability management; no weights or local engines in Git | Not implemented |
+| R08 | Model download/checksum/version/import/manifest/license/capability management; no weights or local engines in Git | Development-only pinned acquisition and integrity checks implemented; product model manager pending |
 | R09 | GPU/driver/VRAM/compute/codec detection; safe precision/backend selection with truthful unavailable states | Not implemented |
 | R10 | NVDEC/NVENC, software fallbacks, FP16, VRAM pool/budget, bounded concurrency and OOM handling | Not implemented |
 | R11 | Version/GPU/model/options keyed TensorRT cache, profiles, streams/graphs and optional overlapping tiling evaluated by repeatable benchmarks | Not implemented |

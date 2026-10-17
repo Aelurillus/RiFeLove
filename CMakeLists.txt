@@ -108,6 +108,9 @@ if(RIFELOVE_BUILD_TESTS)
     add_test(NAME CLI.LocalWorkflow
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_test.py $<TARGET_FILE:rifelove-cli>)
     set_tests_properties(CLI.LocalWorkflow PROPERTIES TIMEOUT 30)
+    add_test(NAME Models.SourceIntegrity
+      COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_validation -p test_source_integrity.py -v)
+    set_tests_properties(Models.SourceIntegrity PROPERTIES TIMEOUT 30)
     if(RIFELOVE_BUILD_MEDIA)
       find_program(RIFELOVE_FFMPEG_TOOL ffmpeg HINTS "${RIFELOVE_FFMPEG_ROOT}/bin" REQUIRED)
       find_program(RIFELOVE_FFPROBE_TOOL ffprobe HINTS "${RIFELOVE_FFMPEG_ROOT}/bin" REQUIRED)
