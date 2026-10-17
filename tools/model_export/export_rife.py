@@ -19,6 +19,16 @@ def verified_sources(directory, manifest):
             for item in [*manifest["archiveFiles"], *manifest["additionalFiles"]]}
 
 
+def inference_state(state, inference_keys):
+    inference_keys = set(inference_keys)
+    training_keys = set(state) - inference_keys
+    if inference_keys - set(state):
+        raise ValueError("Checkpoint is missing inference parameters")
+    if any(not key.startswith(("teacher.", "caltime.")) for key in training_keys):
+        raise ValueError("Checkpoint contains unexpected non-training parameters")
+    return {key: value for key, value in state.items() if key in inference_keys}
+
+
 def load_network(sources):
     import torch
     warp_module = types.ModuleType("rifelove_pinned_warp")
@@ -44,15 +54,22 @@ def load_network(sources):
         raise ValueError("Pinned weight file is not a tensor-only state dictionary")
     state = {key.removeprefix("module."): value for key, value in state.items()}
     network = network_module.IFNet()
+    # The pinned IFNet explicitly comments out these two training-only modules;
+    # the author's archived loader uses strict=False for that checkpoint. Keep
+    # strict matching for every inference tensor and reject other unknown keys.
+    state = inference_state(state, network.state_dict())
     network.load_state_dict(state, strict=True)
     network.eval()
     return network, network_module, warp_module
 
 
-def export_pack(source_directory, destination, manifest):
+def export_pack(source_directory, destination, manifest, numerical_profile="strict"):
     if destination.exists():
         raise FileExistsError(f"Model pack already exists; choose a new versioned directory: {destination}")
     sources = verified_sources(source_directory, manifest)
+    profiles_by_name = {"strict": {"maximum": 2e-4, "psnr": 80.0},
+                        "sdr8": {"maximum": 0.5 / 255.0, "psnr": 80.0}}
+    limits = profiles_by_name[numerical_profile]
     import numpy as np
     import onnx
     import onnxruntime as ort
@@ -124,10 +141,20 @@ def export_pack(source_directory, destination, manifest):
         onnx.checker.check_model(graph)
         if {value.name for value in graph.graph.input} != {"frame0", "frame1", "timestep"}:
             raise ValueError("ONNX export froze or removed a required dynamic input")
+        # The legacy exporter leaves the merged output channel symbolic even
+        # though both warped RGB inputs have exactly three channels. Publish
+        # the adapter's actual fixed batch/channel contract, retaining H/W.
+        output_shape = graph.graph.output[0].type.tensor_type.shape.dim
+        if len(output_shape) != 4:
+            raise ValueError("Unexpected RIFE output tensor rank")
+        output_shape[0].dim_value = 1
+        output_shape[1].dim_value = 3
+        onnx.checker.check_model(graph)
         onnx.save(graph, onnx_path)
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
         session = ort.InferenceSession(str(onnx_path), sess_options=options, providers=["CPUExecutionProvider"])
         reference_directory = temporary / "reference"
         reference_directory.mkdir()
@@ -139,8 +166,8 @@ def export_pack(source_directory, destination, manifest):
                 raise ValueError("ONNX output shape or numeric values are invalid")
             difference = np.abs(actual - expected)
             maximum = float(difference.max())
-            if maximum > 2e-4:
-                raise ValueError(f"ONNX/PyTorch error exceeded 2e-4 for {height}x{width}, t={timestep}: {maximum}")
+            mean_square = float(np.mean(difference.astype(np.float64) ** 2))
+            psnr = float(-10 * np.log10(mean_square)) if mean_square else 999.0
             case_id = f"h{height}-w{width}-t{int(timestep * 100)}"
             fixtures = {}
             for name, array in {**values, "expected": expected}.items():
@@ -149,19 +176,28 @@ def export_pack(source_directory, destination, manifest):
                 (reference_directory / filename).write_bytes(data)
                 fixtures[name] = {"file": f"reference/{filename}", "shape": list(array.shape), "sha256": digest(data)}
             validation.append({"id": case_id, "shape": [1, 3, height, width], "timestep": timestep,
-                               "max_abs_error": maximum, "mean_abs_error": float(difference.mean()), "fixtures": fixtures})
+                               "max_abs_error": maximum, "mean_abs_error": float(difference.mean()), "psnr_db": psnr,
+                               "passed": maximum <= limits["maximum"] and psnr >= limits["psnr"], "fixtures": fixtures})
         graph_hash = digest(onnx_path.read_bytes())
-        report = {"status": "passed_cpu_reference", "providers": session.get_providers(),
+        passed = all(case["passed"] for case in validation)
+        report = {"status": "passed_cpu_reference" if passed else "failed_cpu_reference", "providers": session.get_providers(),
                   "torch": torch.__version__, "onnx": onnx.__version__, "onnxruntime": ort.__version__,
-                  "warp_adapter_max_abs_error": adapter_error, "ort_max_abs_error_limit": 2e-4,
+                  "model_sha256": graph_hash, "numerical_profile": numerical_profile,
+                  "warp_adapter_max_abs_error": adapter_error, "ort_max_abs_error_limit": limits["maximum"], "minimum_psnr_db": limits["psnr"],
                   "cases": validation, "elapsed_seconds": time.perf_counter() - started,
                   "pending": ["native_onnx_cuda_parity", "tensorrt_fp32_fp16", "visual_quality", "performance_matrix"]}
-        descriptor = {"schemaVersion": 1, "id": "rife-4.25-fp32", "family": "rife", "version": "4.25",
+        if not passed:
+            failure = parent / (destination.name + ".failed-validation.json")
+            failure.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            raise ValueError(f"ONNX/PyTorch numerical gate failed ({numerical_profile}); no pack published. Report: {failure}")
+        pack_id = "rife-4.25-fp32" + ("-sdr8" if numerical_profile == "sdr8" else "")
+        descriptor = {"schemaVersion": 1, "id": pack_id, "family": "rife", "version": "4.25",
                       "modelFile": "model.onnx", "sha256": graph_hash, "license": "MIT", "licenseFile": "LICENSE.txt",
                       "inputLayout": "NCHW", "dtype": "float32", "channels": 3, "batch": 1,
                       "inputRange": [0.0, 1.0], "spatialMultiple": 64,
                       "timestepShape": [1, 1, 1, 1], "dynamicTimestep": True, "dynamicSpatial": True,
                       "validatedBackends": ["pytorch_cpu", "onnxruntime_cpu"],
+                      "numericalProfile": numerical_profile, "hdrQualified": False,
                       "validationFile": "validation.json", "sourceManifestFile": "source-manifest.json"}
         for filename, value in (("validation.json", report), ("model.json", descriptor), ("source-manifest.json", manifest)):
             (temporary / filename).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
@@ -181,9 +217,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", type=Path, default=ROOT / "models/weights/rife4.25-reviewed")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "models/cache/rife-4.25-fp32")
+    parser.add_argument("--numerical-profile", choices=["strict", "sdr8"], default="strict",
+                        help="strict keeps the original 2e-4 gate; sdr8 separately qualifies half of one normalized 8-bit code value plus PSNR >=80 dB, not HDR")
     args = parser.parse_args()
     manifest = json.loads(DEFAULT_MANIFEST.read_text(encoding="utf-8"))
-    descriptor, report = export_pack(args.source_dir.resolve(), args.output_dir.resolve(), manifest)
+    descriptor, report = export_pack(args.source_dir.resolve(), args.output_dir.resolve(), manifest, args.numerical_profile)
     print(json.dumps({"event": "rife_export_validated", "path": str(args.output_dir), "sha256": descriptor["sha256"],
                       "validation": report["status"], "cases": len(report["cases"]),
                       "max_abs_error": max(case["max_abs_error"] for case in report["cases"])}))

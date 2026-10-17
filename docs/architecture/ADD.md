@@ -23,7 +23,7 @@ Encoding copies color properties to both frames and encoder context, rebuilds av
 ## Required next contracts
 
 - GPU-surface encoder submission, source-shared demux, comprehensive color conversions and full compatibility/fault coverage for the implemented CPU-frame writer.
-- An asynchronous interpolation request carrying two owned GPU frames, rationally scheduled timestep, device/stream context, destination buffers and stop/error handling.
+- Integrate the implemented async GPU interpolation contract with the rational timeline, quality policy and media pipeline; complete native CUDA numerical/operator validation first.
 - A model registry/adaptor schema with checksum-verifiable provenance, exact license/weight rights, tensor layouts, shape/timestep/precision capabilities and versioned cache keys.
 - A bounded scheduler with explicit buffer ownership and backpressure across decode, preprocessing, quality, inference, postprocessing and encode stages.
 - Persistent task configuration/progress and safe output-segment checkpoints bound to source/model/build identity. Restart recovery must establish worker ownership before marking tasks interrupted.
@@ -32,3 +32,5 @@ Encoding copies color properties to both frames and encoder context, rebuilds av
 ## Validation mapping
 
 `tests/unit/` covers rational scheduling, task-store semantics, frame ownership and stop behavior. `tests/integration/media_test.py` generates synthetic video/audio/subtitle/chapter fixtures and compares native operations to separately invoked FFmpeg tools. Tests and their limits are documented in `docs/development/FFMPEG.md`. Full SRS and release validation remain open.
+
+The CUDA driver module separately owns context/stream/buffer lifetime. The ONNX adapter uses a bounded single-worker queue and prebound device outputs; its public interface carries no vendor API types. Model loading checks bounded files, hashes and tensor shapes. Runtime dependencies and pending native numerical evidence are detailed in `docs/development/GPU.md`; CPU export qualification is deliberately scoped in `docs/development/RIFE_MODELS.md`.

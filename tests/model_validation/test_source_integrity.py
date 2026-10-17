@@ -11,10 +11,19 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/model_export"))
 from acquire_rife import acquire, digest
-from export_rife import export_pack
+from export_rife import export_pack, inference_state
 
 
 class ModelSourceIntegrity(unittest.TestCase):
+    def test_only_documented_training_parameters_are_excluded(self):
+        self.assertEqual(inference_state({"weight": 1, "teacher.weight": 2, "caltime.bias": 3}, {"weight"}), {"weight": 1})
+        with self.assertRaisesRegex(ValueError, "unexpected non-training"):
+            inference_state({"weight": 1, "unknown.weight": 2}, {"weight"})
+
+    def test_missing_inference_parameters_are_not_silently_accepted(self):
+        with self.assertRaisesRegex(ValueError, "missing inference"):
+            inference_state({"teacher.weight": 2}, {"weight"})
+
     def setUp(self):
         (ROOT / "work").mkdir(exist_ok=True)
         self.directory = tempfile.TemporaryDirectory(prefix="model-integrity-", dir=ROOT / "work")

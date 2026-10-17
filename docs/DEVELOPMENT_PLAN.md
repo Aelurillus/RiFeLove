@@ -26,6 +26,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.
 - [ ] Complete codec/container coverage, missing-PTS recovery and full mastering/rotation metadata fixture coverage.
 - [ ] Add explicit color/pixel-format and HDR metadata handling.
+- [x] Add the first explicit tagged BT.709 8-bit SDR conversion to normalized RGB, replicated padding and restored crop; reject unknown/HDR/higher-depth inputs in this path.
 - [x] Add a model-independent CPU-frame encoder/mux writer and transcode path with compatible original audio/subtitle stream copy.
 - [x] Validate software H.264/HEVC/AV1, FFV1 lossless/HDR, encoder B-frame drain, VFR and exact 60000/1001 scheduling across 1000 generated frames.
 - [ ] Validate duration, frame count, PTS monotonicity, audio sync and container integrity.
@@ -36,8 +37,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 - [x] Verify the author's MIT scope statement and pin/acquire RIFE 4.25 network, checkpoint, warp source and license files.
 - [ ] Complete the multi-model provenance audit and quality/profile selection.
-- [ ] Define async interpolation/backend contracts, cancellation and reusable frame buffers.
-- [ ] Build PyTorch reference exporter and numerical comparison harness.
+- [x] Define the first async interpolation/backend contract with owned GPU inputs, bounded queue, cancellation and exclusive reusable outputs (runtime inference tests pending).
+- [x] Build PyTorch reference exporter and numerical comparison harness; separately record strict-gate failure and SDR8 numerical qualification.
 - [ ] Integrate ONNX Runtime CUDA and validate supported model operators/shapes.
 - [ ] Integrate TensorRT backend and version/GPU keyed engine cache.
 - [ ] Register checksum-verifiable model manifests with capability and license metadata.
@@ -45,6 +46,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 ## Phase 4 — GPU throughput
 
+- [x] Add native CUDA device/context/stream/buffer primitives with actual local GPU transfer, budget and lifetime tests.
 - [ ] Probe GPU/driver/compute and codec capabilities at runtime.
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
   - Local NVENC probe currently fails: SDK requires API 13.0; installed driver exposes 12.2. This is an unresolved compatibility item, not a GPU-success result.

@@ -1,12 +1,14 @@
 #include "database/task_store.hpp"
 #include "timeline/timeline.hpp"
 #include "common/json.hpp"
+#include "gpu/cuda_device.hpp"
 #ifdef RIFELOVE_HAS_MEDIA
 #include "media_commands.hpp"
 #endif
 
 #include <iostream>
 #include <cstdint>
+#include <charconv>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -70,6 +72,7 @@ void usage(std::ostream& out) {
         << "  rifelove-cli task-create DATABASE SOURCE OUTPUT\n"
         << "  rifelove-cli tasks DATABASE\n"
         << "  rifelove-cli tasks-recover DATABASE (maintenance: all workers must be stopped)\n";
+    out << "  rifelove-cli gpu-info [DEVICE_INDEX]\n";
 #ifdef RIFELOVE_HAS_MEDIA
     out << "  rifelove-cli media-probe INPUT\n"
         << "  rifelove-cli media-scan INPUT [--frames] [--stream INDEX]\n"
@@ -85,6 +88,29 @@ int main(int argc, char** argv) {
         const auto args = commandLineUtf8(argc, argv);
         if (args.size() < 2 || args[1] == "--help" || args[1] == "-h") { usage(std::cout); return 0; }
         const std::string& command = args[1];
+        if (command == "gpu-info") {
+            if (args.size() > 3) throw std::invalid_argument("gpu-info accepts one optional device index");
+            int ordinal = 0;
+            if (args.size() == 3) {
+                const auto& number = args[2];
+                const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), ordinal);
+                if (error != std::errc{} || end != number.data() + number.size() || ordinal < 0) throw std::invalid_argument("invalid GPU device index");
+            }
+            try {
+                rifelove::gpu::CudaDevice device(ordinal);
+                const auto& info = device.info();
+                const auto memory = device.memory();
+                std::cout << "{\"scope\":\"cuda_driver_device\",\"driver_available\":true,\"ordinal\":" << info.ordinal
+                    << ",\"name\":" << jsonString(info.name) << ",\"pci_bus_id\":" << jsonString(info.pciBusId)
+                    << ",\"compute_capability\":" << jsonString(std::to_string(info.computeMajor) + "." + std::to_string(info.computeMinor))
+                    << ",\"driver_cuda_api_version\":" << info.driverCudaApiVersion << ",\"total_bytes\":" << info.totalBytes
+                    << ",\"free_bytes\":" << memory.freeBytes << ",\"buffer_budget_bytes\":" << device.bufferBudget() << "}\n";
+                return 0;
+            } catch (const rifelove::gpu::GpuError& error) {
+                std::cout << "{\"scope\":\"cuda_driver_device\",\"driver_available\":false,\"reason\":" << jsonString(error.what()) << "}\n";
+                return 0;
+            }
+        }
         if (command == "media-probe" || command == "media-scan" || command == "remux" || command == "transcode") {
 #ifdef RIFELOVE_HAS_MEDIA
             return runMediaCommand(args);

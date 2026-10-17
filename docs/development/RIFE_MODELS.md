@@ -23,10 +23,20 @@ If the model archive/source files are missing from `work/downloads`, `acquire_ri
 
 ## Export contract and pending verification
 
-The export tool checksum-checks source bytes and compiles those bytes directly, avoiding archived `.pyc` imports. Checkpoint loading uses `torch.load(weights_only=True)` from the verified bytes and strict state-dictionary matching. It compares the upstream warp implementation with a cache-free dynamic export variant before ONNX generation.
+The export tool checksum-checks source bytes and compiles those bytes directly, avoiding archived `.pyc` imports. Checkpoint loading uses `torch.load(weights_only=True)` from the verified bytes. The pinned IFNet explicitly excludes the `teacher` and `caltime` training modules; only these prefixes may be removed. Every inference parameter must still match strictly, and missing or other unknown parameters fail. It compares the upstream warp implementation with a cache-free dynamic export variant before ONNX generation.
 
 The prepared validation covers two spatial profiles and three timestep values, retains timestep as an input, compares ONNX Runtime CPU output to upstream PyTorch at a fixed error limit, and publishes an immutable local pack only after all comparisons pass. Packs contain ONNX, license/source metadata, a validation report and raw FP32 reference cases for subsequent native CUDA testing. The adapter expects batch 1, normalized RGB FP32, NCHW and padded spatial dimensions divisible by 64; actual video padding/cropping and color conversion still need pipeline integration.
 
-At this checkpoint the source acquisition tool has been run successfully. CPU package installation and export validation are still pending; no passed ONNX parity result is claimed here. Native ONNX CUDA, TensorRT FP32/FP16, multi-model quality presets, full visual tests, HDR handling and performance acceptance remain required even after CPU reference validation succeeds.
+The local environment is installed and the exporter has been executed. The original strict maximum-error gate of `2e-4` **fails**; its failed report is retained and no strict pack is published. Disabling graph optimization or MKLDNN did not remove the drift. Intermediate-flow diagnostics show small FP32 differences amplified in the final refinement block; an FP64 shadow run also differs from upstream FP32. This is evidence of numerical sensitivity, not a completed visual-quality acceptance.
 
-Five source-integrity scenarios are part of the normal local CTest run and can also be discovered by pytest: allow-listed extraction, corrupt archive rejection, offline cache behavior, protection of modified local assets, and rejecting altered code before ML libraries are loaded. These policy tests do not substitute for numerical model validation.
+A separate, explicitly selected `sdr8` numerical profile requires maximum normalized RGB error <= `0.5/255` and PSNR >=80 dB against upstream FP32. This relates the numerical comparison to half an 8-bit code value; it is neither a guarantee of identical rounded pixels nor a perceptual/HDR/10-bit quality claim. The default remains `strict`. Failed gates do not publish model packs. Native CUDA uses the same pack-specific limits and additionally checks actual operator placement.
+
+```powershell
+.\work\model-tools\Scripts\python.exe tools/model_export/export_rife.py --numerical-profile sdr8 --output-dir models/cache/rife-4.25-fp32-sdr8-v2
+```
+
+The six local CPU comparisons (64x64 and 128x192; t=0.2,0.5,0.8) passed this separate SDR8 profile: maximum error `0.0012595653533935547`, minimum PSNR `90.2527304312149` dB; warp adapter error was zero. The ONNX SHA-256 is `8905ab350363251e45e1b46fec355042da9514a34941e64c62b82d9c422205d3`. Artifacts remain ignored under `models/cache`; they are small-profile numerical fixtures, not video quality or performance acceptance.
+
+Native ONNX CUDA execution is pending runtime setup. TensorRT FP32/FP16, multi-model presets, full visual tests, HDR handling and performance acceptance remain required.
+
+Seven source-integrity/checkpoint-policy scenarios are part of normal CTest and also pass under pytest: allow-listed extraction, corrupt archive rejection, offline cache behavior, protection of modified local assets, altered-code rejection before ML import, documented training-only exclusions and missing-inference-parameter rejection. These checks do not substitute for numerical model validation.

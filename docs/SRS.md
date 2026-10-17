@@ -8,16 +8,16 @@ Version 0.1 implementation baseline. The authoritative complete scope is [the or
 | R02 | C++20, Qt6/QML, FFmpeg libraries, CUDA, RIFE, ONNX CUDA, TensorRT, SQLite, CMake/Ninja, vcpkg, spdlog; Python only for development | Partial native core and FFmpeg integration |
 | R03 | File/drop/folder batch import; accurate video, rate/VFR/HDR, audio and subtitle inspection | Native probe and scan implemented; desktop/batch import pending |
 | R04 | Integer/non-integer/fractional targets, VFR input, CFR and advanced source-like output; unchanged duration with validated final-frame/audio boundary | Rational planner and scan tested; processing output modes pending |
-| R05 | Real multi-model RIFE at arbitrary timestep, Fast/Balanced/Quality/Custom presets | RIFE 4.25 sources pinned/acquired; runtime interpolation and preset qualification pending |
-| R06 | PyTorch reference, ONNX export/operator/shape/timestep checks, ONNX CUDA numerical parity, TensorRT/FP16 validation | CPU export/check tooling prepared; numerical validation still pending dependency setup |
-| R07 | Async inference, CUDA streams, cancellation/error contracts and output-buffer reuse | Decoder cancellation/ownership only; inference interfaces pending |
+| R05 | Real multi-model RIFE at arbitrary timestep, Fast/Balanced/Quality/Custom presets | RIFE 4.25 sources and CPU reference pack prepared; native GPU execution and preset qualification pending |
+| R06 | PyTorch reference, ONNX export/operator/shape/timestep checks, ONNX CUDA numerical parity, TensorRT/FP16 validation | Six CPU comparisons pass explicit SDR8 numerical profile; original strict 2e-4 profile fails and remains recorded; native CUDA/TensorRT/FP16 pending |
+| R07 | Async inference, CUDA streams, cancellation/error contracts and output-buffer reuse | Bounded async ONNX API, owned device tensors, cancellation and reuse implemented/compiled; inference execution tests pending runtime setup |
 | R08 | Model download/checksum/version/import/manifest/license/capability management; no weights or local engines in Git | Development-only pinned acquisition and integrity checks implemented; product model manager pending |
-| R09 | GPU/driver/VRAM/compute/codec detection; safe precision/backend selection with truthful unavailable states | Not implemented |
-| R10 | NVDEC/NVENC, software fallbacks, FP16, VRAM pool/budget, bounded concurrency and OOM handling | Not implemented |
+| R09 | GPU/driver/VRAM/compute/codec detection; safe precision/backend selection with truthful unavailable states | Native CUDA device/driver-API/VRAM/compute queries tested on GTX 1660 SUPER; codec matrix and selection policy pending |
+| R10 | NVDEC/NVENC, software fallbacks, FP16, VRAM pool/budget, bounded concurrency and OOM handling | Driver buffers, nonblocking stream, bounded buffer budget and transfer/ownership tests implemented; pool, GPU decode/encode and full OOM policy pending |
 | R11 | Version/GPU/model/options keyed TensorRT cache, profiles, streams/graphs and optional overlapping tiling evaluated by repeatable benchmarks | Not implemented |
 | R12 | MP4/MKV/MOV and H.264/HEVC/AV1 according to actual hardware; CRF/CQ/bitrate/expert encoder settings | Native frame writer and software codec cases tested; local NVENC SDK/driver mismatch and full device policy unresolved |
 | R13 | Preserve compatible multi-audio/subtitles, chapters, language, rotation and metadata; explicit incompatibility and sync checks | Stream-copy and video-reencode auxiliary timing/hashes tested on synthetic subset; full matrix pending |
-| R14 | Preserve bit depth/HDR and perform correct color conversions; explicitly validated SDR/HDR pipeline | Original precision and 10-bit PQ FFV1/AV1 encoding verified on fixtures; full conversion/neural HDR pipeline pending |
+| R14 | Preserve bit depth/HDR and perform correct color conversions; explicitly validated SDR/HDR pipeline | Tagged BT.709 8-bit SDR RGB/YUV conversion, padding/crop and range/matrix unit tests added; original-precision/10-bit PQ encoding fixtures pass; full color/HDR pipeline pending |
 | R15 | Cut detection and protection; abnormal motion, occlusion, duplicate, animation, HUD/text, flicker, border/seam policies | Not implemented |
 | R16 | Queue, pause/resume/cancel/retry/history, persistent configuration/model/file identity and progress | Task record state machine only |
 | R17 | Crash ownership detection and safe segment-boundary checkpoint/resume/stitching; multi-hour and fault-injection tests | Explicit interrupted-state maintenance only |
