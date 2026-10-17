@@ -2,7 +2,8 @@
 param(
     [ValidateSet('windows-dev', 'windows-release')]
     [string]$Preset = 'windows-dev',
-    [switch]$AllowDependencyDownload
+    [switch]$AllowDependencyDownload,
+    [string]$FFmpegRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -34,7 +35,9 @@ Push-Location -LiteralPath $projectRoot
 try {
     New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
     $downloadSetting = if ($AllowDependencyDownload) { 'ON' } else { 'OFF' }
-    Invoke-CheckStep -Step 'configure' -Executable 'cmake' -CommandArguments @('--preset', $Preset, "-DRIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=$downloadSetting")
+    $configureArguments = @('--preset', $Preset, "-DRIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=$downloadSetting")
+    if ($FFmpegRoot) { $configureArguments += @('-DRIFELOVE_BUILD_MEDIA=ON', "-DRIFELOVE_FFMPEG_ROOT=$FFmpegRoot") }
+    Invoke-CheckStep -Step 'configure' -Executable 'cmake' -CommandArguments $configureArguments
     Invoke-CheckStep -Step 'build' -Executable 'cmake' -CommandArguments @('--build', '--preset', $Preset)
     Invoke-CheckStep -Step 'test' -Executable 'ctest' -CommandArguments @('--preset', $Preset, '--output-junit', $testReportPath)
     $checkReport.success = $true

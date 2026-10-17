@@ -20,7 +20,7 @@ Both are local generated files excluded from Git. SQLite, GoogleTest and applica
 
 For a new offline build directory, source caches can be supplied using `FETCHCONTENT_SOURCE_DIR_SQLITE3` and `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`. A machine without those sources must first receive copies of the pinned dependency sources or explicitly enable one-time dependency acquisition with `-AllowDependencyDownload`. The normal local check never opts into that download step.
 
-Current presets use MinGW for the core and CLI. A production Windows toolchain with MSVC, Qt, FFmpeg and NVIDIA SDKs remains to be installed and validated. Python is optional for development integration checks, and is not part of the user runtime.
+Current presets use MinGW for the core and CLI. The optional native FFmpeg engine has a locally installed, pinned shared-library SDK; see [FFmpeg development](FFMPEG.md). A production Windows toolchain with MSVC, Qt and NVIDIA SDKs remains to be installed and validated. Python is optional for development integration checks, and is not part of the user runtime.
 
 ## Task maintenance
 

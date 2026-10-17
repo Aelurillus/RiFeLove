@@ -1,5 +1,9 @@
 #include "database/task_store.hpp"
 #include "timeline/timeline.hpp"
+#include "common/json.hpp"
+#ifdef RIFELOVE_HAS_MEDIA
+#include "media_commands.hpp"
+#endif
 
 #include <iostream>
 #include <cstdint>
@@ -21,6 +25,7 @@
 #endif
 
 namespace {
+using rifelove::jsonString;
 
 std::vector<std::string> commandLineUtf8(int argc, char** argv) {
 #ifdef _WIN32
@@ -50,30 +55,6 @@ std::vector<std::string> commandLineUtf8(int argc, char** argv) {
 #endif
 }
 
-std::string jsonString(const std::string& input) {
-    std::string result = "\"";
-    for (const unsigned char value : input) {
-        switch (value) {
-        case '"': result += "\\\""; break;
-        case '\\': result += "\\\\"; break;
-        case '\b': result += "\\b"; break;
-        case '\f': result += "\\f"; break;
-        case '\n': result += "\\n"; break;
-        case '\r': result += "\\r"; break;
-        case '\t': result += "\\t"; break;
-        default:
-            if (value < 0x20) {
-                constexpr char digits[] = "0123456789abcdef";
-                result += "\\u00";
-                result += digits[value >> 4];
-                result += digits[value & 0x0f];
-            } else result += static_cast<char>(value);
-        }
-    }
-    result += '"';
-    return result;
-}
-
 std::vector<rifelove::Rational> parsePts(const std::string& input) {
     std::vector<rifelove::Rational> values;
     std::istringstream stream(input);
@@ -89,6 +70,11 @@ void usage(std::ostream& out) {
         << "  rifelove-cli task-create DATABASE SOURCE OUTPUT\n"
         << "  rifelove-cli tasks DATABASE\n"
         << "  rifelove-cli tasks-recover DATABASE (maintenance: all workers must be stopped)\n";
+#ifdef RIFELOVE_HAS_MEDIA
+    out << "  rifelove-cli media-probe INPUT\n"
+        << "  rifelove-cli media-scan INPUT [--frames] [--stream INDEX]\n"
+        << "  rifelove-cli remux INPUT OUTPUT\n";
+#endif
 }
 
 } // namespace
@@ -98,6 +84,13 @@ int main(int argc, char** argv) {
         const auto args = commandLineUtf8(argc, argv);
         if (args.size() < 2 || args[1] == "--help" || args[1] == "-h") { usage(std::cout); return 0; }
         const std::string& command = args[1];
+        if (command == "media-probe" || command == "media-scan" || command == "remux") {
+#ifdef RIFELOVE_HAS_MEDIA
+            return runMediaCommand(args);
+#else
+            throw std::runtime_error("media commands require a build with RIFELOVE_BUILD_MEDIA=ON and a local FFmpeg SDK");
+#endif
+        }
         if (command == "timeline") {
             std::string fps, end, pts;
             for (std::size_t index = 2; index < args.size(); ++index) {

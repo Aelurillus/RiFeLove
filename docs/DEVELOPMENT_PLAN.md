@@ -14,17 +14,22 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Add structured logging/configuration, service/backend interfaces and Qt app shell.
 - [x] Add offline-by-default local build/test runner and local JSON/JUnit reports.
 - [x] Add read-only queue inspection and Windows Unicode CLI regression coverage.
+- [x] Preserve the original complete Master Plan and add SRS/ADD requirement evidence documents.
 - [ ] Activate hosted Windows CI when remote development is requested (template prepared).
 - [ ] Validate MSVC + Qt + vcpkg release-toolchain configuration locally.
 
-## Phase 2 — media engine
+## Phase 2 — media engine (active, incomplete)
 
-- [ ] Probe/demux streams and retain rational stream time bases and metadata.
-- [ ] Decode reordered frames and recover PTS including VFR.
+- [x] Bind a pinned local FFmpeg shared SDK and probe streams, rational time bases, metadata and color.
+- [x] Decode software frames with presentation reordering/drain and retained original-precision storage.
+- [x] Scan actual timestamp cadence with fractional-CFR quantization handling and VFR fixtures.
+- [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.
+- [ ] Complete codec/container coverage, missing-PTS recovery and full mastering/rotation metadata fixture coverage.
 - [ ] Add explicit color/pixel-format and HDR metadata handling.
-- [ ] Encode and mux output with stream copy for compatible audio/subtitle tracks.
+- [ ] Encode generated/replaced video frames and mux with compatible original audio/subtitle streams.
 - [ ] Validate duration, frame count, PTS monotonicity, audio sync and container integrity.
-- [ ] Add licensed fixture corpus and corrupt/disk-full integration tests.
+- [x] Add synthetic media integration tests for 10-bit/PQ, tracks/chapters, VFR/B-frames, packet hashes/timing, Unicode paths, corrupt files and output protection.
+- [ ] Add the complete licensed fixture corpus, long-video and disk-full fault-injection suite.
 
 ## Phase 3 — interpolation
 
@@ -33,7 +38,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Build PyTorch reference exporter and numerical comparison harness.
 - [ ] Integrate ONNX Runtime CUDA and validate supported model operators/shapes.
 - [ ] Integrate TensorRT backend and version/GPU keyed engine cache.
-- [ ] Register signed/checksummed model manifests with capability metadata.
+- [ ] Register checksum-verifiable model manifests with capability and license metadata.
 - [ ] Pass real end-to-end video interpolation and forward quality tests.
 
 ## Phase 4 — GPU throughput

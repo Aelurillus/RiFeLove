@@ -9,4 +9,4 @@
 
 ## Current acceptance scope
 
-Unit tests assert rational arithmetic/order/overflow, VFR 60 fps scheduling, exact source-frame recognition, terminal-frame behavior, invalid PTS rejection, task state rules, persistence, read-only access and interrupted-task discovery. Local CLI integration checks cover Unicode and quoted paths, JSON output, read-only task inspection, explicit recovery, missing databases and invalid time axes. They do not assert video decoding, pixels, AI quality, audio sync or GPU execution.
+Unit tests assert rational arithmetic/order/overflow, VFR 60 fps scheduling, exact source-frame recognition, terminal-frame behavior, invalid PTS rejection, task state rules, persistence, read-only access and interrupted-task discovery. Local CLI integration checks cover Unicode and quoted paths, JSON output, read-only task inspection, explicit recovery, missing databases and invalid time axes. The optional FFmpeg suite adds native decode/remux checks described in `docs/development/FFMPEG.md`; it does not prove AI quality, GPU execution or the full media compatibility matrix.
