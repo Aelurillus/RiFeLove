@@ -37,9 +37,10 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 - [x] Verify the author's MIT scope statement and pin/acquire RIFE 4.25 network, checkpoint, warp source and license files.
 - [ ] Complete the multi-model provenance audit and quality/profile selection.
-- [x] Define the first async interpolation/backend contract with owned GPU inputs, bounded queue, cancellation and exclusive reusable outputs (runtime inference tests pending).
+- [x] Define the first async interpolation/backend contract with owned GPU inputs, bounded queue, cancellation and exclusive reusable outputs; 36 native reference/contract checks pass (full concurrency/fault stress pending).
 - [x] Build PyTorch reference exporter and numerical comparison harness; separately record strict-gate failure and SDR8 numerical qualification.
 - [ ] Integrate ONNX Runtime CUDA and validate supported model operators/shapes.
+  - RIFE 4.25 native execution passes six small-profile SDR8 comparisons with CUDA Conv/ConvTranspose/GridSample placement; larger profiles/visual validation remain open.
 - [ ] Integrate TensorRT backend and version/GPU keyed engine cache.
 - [ ] Register checksum-verifiable model manifests with capability and license metadata.
 - [ ] Pass real end-to-end video interpolation and forward quality tests.

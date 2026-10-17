@@ -50,7 +50,7 @@ int wmain(int argc, wchar_t** argv) {
         backend.loadModel(pack);
         json report = {{"backend", "onnxruntime_cuda"}, {"runtime", "1.22.0"}, {"model_sha256",pack.sha256},
             {"device",device->info().name}, {"compute_capability",std::to_string(device->info().computeMajor) + "." + std::to_string(device->info().computeMinor)},
-            {"use_tf32",false}, {"arena_budget_bytes",config.arenaBudgetBytes}, {"cases",json::array()}};
+            {"use_tf32",false}, {"convolution_algorithm_search","DEFAULT"}, {"arena_budget_bytes",config.arenaBudgetBytes}, {"cases",json::array()}};
         const double maxLimit = reference.at("ort_max_abs_error_limit").get<double>();
         const double psnrLimit = reference.value("minimum_psnr_db", 80.0);
         require(maxLimit > 0 && maxLimit <= 0.5 / 255 && psnrLimit >= 80, "Reference tolerance is weaker than the SDR8 numerical gate");
@@ -110,16 +110,34 @@ int wmain(int argc, wchar_t** argv) {
         const auto profile = readJson(profilePath);
         json assignments = json::object();
         std::set<std::string> gpuHeavy;
+        std::size_t cpuLargestTensor = 0;
         const std::set<std::string> heavy = {"Conv", "FusedConv", "ConvTranspose", "GridSample", "Gemm", "MatMul"};
         for (const auto& event : profile) {
             if (!event.contains("args") || !event["args"].contains("provider") || !event["args"].contains("op_name")) continue;
             const auto provider = event["args"]["provider"].get<std::string>(), operation = event["args"]["op_name"].get<std::string>();
             if (!assignments.contains(provider)) assignments[provider] = json::object();
             assignments[provider][operation] = assignments[provider].value(operation,0) + 1;
+            if (provider == "CPUExecutionProvider") {
+                // Permit bounded shape/scalar work, but reject silently moving
+                // full image/features to a CPU kernel under a CUDA label.
+                for (const auto* key : {"input_type_shape", "output_type_shape"}) {
+                    require(event["args"].contains(key), "CPU profile event lacks tensor-shape evidence");
+                    for (const auto& tensor : event["args"][key]) for (const auto& dimensions : tensor.items()) {
+                        std::size_t elements = 1;
+                        for (const auto& dimension : dimensions.value()) {
+                            const auto size = dimension.get<std::int64_t>();
+                            require(size >= 0 && size <= 64 && (size == 0 || elements <= 64 / static_cast<std::size_t>(size)), "Image-sized CPU fallback detected");
+                            elements *= static_cast<std::size_t>(size);
+                        }
+                        cpuLargestTensor = std::max(cpuLargestTensor,elements);
+                    }
+                }
+            }
             if (heavy.contains(operation)) { require(provider == "CUDAExecutionProvider", "Image compute operator fell back to CPU"); gpuHeavy.insert(operation); }
         }
         require((gpuHeavy.contains("Conv") || gpuHeavy.contains("FusedConv")) && gpuHeavy.contains("ConvTranspose") && gpuHeavy.contains("GridSample"), "No profiling proof of CUDA convolution and warp execution");
         report["operator_assignments"] = assignments;
+        report["cpu_tensor_max_elements"] = cpuLargestTensor;
         report["profile_file"] = pathText(profilePath);
         report["contract_checks"] = contractChecks;
         report["max_abs_error_limit"] = maxLimit;

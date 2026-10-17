@@ -10,7 +10,7 @@ RifeLove is an offline Windows video frame interpolation application in active d
 - A native FFmpeg media engine for local inspection, original-precision video decode and MP4/MKV/MOV stream-copy remuxing, with audio/subtitle/chapter retention and no-overwrite outputs.
 - A model-independent generated-frame encoder/mux writer and native transcode path, with exact timestamps, bounded encoder lookahead tracking, auxiliary stream copy and JSON progress.
 - A native CUDA driver layer, tested on the local GTX 1660 SUPER for device queries, owned memory, bounded allocations and transfers.
-- Checksum-pinned RIFE 4.25 export/reference tools and a compiled native ONNX Runtime CUDA backend; its GPU numerical validation is pending runtime setup.
+- Checksum-pinned RIFE 4.25 export/reference tools and a native ONNX Runtime CUDA backend; small-profile SDR8 numerical comparisons and GPU operator-placement checks pass on the local GPU.
 - CMake/Ninja builds and automated unit tests. Qt desktop shell is enabled automatically when Qt 6 Quick is present.
 
 Development currently stays on the local machine: local Git commits, local builds, local test reports and local task databases. Remote repositories, hosted CI and release publishing are deferred. A future Windows CI template is kept under `docs/development/templates/` and is not active.

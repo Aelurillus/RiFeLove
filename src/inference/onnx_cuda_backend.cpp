@@ -52,14 +52,40 @@ public:
             if (std::string(base->GetVersionString()) != "1.22.0") throw InferenceError(InferenceErrorKind::unavailable, "Expected pinned ONNX Runtime 1.22.0");
             api = base->GetApi(ORT_API_VERSION);
             if (!api) throw InferenceError(InferenceErrorKind::unavailable, "ONNX Runtime API version is incompatible");
-        } catch (...) { FreeLibrary(module_); module_ = nullptr; throw; }
+            // Load from the explicit SDK directory, including dependencies of
+            // the lazily loaded provider. This needs no process PATH changes
+            // and identifies the actual missing DLL before Windows error 126
+            // can misleadingly report the first provider import instead.
+            // cuDNN loads its split modules by basename when its API is first
+            // invoked, so preload those as well, before any cudnnCreate call.
+            constexpr const wchar_t* dependencies[] = {L"cudart64_12.dll", L"cublasLt64_12.dll", L"cublas64_12.dll", L"cufft64_11.dll",
+                L"cudnn_graph64_9.dll", L"cudnn_ops64_9.dll", L"cudnn_cnn64_9.dll", L"cudnn_adv64_9.dll",
+                L"cudnn_engines_precompiled64_9.dll", L"cudnn_engines_runtime_compiled64_9.dll", L"cudnn_heuristic64_9.dll",
+                L"cudnn64_9.dll", L"onnxruntime_providers_shared.dll"};
+            dependencyModules_.reserve(std::size(dependencies));
+            for (const auto* name : dependencies) {
+                const auto library = path.parent_path() / name;
+                const auto loaded = LoadLibraryExW(library.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+                if (!loaded) {
+                    const std::wstring label(name);
+                    throw InferenceError(InferenceErrorKind::unavailable, "Could not load native dependency " + std::string(label.begin(),label.end()) + "; Windows error " + std::to_string(GetLastError()));
+                }
+                dependencyModules_.push_back(loaded);
+            }
+        } catch (...) { cleanup(); throw; }
     }
-    ~Runtime() { if (module_) FreeLibrary(module_); }
+    ~Runtime() { cleanup(); }
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     const OrtApi* api{};
 private:
     HMODULE module_{};
+    std::vector<HMODULE> dependencyModules_;
+    void cleanup() noexcept {
+        if (module_) { FreeLibrary(module_); module_ = nullptr; }
+        for (auto iterator = dependencyModules_.rbegin(); iterator != dependencyModules_.rend(); ++iterator) FreeLibrary(*iterator);
+        dependencyModules_.clear();
+    }
 };
 void check(const OrtApi& api, OrtStatus* status, std::stop_token stop = {}, std::stop_token shutdown = {}) {
     if (!status) return;
@@ -145,7 +171,10 @@ public:
         check(api, api.CreateCUDAProviderOptions(&provider.value));
         const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
         const char* keys[] = {"device_id", "gpu_mem_limit", "arena_extend_strategy", "cudnn_conv_algo_search", "cudnn_conv_use_max_workspace", "use_tf32", "do_copy_in_default_stream"};
-        const char* values[] = {ordinal.c_str(), budget.c_str(), "kSameAsRequested", "HEURISTIC", "0", "0", "1"};
+        // Use the documented implicit-precomputed-GEMM baseline. Heuristic
+        // selection showed a gate failure on a repeated native run; faster
+        // algorithms need their own numerical qualification before use.
+        const char* values[] = {ordinal.c_str(), budget.c_str(), "kSameAsRequested", "DEFAULT", "0", "0", "1"};
         check(api, api.UpdateCUDAProviderOptions(provider.value, keys, values, std::size(keys)));
         check(api, api.UpdateCUDAProviderOptionsWithValue(provider.value, "user_compute_stream", reinterpret_cast<void*>(device->streamAddress())));
         // CUDA provider creation failure propagates. There is no CPU-session retry.
