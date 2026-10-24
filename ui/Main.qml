@@ -139,6 +139,7 @@ ApplicationWindow {
                 ActionButton { text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
                 ActionButton { text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
                 ActionButton { text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
+                ActionButton { objectName: "comparisonButton"; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
                 Item { Layout.fillHeight: true }
                 Rectangle {
                     Layout.fillWidth: true
@@ -332,6 +333,13 @@ ApplicationWindow {
                 active: processingAvailable
                 sourceComponent: modelCenterComponent
             }
+            Loader {
+                id: comparisonPageLoader
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: processingAvailable && window.currentPage === 3
+                sourceComponent: comparisonPageComponent
+            }
         }
     }
     Component {
@@ -344,6 +352,13 @@ ApplicationWindow {
     Component {
         id: modelCenterComponent
         ModelCenterPage { queueController: taskQueue }
+    }
+    Component {
+        id: comparisonPageComponent
+        ComparisonPage {
+            originalSource: studio.source ? studio.localUrl(studio.source) : ""
+            processedSource: window.state === "completed" && studio.output ? studio.localUrl(studio.output) : ""
+        }
     }
     Connections {
         target: modelPageLoader.item

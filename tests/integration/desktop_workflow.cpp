@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <functional>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -104,11 +105,12 @@ int main(int argc, char** argv) {
         studio.openSource(QUrl::fromLocalFile(arguments[1])); wait(studio);
         require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Studio did not recover readiness after selecting a supported source");
         studio.setOutput(QUrl::fromLocalFile(arguments[2]));
+        require(studioEncoder->setProperty("currentIndex",0), "Could not select automatic hardware-first encoding for fallback verification");
         int responsiveTicks = 0;
         bool sawFallbackNotice = false;
         bool sawRawFallbackError = false;
         QObject::connect(&studio, &StudioController::changed, [&] {
-            if (studio.status() == "processing") {
+            if (studio.status() == "encoder_fallback" || studio.status() == "processing") {
                 sawFallbackNotice = sawFallbackNotice || studio.detail().contains(QStringLiteral("软件 H.264"));
                 sawRawFallbackError = sawRawFallbackError || studio.detail().contains(QStringLiteral("Function not implemented"));
             }
@@ -127,6 +129,40 @@ int main(int argc, char** argv) {
             require(sawFallbackNotice && !sawRawFallbackError, "Recoverable NVENC fallback was presented as a processing error");
         require(responsiveTicks > 5, "UI event loop did not stay responsive during processing");
         const auto aiFrames = studio.progress().value("aiFrames").toULongLong();
+        // Exercise the local comparison viewer with the actual source/output pair.
+        auto* comparisonButton = root->findChild<QObject*>("comparisonButton");
+        click(comparisonButton,"comparison page navigation");
+        waitUntil([&] { return root->findChild<QObject*>("comparisonPage") != nullptr; }, "Comparison viewer page did not load");
+        auto* comparisonPage = root->findChild<QObject*>("comparisonPage");
+        waitUntil([&] { return comparisonPage->property("originalReady").toBool() && comparisonPage->property("processedReady").toBool(); },
+            "Comparison viewer could not open the real source and generated output",30000);
+        const double comparisonRate = comparisonPage->property("frameRate").toReal();
+        require(comparisonRate > 0.0 && comparisonRate < 1000.0, "Comparison viewer did not resolve a usable output frame rate");
+        auto* nextFrame = root->findChild<QObject*>("comparisonNextFrame");
+        const double beforeStep = comparisonPage->property("originalPosition").toReal();
+        click(nextFrame,"comparison one-frame step");
+        waitUntil([&] { return comparisonPage->property("originalPosition").toReal() > beforeStep &&
+                comparisonPage->property("processedPosition").toReal() > beforeStep; },
+            "Comparison frame-step did not seek both local videos",5000);
+        const double steppedOriginal = comparisonPage->property("originalPosition").toReal();
+        const double steppedProcessed = comparisonPage->property("processedPosition").toReal();
+        require(std::abs(steppedOriginal - steppedProcessed) <= 100.0, "Comparison frame-step left source and output out of sync");
+        auto* playback = root->findChild<QObject*>("comparisonPlayback");
+        click(playback,"comparison playback start");
+        waitUntil([&] { return comparisonPage->property("playbackActive").toBool() &&
+                comparisonPage->property("originalPosition").toReal() >= steppedOriginal + 30.0 &&
+                comparisonPage->property("processedPosition").toReal() >= steppedProcessed + 30.0; },
+            "Synchronized comparison playback did not advance",5000);
+        require(std::abs(comparisonPage->property("originalPosition").toReal() -
+                comparisonPage->property("processedPosition").toReal()) <= 250.0,
+            "Comparison playback drift exceeded the tested tolerance");
+        click(playback,"comparison playback pause");
+        waitUntil([&] { return !comparisonPage->property("playbackActive").toBool(); }, "Comparison playback did not pause",5000);
+        QEventLoop comparisonPaint; QTimer::singleShot(100,&comparisonPaint,&QEventLoop::quit); comparisonPaint.exec();
+        auto* comparisonWindow = qobject_cast<QQuickWindow*>(root);
+        require(comparisonWindow && comparisonWindow->grabWindow().save(arguments[6] + QStringLiteral(".comparison.png")),
+            "Comparison viewer screenshot failed");
+        root->setProperty("currentPage",0);
         // QML is rendered with the actual successful job, not a mocked view model.
         QEventLoop paint; QTimer::singleShot(100, &paint, &QEventLoop::quit); paint.exec();
         auto* window = qobject_cast<QQuickWindow*>(root);
