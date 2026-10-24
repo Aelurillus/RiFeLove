@@ -98,7 +98,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete CLI JSON progress, profiles, batch jobs and diagnostics reports.
   - Persistent queue add/import/export/list/run/retry/cancel/restart and JSON results are implemented; direct interpolation now has an opt-in atomic JSON report for model/GPU identity, encoder fallback, throughput, protection counters and timing validation. Profiles, queue report export and cross-process live control remain open.
 - [ ] Add advanced encoding controls and quality/performance reports.
-  - Studio and Queue now expose bitrate/GOP, HEVC constant QP and AV1 CRF; controls are validated against the selected encoder, persisted in local preferences and included in queue task JSON. Reports, H.264 quality-mode controls, 10-bit/HDR encoding and full codec matrix remain open.
+  - Studio and Queue now expose bitrate/GOP, HEVC constant QP, AV1 CRF and explicit H.264 NVENC VBR + CQ (0–51); encoder-specific controls are validated, persisted in local preferences and included in queue task JSON. Explicit source/encoder choices are preflighted before queueing. This workstation's driver cannot initialize NVENC, so actual CQ output remains unverified. GUI/queue quality reports, 10-bit/HDR encoding and the supported-device codec matrix remain open.
 - [ ] Validate multi-hour jobs and resume semantics.
 
 ## Phase 8 — release
