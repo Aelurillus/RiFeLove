@@ -101,16 +101,17 @@ class NativeMediaIntegration(unittest.TestCase):
         reference_rotation = next(side["rotation"] for side in reference_stream["side_data_list"]
                                   if side["side_data_type"] == "Display Matrix")
         self.assertAlmostEqual(source["rotation_degrees"], reference_rotation, delta=0.01)
-        for operation, extension in (("remux", "mp4"), ("transcode", "mp4")):
-            with self.subTest(operation=operation):
-                output = self.root / f"rotation-{operation}.{extension}"
-                if operation == "remux":
-                    invoke(CLI, "remux", self.rotated, output)
-                else:
-                    invoke(CLI, "transcode", self.rotated, output, "--encoder", "libopenh264")
-                output_stream = self.probe(output)["streams"][0]
-                self.assertAlmostEqual(output_stream["rotation_degrees"], source["rotation_degrees"], delta=0.01)
-                self.assertTrue(any(side["name"] == "Display Matrix" for side in output_stream["side_data"]))
+        for extension in ("mp4", "mov", "mkv"):
+            for operation in ("remux", "transcode"):
+                with self.subTest(operation=operation, extension=extension):
+                    output = self.root / f"rotation-{operation}.{extension}"
+                    if operation == "remux":
+                        invoke(CLI, "remux", self.rotated, output)
+                    else:
+                        invoke(CLI, "transcode", self.rotated, output, "--encoder", "libopenh264")
+                    output_stream = self.probe(output)["streams"][0]
+                    self.assertAlmostEqual(output_stream["rotation_degrees"], source["rotation_degrees"], delta=0.01)
+                    self.assertTrue(any(side["name"] == "Display Matrix" for side in output_stream["side_data"]))
 
     def test_fractional_cfr_is_not_confused_with_timestamp_quantization(self):
         records = self.scan(self.source)
