@@ -3,11 +3,15 @@
 #include "inference/interpolation_backend.hpp"
 
 namespace rifelove::inference {
+enum class ProviderPreference { cudaOnly, preferTensorRt, requireTensorRt };
 struct OnnxCudaConfig {
     std::filesystem::path runtimeDirectory; // Explicit directory containing reviewed DLLs.
+    std::filesystem::path engineCacheDirectory; // Local, version/device/model-keyed TensorRT engine cache.
     std::size_t arenaBudgetBytes = 1024ULL * 1024 * 1024; // ORT arena only, not total VRAM.
+    std::size_t tensorRtWorkspaceBytes = 1024ULL * 1024 * 1024;
     std::size_t maxQueuedRequests = 2;
     std::filesystem::path profilePrefix; // Empty disables profiling.
+    ProviderPreference providerPreference = ProviderPreference::preferTensorRt;
 };
 class OnnxCudaBackend final : public IInterpolationBackend {
 public:

@@ -9,6 +9,13 @@
     "license": "MIT plus bundled ThirdPartyNotices.txt",
     "cApiHeaderSha256": "ed5c8a336708866d21e0c3f5374229e6753088046fcbf69f81394fcbfd730609"
   },
+  "tensorRt": {
+    "version": "10.9.0.34",
+    "fileName": "tensorrt_cu12_libs-10.9.0.34-py2.py3-none-win_amd64.whl",
+    "url": "https://pypi.nvidia.com/tensorrt-cu12-libs/tensorrt_cu12_libs-10.9.0.34-py2.py3-none-win_amd64.whl",
+    "sha256": "e43d38cc380d615bf8afab637c265f01a9452dc23deb9b9dd47b7662edf24531",
+    "license": "NVIDIA Software License Agreement; development workstation only"
+  },
   "json": {
     "version": "3.12.0",
     "url": "https://raw.githubusercontent.com/nlohmann/json/v3.12.0/single_include/nlohmann/json.hpp",

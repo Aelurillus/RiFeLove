@@ -106,7 +106,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     }
     if (!writer) writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop);
     PipelineResult result{};
-    result.modelId = capabilities.modelId; result.backend = capabilities.backend; result.encoderFallbackReason = fallback;
+    result.modelId = capabilities.modelId; result.backend = capabilities.backend;
+    result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
     std::optional<CachedFrame> previous;
     std::optional<CfrClock> clock;
     std::optional<media::DecodedFrame> pending;

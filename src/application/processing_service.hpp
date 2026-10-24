@@ -20,7 +20,14 @@ struct ProcessingJob {
     std::string expectedModelId;
     std::string expectedModelVersion;
 };
-struct ProcessingIdentity { FileIdentity source; std::string modelId; std::string modelVersion; std::string modelSha256; gpu::DeviceInfo device; };
+struct ProcessingIdentity {
+    FileIdentity source;
+    std::string modelId;
+    std::string modelVersion;
+    std::string modelSha256;
+    gpu::DeviceInfo device;
+    std::string backend;
+};
 struct ProcessingEvent {
     enum class Kind { progress, prepared, inspected, completed, cancelled, failed };
     Kind kind = Kind::progress;

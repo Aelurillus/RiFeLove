@@ -14,7 +14,14 @@ public:
 private:
     InferenceErrorKind kind_;
 };
-struct ModelCapabilities { std::string backend; std::string modelId; int spatialMultiple; bool dynamicTimestep; bool fp16; };
+struct ModelCapabilities {
+    std::string backend;
+    std::string modelId;
+    int spatialMultiple;
+    bool dynamicTimestep;
+    bool fp16;
+    std::string fallbackReason;
+};
 // Immutable through this interface. The uploader must relinquish mutable aliases
 // before submitting a frame, and keep its data unchanged until its future ends.
 struct GpuFrame { std::shared_ptr<const gpu::DeviceBuffer> pixels; int width; int height; };

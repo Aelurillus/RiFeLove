@@ -92,7 +92,10 @@ class NativeRifePipeline(unittest.TestCase):
         output = self.root / "中文 60000-1001.mkv"
         original_hash = hashlib.sha256(self.complex.read_bytes()).digest()
         result,_ = self.run_job(self.complex,output,"60000/1001","--encoder","ffv1","--progress")
-        self.assertEqual(result["backend"],"onnxruntime_cuda"); self.assertGreater(result["ai_frames"],0)
+        self.assertIn(result["backend"],("onnxruntime_cuda","onnxruntime_tensorrt_cuda"))
+        if result["backend"] == "onnxruntime_cuda": self.assertTrue(result["inference_fallback_reason"])
+        else: self.assertFalse(result["inference_fallback_reason"])
+        self.assertGreater(result["ai_frames"],0)
         self.verify_timing(output,result)
         info = probe(output,"-show_streams","-show_chapters","-show_format")
         self.assertEqual([s["codec_type"] for s in info["streams"]],["video","audio","audio","subtitle"])

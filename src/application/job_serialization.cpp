@@ -97,7 +97,7 @@ void pinModelDescriptor(ProcessingJob& job) {
 }
 std::string serializeIdentity(const ProcessingIdentity& i) {
     return Json{{"schemaVersion",1},{"source",{{"size",i.source.size},{"modified",i.source.modified},{"fileId",i.source.fileId},{"sha256",i.source.sha256}}},
-        {"model",{{"id",i.modelId},{"version",i.modelVersion},{"sha256",i.modelSha256}}},
+        {"model",{{"id",i.modelId},{"version",i.modelVersion},{"sha256",i.modelSha256},{"inferenceBackend",i.backend}}},
         {"device",{{"ordinal",i.device.ordinal},{"name",i.device.name},{"pciBusId",i.device.pciBusId},{"computeMajor",i.device.computeMajor},{"computeMinor",i.device.computeMinor},{"driverCudaApiVersion",i.device.driverCudaApiVersion}}}}.dump();
 }
 void applyStoredIdentity(ProcessingJob& job, const std::string& value) {
@@ -113,7 +113,8 @@ std::string serializeProgress(const ProcessingEvent& event) {
     return Json{{"schemaVersion",1},{"stage",event.stage},{"frames",event.outputFrames},{"aiFrames",event.aiFrames},{"processingFps",event.processingFps},{"timestamp",optional(event.timestamp)}}.dump();
 }
 std::string serializeResult(const PipelineResult& r) {
-    return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},{"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
+    return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},{"inferenceFallbackReason",r.inferenceFallbackReason},
+        {"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
         {"aiFrames",r.aiFrames},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
         {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",r.processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
         {"validation",{{"decodedFrames",r.validation.decodedFrames},{"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},

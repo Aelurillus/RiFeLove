@@ -1,4 +1,5 @@
 #include "inference/onnx_cuda_backend.hpp"
+#include "inference/tensorrt_cache.hpp"
 
 // The pinned Microsoft header spells the Windows calling convention _stdcall.
 // GCC in strict C++20 mode exposes __stdcall instead. Both use the x64 C ABI.
@@ -9,11 +10,14 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <utility>
 #ifndef NOMINMAX
@@ -36,6 +40,12 @@ template<class T> struct Handle final {
     Handle(const Handle&) = delete;
     Handle& operator=(const Handle&) = delete;
 };
+template <typename Function>
+Function exportedProc(HMODULE module, const char* name) {
+    const auto address = GetProcAddress(module,name);
+    static_assert(sizeof(Function) == sizeof(address));
+    return std::bit_cast<Function>(address);
+}
 class Runtime final {
 public:
     explicit Runtime(const std::filesystem::path& directory) {
@@ -52,6 +62,9 @@ public:
             if (std::string(base->GetVersionString()) != "1.22.0") throw InferenceError(InferenceErrorKind::unavailable, "Expected pinned ONNX Runtime 1.22.0");
             api = base->GetApi(ORT_API_VERSION);
             if (!api) throw InferenceError(InferenceErrorKind::unavailable, "ONNX Runtime API version is incompatible");
+            directory_ = path.parent_path();
+            dllDirectory_ = AddDllDirectory(directory_.c_str());
+            if (!dllDirectory_) throw InferenceError(InferenceErrorKind::unavailable, "Could not add the selected runtime directory to the private DLL search path");
             // Load from the explicit SDK directory, including dependencies of
             // the lazily loaded provider. This needs no process PATH changes
             // and identifies the actual missing DLL before Windows error 126
@@ -83,17 +96,79 @@ public:
     Runtime& operator=(const Runtime&) = delete;
     const OrtApi* api{};
     OrtEnv* environment() const { return environment_; }
+    void ensureTensorRtProvider() const {
+        const auto path = directory_ / L"onnxruntime_providers_tensorrt.dll";
+        if (!std::filesystem::is_regular_file(path))
+            throw InferenceError(InferenceErrorKind::unavailable, "ONNX Runtime TensorRT provider DLL is missing from the selected runtime directory");
+    }
+    std::string tensorRtVersion() {
+        const auto path = directory_ / L"nvinfer_10.dll";
+        const auto module = LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!module) throw InferenceError(InferenceErrorKind::unavailable,"Could not load TensorRT runtime; Windows error " + std::to_string(GetLastError()));
+        using GetInferLibVersion = std::int32_t (*)();
+        const auto getVersion = exportedProc<GetInferLibVersion>(module,"getInferLibVersion");
+        if (!getVersion) {
+            FreeLibrary(module);
+            throw InferenceError(InferenceErrorKind::unavailable,"TensorRT runtime does not export getInferLibVersion");
+        }
+        dependencyModules_.push_back(module);
+        const auto encoded = getVersion();
+        if (encoded < 0) throw InferenceError(InferenceErrorKind::unavailable,"TensorRT runtime returned an invalid version");
+        const auto major = encoded / 10000, minor = (encoded / 100) % 100, patch = encoded % 100;
+        const auto apiVersion = std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
+        if (major != 10 || minor != 9)
+            throw InferenceError(InferenceErrorKind::unavailable,"Pinned ONNX Runtime 1.22 TensorRT provider requires TensorRT 10.9; found " + apiVersion);
+        const auto manifest = directory_ / L"tensorrt-runtime.version";
+        if (!std::filesystem::is_regular_file(manifest)) return apiVersion;
+        const auto bytes = readLocalFile(manifest,256);
+        const std::string content(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+        std::istringstream lines(content);
+        std::string packageVersion, wheelHash;
+        std::getline(lines,packageVersion); std::getline(lines,wheelHash);
+        if (!wheelHash.empty() && wheelHash.back() == '\r') wheelHash.pop_back();
+        if (!packageVersion.starts_with(apiVersion + ".") && packageVersion != apiVersion)
+            throw InferenceError(InferenceErrorKind::unavailable,"TensorRT runtime manifest disagrees with the loaded library API version");
+        if (wheelHash.size() != 64 || !std::all_of(wheelHash.begin(),wheelHash.end(),[](unsigned char value) { return std::isxdigit(value) != 0; }))
+            throw InferenceError(InferenceErrorKind::unavailable,"TensorRT runtime manifest is incomplete");
+        return packageVersion;
+    }
+    std::string cudaRuntimeVersion() const {
+        const auto path = directory_ / L"cudart64_12.dll";
+        const auto module = LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!module) throw InferenceError(InferenceErrorKind::unavailable,"Could not load CUDA Runtime to identify the TensorRT engine cache version; Windows error " + std::to_string(GetLastError()));
+        using RuntimeGetVersion = int (WINAPI*)(int*);
+        const auto getVersion = exportedProc<RuntimeGetVersion>(module,"cudaRuntimeGetVersion");
+        int version = 0;
+        const int result = getVersion ? getVersion(&version) : -1;
+        FreeLibrary(module);
+        if (result != 0 || version < 1000)
+            throw InferenceError(InferenceErrorKind::unavailable,"Could not query the installed CUDA Runtime version for TensorRT engine caching");
+        return std::to_string(version / 1000) + "." + std::to_string((version % 1000) / 10);
+    }
 private:
     OrtEnv* environment_{};
     HMODULE module_{};
     std::vector<HMODULE> dependencyModules_;
+    std::filesystem::path directory_;
+    DLL_DIRECTORY_COOKIE dllDirectory_{};
     void cleanup() noexcept {
         if (environment_) { api->ReleaseEnv(environment_); environment_ = nullptr; }
         if (module_) { FreeLibrary(module_); module_ = nullptr; }
         for (auto iterator = dependencyModules_.rbegin(); iterator != dependencyModules_.rend(); ++iterator) FreeLibrary(*iterator);
         dependencyModules_.clear();
+        if (dllDirectory_) { RemoveDllDirectory(dllDirectory_); dllDirectory_ = nullptr; }
     }
 };
+std::filesystem::path defaultEngineCacheDirectory() {
+    std::array<wchar_t,32768> value{};
+    const DWORD size = GetEnvironmentVariableW(L"LOCALAPPDATA",value.data(),static_cast<DWORD>(value.size()));
+    if (size && size < value.size()) return std::filesystem::path(value.data()) / L"RifeLove" / L"Cache" / L"TensorRT";
+    return std::filesystem::temp_directory_path() / L"RifeLove" / L"Cache" / L"TensorRT";
+}
+std::string utf8Path(const std::filesystem::path& path) {
+    const auto value = path.u8string();
+    return {value.begin(),value.end()};
+}
 std::shared_ptr<Runtime> processRuntime(const std::filesystem::path& selected) {
     struct Registry { std::mutex mutex; std::filesystem::path directory; std::shared_ptr<Runtime> runtime; };
     static Registry registry;
@@ -164,8 +239,9 @@ public:
     Impl(std::shared_ptr<gpu::CudaDevice> selected, OnnxCudaConfig settings)
         : device(std::move(selected)), config(std::move(settings)), runtime(processRuntime(config.runtimeDirectory)), api(*runtime->api),
           session(api.ReleaseSession), cudaMemory(api.ReleaseMemoryInfo) {
-        if (!device || !config.arenaBudgetBytes || !config.maxQueuedRequests || config.maxQueuedRequests > 64)
+        if (!device || !config.arenaBudgetBytes || !config.tensorRtWorkspaceBytes || !config.maxQueuedRequests || config.maxQueuedRequests > 64)
             throw InferenceError(InferenceErrorKind::invalidRequest, "Invalid CUDA backend device, budget or queue limit");
+        if (config.engineCacheDirectory.empty()) config.engineCacheDirectory = defaultEngineCacheDirectory();
         check(api, api.CreateMemoryInfo("Cuda", OrtDeviceAllocator, device->info().ordinal, OrtMemTypeDefault, &cudaMemory.value));
         timestep = device->allocate(sizeof(float));
         worker = std::jthread([this](std::stop_token stop) { work(stop); });
@@ -181,30 +257,69 @@ public:
         if (model.spatialMultiple != 64 || model.graph.empty() || sha256(model.graph) != model.sha256)
             throw InferenceError(InferenceErrorKind::invalidRequest, "Model bytes or spatial contract failed verification");
         auto context = device->activate();
-        Handle<OrtSessionOptions> options(api.ReleaseSessionOptions);
-        check(api, api.CreateSessionOptions(&options.value));
-        check(api, api.SetSessionExecutionMode(options.value, ORT_SEQUENTIAL));
-        check(api, api.SetIntraOpNumThreads(options.value, 2));
-        check(api, api.SetInterOpNumThreads(options.value, 1));
-        check(api, api.SetSessionGraphOptimizationLevel(options.value, ORT_ENABLE_EXTENDED));
-        if (!config.profilePrefix.empty()) check(api, api.EnableProfiling(options.value, config.profilePrefix.c_str()));
-        Handle<OrtCUDAProviderOptionsV2> provider(api.ReleaseCUDAProviderOptions);
-        check(api, api.CreateCUDAProviderOptions(&provider.value));
-        const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
-        const char* keys[] = {"device_id", "gpu_mem_limit", "arena_extend_strategy", "cudnn_conv_algo_search", "cudnn_conv_use_max_workspace", "use_tf32", "do_copy_in_default_stream"};
-        // Use the documented implicit-precomputed-GEMM baseline. Heuristic
-        // selection showed a gate failure on a repeated native run; faster
-        // algorithms need their own numerical qualification before use.
-        const char* values[] = {ordinal.c_str(), budget.c_str(), "kSameAsRequested", "DEFAULT", "0", "0", "1"};
-        check(api, api.UpdateCUDAProviderOptions(provider.value, keys, values, std::size(keys)));
-        check(api, api.UpdateCUDAProviderOptionsWithValue(provider.value, "user_compute_stream", reinterpret_cast<void*>(device->streamAddress())));
-        // CUDA provider creation failure propagates. There is no CPU-session retry.
-        try { check(api, api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value, provider.value)); }
-        catch (const InferenceError& error) { throw InferenceError(InferenceErrorKind::unavailable, "CUDA provider could not initialize: " + std::string(error.what())); }
-        Handle<OrtSession> next(api.ReleaseSession);
-        check(api, api.CreateSessionFromArray(runtime->environment(), model.graph.data(), model.graph.size(), options.value, &next.value));
-        validateContract(api, next.value);
-        session = std::move(next);
+        fallbackReason.clear();
+        resolvedBackend = "onnxruntime_cuda";
+        const auto buildSession = [&](bool useTensorRt) {
+            Handle<OrtSessionOptions> options(api.ReleaseSessionOptions);
+            check(api, api.CreateSessionOptions(&options.value));
+            check(api, api.SetSessionExecutionMode(options.value, ORT_SEQUENTIAL));
+            check(api, api.SetIntraOpNumThreads(options.value, 2));
+            check(api, api.SetInterOpNumThreads(options.value, 1));
+            check(api, api.SetSessionGraphOptimizationLevel(options.value, ORT_ENABLE_EXTENDED));
+            if (!config.profilePrefix.empty()) check(api, api.EnableProfiling(options.value, config.profilePrefix.c_str()));
+            if (useTensorRt) {
+                runtime->ensureTensorRtProvider();
+                const auto version = runtime->tensorRtVersion();
+                const auto deviceInfo = device->info();
+                const auto cudaVersion = runtime->cudaRuntimeVersion();
+                const TensorRtCacheIdentity identity{"1.22.0",version,cudaVersion,"fp32","rife-v1-min64-opt720p-max4k",config.tensorRtWorkspaceBytes};
+                const auto prefix = tensorRtEngineCachePrefix(model,deviceInfo,identity);
+                const auto cacheDirectory = config.engineCacheDirectory / prefix;
+                std::error_code error;
+                std::filesystem::create_directories(cacheDirectory,error);
+                if (error) throw InferenceError(InferenceErrorKind::unavailable,"Could not create the local TensorRT engine cache directory: " + error.message());
+                const auto cachePath = utf8Path(cacheDirectory);
+                Handle<OrtTensorRTProviderOptionsV2> tensorRt(api.ReleaseTensorRTProviderOptions);
+                check(api,api.CreateTensorRTProviderOptions(&tensorRt.value));
+                const std::string tensorRtOrdinal = std::to_string(deviceInfo.ordinal);
+                const std::string tensorRtWorkspace = std::to_string(config.tensorRtWorkspaceBytes);
+                const char* profileMin = "frame0:1x3x64x64,frame1:1x3x64x64";
+                const char* profileOpt = "frame0:1x3x768x1280,frame1:1x3x768x1280";
+                const char* profileMax = "frame0:1x3x2176x3840,frame1:1x3x2176x3840";
+                const char* tensorRtKeys[] = {"device_id","trt_engine_cache_enable","trt_engine_cache_path","trt_engine_cache_prefix",
+                    "trt_fp16_enable","trt_max_workspace_size","trt_profile_min_shapes","trt_profile_opt_shapes","trt_profile_max_shapes"};
+                const char* tensorRtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),prefix.c_str(),"0",tensorRtWorkspace.c_str(),
+                    profileMin,profileOpt,profileMax};
+                check(api,api.UpdateTensorRTProviderOptions(tensorRt.value,tensorRtKeys,tensorRtValues,std::size(tensorRtKeys)));
+                check(api,api.SessionOptionsAppendExecutionProvider_TensorRT_V2(options.value,tensorRt.value));
+            }
+            Handle<OrtCUDAProviderOptionsV2> cuda(api.ReleaseCUDAProviderOptions);
+            check(api, api.CreateCUDAProviderOptions(&cuda.value));
+            const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
+            const char* keys[] = {"device_id", "gpu_mem_limit", "arena_extend_strategy", "cudnn_conv_algo_search", "cudnn_conv_use_max_workspace", "use_tf32", "do_copy_in_default_stream"};
+            // Use the documented implicit-precomputed-GEMM baseline. Heuristic
+            // selection showed a gate failure on a repeated native run; faster
+            // algorithms need their own numerical qualification before use.
+            const char* values[] = {ordinal.c_str(), budget.c_str(), "kSameAsRequested", "DEFAULT", "0", "0", "1"};
+            check(api, api.UpdateCUDAProviderOptions(cuda.value, keys, values, std::size(keys)));
+            check(api, api.UpdateCUDAProviderOptionsWithValue(cuda.value, "user_compute_stream", reinterpret_cast<void*>(device->streamAddress())));
+            try { check(api, api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value, cuda.value)); }
+            catch (const InferenceError& error) { throw InferenceError(InferenceErrorKind::unavailable, "CUDA provider could not initialize: " + std::string(error.what())); }
+            Handle<OrtSession> next(api.ReleaseSession);
+            check(api, api.CreateSessionFromArray(runtime->environment(), model.graph.data(), model.graph.size(), options.value, &next.value));
+            validateContract(api, next.value);
+            return next;
+        };
+        if (config.providerPreference != ProviderPreference::cudaOnly) {
+            try {
+                session = buildSession(true);
+                resolvedBackend = "onnxruntime_tensorrt_cuda";
+            } catch (const InferenceError& error) {
+                if (config.providerPreference == ProviderPreference::requireTensorRt) throw;
+                fallbackReason = error.what();
+            }
+        }
+        if (!session.value) session = buildSession(false);
         modelId = model.id;
         profiled = !config.profilePrefix.empty();
     }
@@ -234,7 +349,7 @@ public:
     }
     ModelCapabilities capabilities() const {
         std::lock_guard lock(mutex);
-        return {"onnxruntime_cuda", modelId, 64, true, false};
+        return {resolvedBackend, modelId, 64, true, false, fallbackReason};
     }
 private:
     InterpolationResult execute(InterpolationRequest& request, std::stop_token shutdown) {
@@ -339,6 +454,8 @@ private:
     bool active = false;
     bool profiled = false;
     std::string modelId;
+    std::string resolvedBackend = "onnxruntime_cuda";
+    std::string fallbackReason;
     std::jthread worker;
 };
 OnnxCudaBackend::OnnxCudaBackend(std::shared_ptr<gpu::CudaDevice> device, OnnxCudaConfig config) : impl_(std::make_unique<Impl>(std::move(device), std::move(config))) {}

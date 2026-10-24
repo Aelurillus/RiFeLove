@@ -42,4 +42,51 @@ foreach ($package in $lock.nvidia) {
         } else { Copy-Item -LiteralPath $library.FullName -Destination $target }
     }
 }
-[pscustomobject]@{onnxRoot=$runtimeRoot;jsonRoot=$jsonRoot;nativeRuntimeOnly=$true;redistributionAudit='pending'} | ConvertTo-Json
+$tensorRtArchive = Get-PinnedAsset $lock.tensorRt.fileName $lock.tensorRt.url $lock.tensorRt.sha256
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::OpenRead($tensorRtArchive)
+try {
+    $libraries = @($archive.Entries | Where-Object { $_.FullName -match '^tensorrt_libs/[^/]+\.dll$' })
+    if (-not $libraries.Count) { throw 'TensorRT wheel has no native runtime libraries.' }
+    $libraryRoot = Join-Path $runtimeRoot 'lib'
+    New-Item -ItemType Directory -Path $libraryRoot -Force | Out-Null
+    foreach ($entry in $libraries) {
+        $target = Join-Path $libraryRoot $entry.Name
+        if (Test-Path -LiteralPath $target) {
+            $existingHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+            $stream = $entry.Open()
+            $hash = [System.Security.Cryptography.SHA256]::Create()
+            try { $entryHash = [Convert]::ToHexString($hash.ComputeHash($stream)) } finally { $stream.Dispose(); $hash.Dispose() }
+            if ($existingHash -ne $entryHash) { throw "Refusing to overwrite a different TensorRT DLL: $target" }
+            continue
+        }
+        $inputStream = $entry.Open()
+        $outputStream = [System.IO.File]::Open($target,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
+        try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }
+    }
+    $licenseEntry = $archive.GetEntry('tensorrt_cu12_libs-10.9.0.34.dist-info/LICENSE.txt')
+    if (-not $licenseEntry) { throw 'TensorRT wheel did not contain its license agreement.' }
+    $licenseRoot = Join-Path $DependencyRoot 'licenses'
+    New-Item -ItemType Directory -Path $licenseRoot -Force | Out-Null
+    $licenseTarget = Join-Path $licenseRoot 'TensorRT-10.9-LICENSE.txt'
+    if (Test-Path -LiteralPath $licenseTarget) {
+        $licenseStream = $licenseEntry.Open()
+        $hash = [System.Security.Cryptography.SHA256]::Create()
+        try { $licenseHash = [Convert]::ToHexString($hash.ComputeHash($licenseStream)) } finally { $licenseStream.Dispose(); $hash.Dispose() }
+        if ((Get-FileHash -LiteralPath $licenseTarget -Algorithm SHA256).Hash -ne $licenseHash) {
+            throw "Refusing to replace a different TensorRT license file: $licenseTarget"
+        }
+    } else {
+        $licenseStream = $licenseEntry.Open()
+        $licenseOutput = [System.IO.File]::Open($licenseTarget,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
+        try { $licenseStream.CopyTo($licenseOutput) } finally { $licenseOutput.Dispose(); $licenseStream.Dispose() }
+    }
+    $versionManifest = Join-Path $libraryRoot 'tensorrt-runtime.version'
+    $manifestContent = "$($lock.tensorRt.version)`n$($lock.tensorRt.sha256)"
+    if (Test-Path -LiteralPath $versionManifest) {
+        if ((Get-Content -LiteralPath $versionManifest -Raw -Encoding ASCII).TrimEnd() -ne $manifestContent) {
+            throw "Refusing to replace a different TensorRT runtime identity: $versionManifest"
+        }
+    } else { Set-Content -LiteralPath $versionManifest -Value $manifestContent -Encoding ASCII }
+} finally { $archive.Dispose() }
+[pscustomobject]@{onnxRoot=$runtimeRoot;jsonRoot=$jsonRoot;tensorRtVersion=$lock.tensorRt.version;nativeRuntimeOnly=$true;redistributionAudit='pending'} | ConvertTo-Json

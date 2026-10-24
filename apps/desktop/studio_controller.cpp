@@ -68,12 +68,15 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         progress_["aiFrames"] = QVariant::fromValue<qulonglong>(event.aiFrames);
         progress_["fps"] = event.processingFps;
         if (event.timestamp) progress_["timestamp"] = seconds(*event.timestamp);
-        if (event.stage == "encoder_fallback") {
-            progress_["encoderFallbackReason"] = text(event.detail);
-            detail_ = tr("NVIDIA 视频编码器当前不可用，已切换到软件 H.264；补帧仍在进行。");
-        } else if (!event.detail.empty()) detail_ = text(event.detail);
-        else if (!progress_.value("encoderFallbackReason").toString().isEmpty())
-            detail_ = tr("NVIDIA 视频编码器当前不可用，已切换到软件 H.264；补帧仍在进行。");
+        if (event.stage == "encoder_fallback") progress_["encoderFallbackReason"] = text(event.detail);
+        if (event.kind == Kind::prepared && !event.detail.empty()) progress_["inferenceFallbackReason"] = text(event.detail);
+        QStringList notices;
+        if (!progress_.value("inferenceFallbackReason").toString().isEmpty())
+            notices.push_back(tr("TensorRT 当前不可用，已回退到 ONNX Runtime CUDA 推理。"));
+        if (!progress_.value("encoderFallbackReason").toString().isEmpty())
+            notices.push_back(tr("NVIDIA 视频编码器当前不可用，已切换到软件 H.264；补帧仍在进行。"));
+        if (!notices.isEmpty()) detail_ = notices.join('\n');
+        else if (event.stage != "encoder_fallback" && !event.detail.empty()) detail_ = text(event.detail);
         else detail_.clear();
     } else {
         busy_ = false;
@@ -118,6 +121,10 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             if (!result.encoderFallbackReason.empty()) {
                 progress_["encoderFallbackReason"] = text(result.encoderFallbackReason);
                 detail_ += "\n" + tr("GPU 编码器无法在当前环境启动，已使用软件 H.264；RIFE 插帧仍由 GPU 运行。");
+            }
+            if (!result.inferenceFallbackReason.empty()) {
+                progress_["inferenceFallbackReason"] = text(result.inferenceFallbackReason);
+                detail_ += "\n" + tr("TensorRT 未能启动，已使用 ONNX Runtime CUDA 完成推理。");
             }
         } else if (event.kind == Kind::cancelled) { status_ = "cancelled"; detail_ = tr("操作已取消，未发布部分视频。"); }
         else { status_ = "failed"; detail_ = text(event.detail); }

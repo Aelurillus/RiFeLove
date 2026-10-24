@@ -41,9 +41,10 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete the multi-model provenance audit and quality/profile selection.
 - [x] Define the first async interpolation/backend contract with owned GPU inputs, bounded queue, cancellation and exclusive reusable outputs; 36 native reference/contract checks pass (full concurrency/fault stress pending).
 - [x] Build PyTorch reference exporter and numerical comparison harness; separately record strict-gate failure and SDR8 numerical qualification.
-- [ ] Integrate ONNX Runtime CUDA and validate supported model operators/shapes.
+- [x] Integrate ONNX Runtime CUDA and validate supported model operators/shapes.
   - RIFE 4.25 native execution passes six small-profile SDR8 comparisons with CUDA Conv/ConvTranspose/GridSample placement; larger profiles/visual validation remain open.
-- [ ] Integrate TensorRT backend and version/GPU keyed engine cache.
+- [x] Integrate TensorRT backend and version/GPU/model/options keyed engine cache.
+  - ONNX Runtime 1.22 + TensorRT 10.9.0.34 + CUDA 12.8 passed six FP32 SDR8 reference cases on GTX 1660 SUPER; profiling confirms a fused TensorRT kernel ran. A tagged synthetic 720p BT.709 RIFE run completed 30 to 60 FPS with 24 AI frames, preserved FLAC audio and 0.5 s duration. Real-content quality, cache/performance matrix and FP16 remain open.
 - [ ] Register checksum-verifiable model manifests with capability and license metadata.
 - [x] Pass first real end-to-end SDR8 video interpolation and independent original-PyTorch video numerical tests.
 - [ ] Complete full-resolution, real-content and perceptual/temporal quality acceptance.
@@ -53,7 +54,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add native CUDA device/context/stream/buffer primitives with actual local GPU transfer, budget and lifetime tests.
 - [ ] Probe GPU/driver/compute and codec capabilities at runtime.
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
-  - Local NVENC probe fails: SDK requires API 13.0; installed driver exposes 12.2. Pipeline auto-selection now reports software H.264 fallback; GPU encode/decode remains unqualified.
+  - Auto encoding retries software H.264 when this workstation's NVENC open returns `Function not implemented`; a synthetic 720p TensorRT-to-output run validates the H.264 output and retained audio, and the updated Studio explains that processing continues. Successful NVENC hardware encoding and NVDEC remain unqualified. Local driver 560.94 exposes NVENC API 12.2; this FFmpeg build requires API 13.0 / driver 570.0 or newer.
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
 - [ ] Evaluate CUDA Graph, FP16, profiles and optional overlapped tiling.

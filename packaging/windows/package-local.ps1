@@ -76,19 +76,26 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination (Join-
 Copy-Item -LiteralPath (Join-Path $ffmpeg "LICENSE.txt") -Destination (Join-Path $licenseTarget "FFmpeg-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path (Split-Path $onnx -Parent) "LICENSE") -Destination (Join-Path $licenseTarget "ONNX-Runtime-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path (Split-Path $onnx -Parent) "ThirdPartyNotices.txt") -Destination (Join-Path $licenseTarget "ONNX-Runtime-ThirdPartyNotices.txt")
+$dependencyRoot = Split-Path (Split-Path $onnx -Parent) -Parent
+$tensorRtRuntime = Test-Path -LiteralPath (Join-Path $onnx "nvinfer_10.dll")
+$tensorRtLicense = Join-Path $dependencyRoot "licenses/TensorRT-10.9-LICENSE.txt"
+if ($tensorRtRuntime -and (Test-Path -LiteralPath $tensorRtLicense -PathType Leaf)) {
+    Copy-Item -LiteralPath $tensorRtLicense -Destination (Join-Path $licenseTarget "TensorRT-10.9-LICENSE.txt")
+}
 
 $readme = @"
 RifeLove 本机运行包
 
 启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。
 本次附带且已校验的模型：RIFE 4.25 FP32 SDR8。当前色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8-bit SDR，并保留输入色彩标签。模型许可与 SHA-256 位于 models 和 licenses 文件夹。
-默认视频编码：自动尝试 NVIDIA NVENC；驱动不支持时会回退到 H.264 软件编码。
+默认推理：优先尝试 TensorRT 10.9；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT 引擎缓存位于本机用户目录。
+默认视频编码：自动尝试 NVIDIA NVENC；编码器无法启动时会显示说明并切换到 H.264 软件编码。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。
 进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。
 
 GPU 运行库使用本机已安装的 ONNX Runtime CUDA 1.22.0 与 NVIDIA CUDA 12.8/cuDNN 9 SDK，runtime 是其本机目录联接，不是跨电脑可搬运的发行包。目标电脑仍需 NVIDIA 驱动、兼容的 CUDA/cuDNN 运行环境。此本机目录不代表完成了公开发行所需的第三方再分发审核。
 
-当前验证边界：本地 GTX 1660 SUPER；BT.470BG/SMPTE 170M 已通过合成 8-bit SDR 视频的真实 RIFE 编码、颜色标签与音轨回归，尚非真实内容画质验收。TensorRT、HDR、10-bit AI 插帧和其它 RIFE 模型尚未随包提供。
+当前验证边界：本地 GTX 1660 SUPER；RIFE 4.25 FP32 TensorRT 已通过小尺寸数值对比及合成 720p BT.709、30→60 FPS 端到端验证，保留音轨和 0.5 秒时长；BT.470BG/SMPTE 170M 已通过合成 8-bit SDR 色彩与音轨回归。这些不是实际素材画质验收。当前驱动的 NVENC API 低于 FFmpeg 要求，自动模式已验证切换到软件 H.264。HDR、10-bit AI 插帧和其它 RIFE 模型仍未验证。
 任务、偏好设置和模型中心目录保存在 data/preferences.ini 与 data/queue.sqlite。
 "@
 Set-Content -LiteralPath (Join-Path $target "README-本机运行.txt") -Value $readme -Encoding UTF8

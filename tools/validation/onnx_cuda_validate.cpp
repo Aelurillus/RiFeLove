@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -33,9 +34,11 @@ void expectInferenceError(std::future<inference::InterpolationResult> future, in
 }
 }
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 4) { std::cerr << "Usage: rifelove-validate-cuda MODEL_PACK RUNTIME_DLL_DIRECTORY REPORT_JSON\n"; return 2; }
+    if (argc < 4 || argc > 5) { std::cerr << "Usage: rifelove-validate-cuda MODEL_PACK RUNTIME_DLL_DIRECTORY REPORT_JSON [cuda|tensorrt]\n"; return 2; }
     try {
         static_assert(std::endian::native == std::endian::little);
+        const std::wstring requestedProvider = argc == 5 ? argv[4] : L"cuda";
+        if (requestedProvider != L"cuda" && requestedProvider != L"tensorrt") throw std::invalid_argument("Provider must be cuda or tensorrt");
         const auto root = std::filesystem::absolute(std::filesystem::path(argv[1]));
         const auto reportPath = std::filesystem::absolute(std::filesystem::path(argv[3]));
         const auto pack = inference::loadModelPack(root);
@@ -45,10 +48,13 @@ int wmain(int argc, wchar_t** argv) {
         auto device = std::make_shared<gpu::CudaDevice>(0, 128 * 1024 * 1024);
         inference::OnnxCudaConfig config;
         config.runtimeDirectory = std::filesystem::absolute(std::filesystem::path(argv[2]));
+        config.providerPreference = requestedProvider == L"tensorrt" ? inference::ProviderPreference::requireTensorRt : inference::ProviderPreference::cudaOnly;
         config.profilePrefix = reportPath.parent_path() / "onnx-cuda-profile";
         inference::OnnxCudaBackend backend(device, config);
         backend.loadModel(pack);
-        json report = {{"backend", "onnxruntime_cuda"}, {"runtime", "1.22.0"}, {"model_sha256",pack.sha256},
+        const auto capabilities = backend.capabilities();
+        json report = {{"backend",capabilities.backend}, {"requested_provider",requestedProvider == L"tensorrt" ? "tensorrt" : "cuda"},
+            {"runtime", "1.22.0"}, {"model_sha256",pack.sha256},
             {"device",device->info().name}, {"compute_capability",std::to_string(device->info().computeMajor) + "." + std::to_string(device->info().computeMinor)},
             {"use_tf32",false}, {"convolution_algorithm_search","DEFAULT"}, {"arena_budget_bytes",config.arenaBudgetBytes}, {"cases",json::array()}};
         const double maxLimit = reference.at("ort_max_abs_error_limit").get<double>();
@@ -110,8 +116,14 @@ int wmain(int argc, wchar_t** argv) {
         const auto profile = readJson(profilePath);
         json assignments = json::object();
         std::set<std::string> gpuHeavy;
+        std::set<std::string> tensorRtHeavy;
         std::size_t cpuLargestTensor = 0;
         const std::set<std::string> heavy = {"Conv", "FusedConv", "ConvTranspose", "GridSample", "Gemm", "MatMul"};
+        const auto isTensorRt = [](const std::string& provider) {
+            std::string lower = provider;
+            std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            return lower == "tensorrtexecutionprovider";
+        };
         for (const auto& event : profile) {
             if (!event.contains("args") || !event["args"].contains("provider") || !event["args"].contains("op_name")) continue;
             const auto provider = event["args"]["provider"].get<std::string>(), operation = event["args"]["op_name"].get<std::string>();
@@ -133,16 +145,28 @@ int wmain(int argc, wchar_t** argv) {
                     }
                 }
             }
-            if (heavy.contains(operation)) { require(provider == "CUDAExecutionProvider", "Image compute operator fell back to CPU"); gpuHeavy.insert(operation); }
+            if (isTensorRt(provider) && operation.starts_with("TRTKernel_")) tensorRtHeavy.insert(operation);
+            if (heavy.contains(operation)) {
+                require(provider == "CUDAExecutionProvider" || isTensorRt(provider), "Image compute operator fell back to CPU");
+                gpuHeavy.insert(operation);
+                if (isTensorRt(provider)) tensorRtHeavy.insert(operation);
+            }
         }
-        require((gpuHeavy.contains("Conv") || gpuHeavy.contains("FusedConv")) && gpuHeavy.contains("ConvTranspose") && gpuHeavy.contains("GridSample"), "No profiling proof of CUDA convolution and warp execution");
+        if (requestedProvider == L"tensorrt")
+            require(!tensorRtHeavy.empty(), "TensorRT session ran without assigning any profiled image-compute operators to TensorRT");
+        else
+            require((gpuHeavy.contains("Conv") || gpuHeavy.contains("FusedConv")) && gpuHeavy.contains("ConvTranspose") && gpuHeavy.contains("GridSample"),
+                "No profiling proof of CUDA convolution and warp execution");
         report["operator_assignments"] = assignments;
+        report["tensorrt_heavy_operators"] = json::array();
+        for (const auto& operation : tensorRtHeavy) report["tensorrt_heavy_operators"].push_back(operation);
         report["cpu_tensor_max_elements"] = cpuLargestTensor;
         report["profile_file"] = pathText(profilePath);
         report["contract_checks"] = contractChecks;
         report["max_abs_error_limit"] = maxLimit;
         report["minimum_psnr_db"] = psnrLimit;
-        report["status"] = passed ? "passed_native_cuda_reference" : "failed_numerical_gate";
+        const std::string backendName = requestedProvider == L"tensorrt" ? "tensorrt" : "cuda";
+        report["status"] = passed ? "passed_native_" + backendName + "_reference" : "failed_numerical_gate";
         std::ofstream output(reportPath, std::ios::binary);
         output << report.dump(2) << '\n';
         if (!output) throw std::runtime_error("Could not write validation report");

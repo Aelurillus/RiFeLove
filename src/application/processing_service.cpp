@@ -49,11 +49,13 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         throw std::runtime_error("Model identity/version changed since this task was queued");
     checkpoint();
     auto device = std::make_shared<gpu::CudaDevice>(job.deviceOrdinal);
-    ProcessingEvent prepared; prepared.kind = ProcessingEvent::Kind::prepared; prepared.stage = "loading_model";
-    prepared.identity = ProcessingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info()};
-    send(std::move(prepared));
     inference::OnnxCudaConfig config; config.runtimeDirectory = job.runtimeDirectory;
     inference::OnnxCudaBackend backend(device,config); backend.loadModel(pack);
+    const auto capabilities = backend.capabilities();
+    ProcessingEvent prepared; prepared.kind = ProcessingEvent::Kind::prepared; prepared.stage = "loading_model";
+    prepared.detail = capabilities.fallbackReason;
+    prepared.identity = ProcessingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info(),capabilities.backend};
+    send(std::move(prepared));
     checkpoint();
     return interpolateVideo(job.source,job.output,job.settings,*device,backend,[&](const PipelineProgress& value) {
         // A completed progress event follows atomic output publication. Do

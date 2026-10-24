@@ -40,6 +40,7 @@ struct PipelineResult {
     std::size_t abnormalPairs;
     std::string modelId;
     std::string backend;
+    std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;
     double elapsedSeconds;
