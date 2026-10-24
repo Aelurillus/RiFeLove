@@ -1,35 +1,58 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
 
 ApplicationWindow {
     id: window
     visible: true
-    width: 1180
-    height: 800
-    minimumWidth: 960
-    minimumHeight: 680
+    width: 1360
+    height: 860
+    minimumWidth: 1080
+    minimumHeight: 720
     title: "RifeLove"
-    color: "#10151e"
+    color: "#0b1018"
+    Material.theme: Material.Dark
+    Material.accent: "#9ee6c8"
+    Material.primary: "#26394a"
     font.family: "Microsoft YaHei UI"
     font.pixelSize: 14
     palette.text: "#eaf0fa"
     palette.windowText: "#eaf0fa"
     palette.buttonText: "#eaf0fa"
-    palette.base: "#10151e"
+    palette.base: "#111923"
     palette.placeholderText: "#8493aa"
     palette.button: "#283447"
-    palette.highlight: "#79d6ba"
+    palette.highlight: "#9ee6c8"
     palette.highlightedText: "#10241f"
     property url modelFolder: ""
     property url runtimeFolder: ""
+    property bool advancedOpen: false
     property int currentPage: 0
     readonly property bool queueActive: processingAvailable && (taskQueue.busy || taskQueue.importing)
     readonly property bool active: processingAvailable && (studio.busy || queueActive)
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
+
+    function applyLocalDefaults() {
+        if (!processingAvailable) return
+        const values = taskQueue.defaults || ({})
+        if (!modelFolder.toString() && values.model && values.model.toString()) modelFolder = values.model
+        if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
+    }
+    function persistLocalDefaults() {
+        if (!processingAvailable) return
+        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
+        taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
+            codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv")
+    }
+    Component.onCompleted: applyLocalDefaults()
+    Connections {
+        target: taskQueue
+        function onDefaultsChanged() { window.applyLocalDefaults() }
+    }
 
     function stateText(value) {
         const labels = {ready: qsTr("等待导入"), inspecting: qsTr("读取视频信息"), inspected: qsTr("可以开始"),
@@ -52,8 +75,8 @@ ApplicationWindow {
         nameFilters: ["Matroska (*.mkv)", "MP4 (*.mp4)", "QuickTime (*.mov)"]
         onAccepted: studio.setOutput(selectedFile)
     }
-    FolderDialog { id: modelDialog; title: qsTr("选择已校验的本地模型包"); onAccepted: window.modelFolder = selectedFolder }
-    FolderDialog { id: runtimeDialog; title: qsTr("选择 ONNX CUDA 运行库目录"); onAccepted: window.runtimeFolder = selectedFolder }
+    FolderDialog { id: modelDialog; title: qsTr("选择已校验的本地模型包"); onAccepted: { window.modelFolder = selectedFolder; window.persistLocalDefaults() } }
+    FolderDialog { id: runtimeDialog; title: qsTr("选择 ONNX CUDA 运行库目录"); onAccepted: { window.runtimeFolder = selectedFolder; window.persistLocalDefaults() } }
     onClosing: function(close) {
         if (window.active) { close.accepted = false; closeDialog.open() }
     }
@@ -74,22 +97,50 @@ ApplicationWindow {
         spacing: 0
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 200
-            color: "#171f2b"
+            Layout.preferredWidth: 232
+            color: "#101722"
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 24
-                spacing: 16
-                Label { text: "RifeLove"; font.pixelSize: 26; font.bold: true }
-                Label { text: qsTr("离线 AI 视频补帧"); color: "#9aaac0" }
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#2b394e"; Layout.topMargin: 16; Layout.bottomMargin: 10 }
-                Button { text: qsTr("插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
-                Button { text: qsTr("任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
-                Button { text: qsTr("模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
+                anchors.margins: 20
+                spacing: 12
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    Rectangle {
+                        Layout.preferredWidth: 46
+                        Layout.preferredHeight: 46
+                        radius: 14
+                        gradient: Gradient { GradientStop { position: 0; color: "#b2f0d6" } GradientStop { position: 1; color: "#62c6aa" } }
+                        Label { anchors.centerIn: parent; text: "R"; color: "#10241f"; font.pixelSize: 28; font.bold: true }
+                    }
+                    ColumnLayout {
+                        spacing: 1
+                        Label { text: "RifeLove"; font.pixelSize: 23; font.bold: true }
+                        Label { text: qsTr("离线视频工作台"); color: "#91a1b4"; font.pixelSize: 12 }
+                    }
+                }
+                Rectangle { Layout.fillWidth: true; height: 1; color: "#253243"; Layout.topMargin: 12; Layout.bottomMargin: 8 }
+                Label { text: qsTr("工作区"); color: "#74849a"; font.pixelSize: 11; font.bold: true; Layout.leftMargin: 8 }
+                ActionButton { text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
+                ActionButton { text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
+                ActionButton { text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
                 Item { Layout.fillHeight: true }
-                Label { text: qsTr("NVIDIA GPU"); color: "#9aaac0"; font.pixelSize: 12 }
-                Label { text: window.info.gpu || qsTr("导入后检测"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Label { text: qsTr("源文件保留\n输出保存为新文件"); color: "#9aaac0"; font.pixelSize: 12; lineHeight: 1.5 }
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: 14
+                    color: "#151f2c"
+                    border.color: "#263548"
+                    implicitHeight: deviceInfo.implicitHeight + 28
+                    ColumnLayout {
+                        id: deviceInfo
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 7
+                        Label { text: qsTr("本机加速器"); color: "#91a1b4"; font.pixelSize: 11 }
+                        Label { text: window.info.gpu || qsTr("导入视频后检测"); wrapMode: Text.WordWrap; Layout.fillWidth: true; font.bold: true }
+                        Label { text: qsTr("源文件不会被修改"); color: "#91a1b4"; font.pixelSize: 11 }
+                    }
+                }
             }
         }
         StackLayout {
@@ -109,14 +160,31 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.margins: 32
                     spacing: 20
-                    Label { text: qsTr("让运动更连贯"); font.pixelSize: 28; font.bold: true }
-                    Label { text: qsTr("选择本机视频，设置目标帧率，生成经过验证的补帧文件。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 5
+                            Label { text: qsTr("插帧工作室"); color: "#9ee6c8"; font.pixelSize: 12; font.bold: true }
+                            Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 30; font.bold: true }
+                            Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#9aaac0"; wrapMode: Text.WordWrap }
+                        }
+                        Rectangle {
+                            visible: processingAvailable
+                            radius: 20
+                            color: "#172a2a"
+                            border.color: "#31534b"
+                            implicitWidth: engineLabel.implicitWidth + 24
+                            implicitHeight: engineLabel.implicitHeight + 16
+                            Label { id: engineLabel; anchors.centerIn: parent; text: qsTr("●  RIFE 4.25 · CUDA"); color: "#a5e2c8"; font.pixelSize: 12 }
+                        }
+                    }
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: importContent.implicitHeight + 36
-                        color: "#1a2432"
+                        color: "#151f2c"
                         radius: 12
-                        border.color: drop.containsDrag ? "#79d6ba" : "#324259"
+                        border.color: drop.containsDrag ? "#9ee6c8" : "#263548"
                         DropArea {
                             id: drop
                             anchors.fill: parent
@@ -129,8 +197,8 @@ ApplicationWindow {
                             anchors.margins: 18
                             spacing: 10
                             RowLayout {
-                                Label { text: qsTr("01  导入视频"); font.bold: true; Layout.fillWidth: true }
-                                Button { text: qsTr("选择文件"); enabled: processingAvailable && !window.active; onClicked: sourceDialog.open() }
+                            Label { text: qsTr("导入视频"); font.bold: true; font.pixelSize: 16; Layout.fillWidth: true }
+                                ActionButton { text: qsTr("选择文件"); primary: true; enabled: processingAvailable && !window.active; onClicked: sourceDialog.open() }
                             }
                             Label { text: processingAvailable && studio.source ? studio.source : qsTr("将一个视频拖到这里，或选择文件"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: "#c4d1e4" }
                             Label { visible: !!window.info.width; text: (window.info.width || 0) + " × " + (window.info.height || 0) + "   ·   " + (window.info.rate || "—") + " FPS   ·   " + (window.info.codec || "") + "   ·   " + (window.info.depth || 0) + "-bit"; color: "#9aaac0" }
@@ -142,55 +210,96 @@ ApplicationWindow {
                         spacing: 16
                         ColumnLayout {
                             Layout.fillWidth: true
-                            Label { text: qsTr("02  目标帧率"); font.bold: true }
-                            ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; enabled: !window.active }
+                            Label { text: qsTr("目标帧率"); font.bold: true }
+                            ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; enabled: !window.active; onActivated: window.persistLocalDefaults(); onAccepted: window.persistLocalDefaults() }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: qsTr("编码器"); font.bold: true }
-                            ComboBox { id: encoder; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active }
+                            ComboBox { id: encoder; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: window.persistLocalDefaults() }
                         }
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: qsTr("03  输出文件"); font.bold: true }
+                            Label { text: qsTr("输出文件"); font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Button { text: qsTr("选择位置"); enabled: processingAvailable && !window.active; onClicked: { outputDialog.selectedFile = studio.localUrl(studio.output); outputDialog.open() } }
+                        ActionButton { text: qsTr("选择位置"); enabled: processingAvailable && !window.active; onClicked: { outputDialog.selectedFile = studio.localUrl(studio.output); outputDialog.open() } }
                     }
                     TextField { Layout.fillWidth: true; readOnly: true; text: processingAvailable ? studio.output : ""; placeholderText: qsTr("导入视频后自动生成新文件名"); selectByMouse: true }
+                    ActionButton {
+                        text: window.advancedOpen ? qsTr("收起模型与运行库设置") : qsTr("高级设置 · 模型与运行库")
+                        flat: true
+                        Layout.alignment: Qt.AlignLeft
+                        onClicked: window.advancedOpen = !window.advancedOpen
+                    }
                     GroupBox {
                         title: qsTr("本地模型与运行库")
                         Layout.fillWidth: true
+                        visible: window.advancedOpen
+                        Layout.preferredHeight: visible ? implicitHeight : 0
                         ColumnLayout {
                             anchors.fill: parent
                             RowLayout {
                                 Label { text: qsTr("模型包"); Layout.preferredWidth: 70 }
                                 TextField { Layout.fillWidth: true; readOnly: true; text: window.modelFolder.toString(); placeholderText: qsTr("包含 model.json 的已校验模型包"); selectByMouse: true }
-                                Button { text: qsTr("选择目录"); enabled: !window.active; onClicked: modelDialog.open() }
+                                ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: modelDialog.open() }
                             }
                             RowLayout {
                                 Label { text: qsTr("运行库"); Layout.preferredWidth: 70 }
                                 TextField { Layout.fillWidth: true; readOnly: true; text: window.runtimeFolder.toString(); placeholderText: qsTr("包含 ONNX Runtime / CUDA DLL 的目录"); selectByMouse: true }
-                                Button { text: qsTr("选择目录"); enabled: !window.active; onClicked: runtimeDialog.open() }
+                                ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: runtimeDialog.open() }
                             }
                             Label { text: qsTr("当前已验证：RIFE 4.25、BT.709 8-bit SDR。HDR、10-bit 和未标记色彩的视频暂不支持。模型和运行库仅从所选本地目录加载。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                         }
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: window.stateText(window.state); color: window.state === "failed" ? "#ffb3ad" : "#79d6ba"; font.bold: true; Layout.fillWidth: true }
+                        Label { text: window.stateText(window.state); color: window.state === "failed" ? "#ffb3ad" : "#9ee6c8"; font.bold: true; Layout.fillWidth: true }
                         Label { text: (window.progress.frames || 0) + qsTr(" 帧  ·  ") + Number(window.progress.fps || 0).toFixed(1) + qsTr(" 处理 FPS"); color: "#9aaac0" }
-                        Button { text: qsTr("取消"); visible: processingAvailable && studio.busy; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
-                        Button {
+                        ActionButton { text: qsTr("取消"); visible: processingAvailable && studio.busy; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
+                        ActionButton {
                             objectName: "startButton"
                             text: qsTr("开始补帧")
                             enabled: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor && !!window.info.gpuAvailable && window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
                             highlighted: true
+                            primary: true
                             onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder, ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex])
                         }
                     }
                     ProgressBar { Layout.fillWidth: true; indeterminate: studio.busy; visible: processingAvailable && studio.busy }
                     Label { text: processingAvailable ? studio.detail : qsTr("请使用启用媒体和 ONNX CUDA 的桌面构建。"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: window.state === "failed" ? "#ffb3ad" : "#b9c9dd"; font.pixelSize: 12 }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        visible: !window.info.width
+                        Repeater {
+                            model: [
+                                {icon: "◉", title: qsTr("完全本地"), detail: qsTr("视频与模型只在本机处理")},
+                                {icon: "↗", title: qsTr("安全输出"), detail: qsTr("保留原片，生成独立文件")},
+                                {icon: "✦", title: qsTr("NVIDIA 加速"), detail: qsTr("RIFE 推理由 CUDA 驱动")}
+                            ]
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 82
+                                radius: 12
+                                color: "#121b27"
+                                border.color: "#202d3d"
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 14
+                                    spacing: 12
+                                    Label { text: modelData.icon; color: "#9ee6c8"; font.pixelSize: 20 }
+                                    ColumnLayout {
+                                        spacing: 4
+                                        Layout.fillWidth: true
+                                        Label { text: modelData.title; font.bold: true }
+                                        Label { text: modelData.detail; color: "#91a1b4"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             }

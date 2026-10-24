@@ -8,13 +8,15 @@
 #include <QQuickStyle>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFileInfo>
+#include <QSettings>
 #ifdef RIFELOVE_DESKTOP_PROCESSING
 #include "studio_controller.hpp"
 #include "queue_controller.hpp"
 #endif
 
 int main(int argc, char* argv[]) {
-    QQuickStyle::setStyle("Basic");
+    QQuickStyle::setStyle("Material");
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("RifeLove");
     QCommandLineParser parser;
@@ -26,8 +28,37 @@ int main(int argc, char* argv[]) {
     parser.process(app);
 #ifdef RIFELOVE_DESKTOP_PROCESSING
     StudioController studio;
-    const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) :
-        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    const QDir applicationDirectory(QCoreApplication::applicationDirPath());
+    const auto bundledModel = applicationDirectory.filePath("models/rife-4.25-fp32-sdr8-v2");
+    const auto bundledRuntime = applicationDirectory.filePath("runtime");
+    const bool portable = QFileInfo(applicationDirectory.filePath("portable.flag")).isFile();
+    const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
+        applicationDirectory.filePath("data") : QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (!QDir().mkpath(dataRoot)) return 2;
+    QSettings preferences(QDir(dataRoot).filePath("preferences.ini"),QSettings::IniFormat);
+    preferences.setFallbacksEnabled(false);
+    preferences.sync();
+    if (preferences.status() == QSettings::NoError) {
+        const auto modelSetting = preferences.value("model").toUrl();
+        if (modelSetting.isEmpty() && QFileInfo(QDir(bundledModel).filePath("model.json")).isFile()) {
+            preferences.setValue("model",QUrl::fromLocalFile(bundledModel));
+            auto models = preferences.value("modelCatalog/paths").toStringList();
+            models.push_back(QDir::toNativeSeparators(QFileInfo(bundledModel).absoluteFilePath()));
+            preferences.setValue("modelCatalog/paths",models);
+        }
+        if (preferences.value("runtime").toUrl().isEmpty() && QFileInfo(QDir(bundledRuntime).filePath("onnxruntime.dll")).isFile())
+            preferences.setValue("runtime",QUrl::fromLocalFile(bundledRuntime));
+        if (preferences.value("rate").toString().isEmpty()) preferences.setValue("rate","60");
+        if (preferences.value("encoder").toString().isEmpty()) preferences.setValue("encoder","auto");
+        if (preferences.value("container").toString().isEmpty()) preferences.setValue("container","mkv");
+        if (preferences.value("output").toUrl().isEmpty()) {
+            auto outputRoot = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+            if (outputRoot.isEmpty()) outputRoot = dataRoot;
+            const auto output = QDir(outputRoot).filePath("RifeLove");
+            if (QDir().mkpath(output)) preferences.setValue("output",QUrl::fromLocalFile(output));
+        }
+        preferences.sync();
+    }
     QueueController taskQueue(QDir(dataRoot).filePath("queue.sqlite"));
 #endif
     QQmlApplicationEngine engine;

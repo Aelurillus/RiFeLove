@@ -36,8 +36,8 @@ Item {
                 Label { text: qsTr("本地模型中心"); font.pixelSize: 27; font.bold: true }
                 Label { text: qsTr("管理已校验的 RIFE 模型包。模型文件只从本机目录读取；此页面不会联网或下载权重。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
-            Button { text: qsTr("重新校验"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels; onClicked: page.queueController.refreshModels() }
-            Button { text: qsTr("添加本地模型"); highlighted: true; enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels; onClicked: addModelDialog.open() }
+            ActionButton { text: qsTr("重新校验"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels; onClicked: page.queueController.refreshModels() }
+            ActionButton { text: qsTr("添加本地模型"); primary: true; highlighted: true; enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels; onClicked: addModelDialog.open() }
         }
         Rectangle {
             Layout.fillWidth: true
@@ -119,7 +119,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Item { Layout.fillWidth: true }
-                        Button {
+                        ActionButton {
                             objectName: "setDefaultModelButton"
                             text: qsTr("设为默认模型")
                             visible: valid && !page.isDefault(directory)
@@ -130,7 +130,7 @@ Item {
                                 page.defaultModelSelected(selected)
                             }
                         }
-                        Button {
+                        ActionButton {
                             text: qsTr("从目录列表移除")
                             visible: !page.isDefault(directory)
                             enabled: !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels

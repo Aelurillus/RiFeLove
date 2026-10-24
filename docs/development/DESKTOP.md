@@ -2,7 +2,19 @@
 
 The Qt/QML desktop now has a single-file Studio and a persistent local Task Queue. The queue accepts multiple files or folders (optional recursive scan), screens media against the active RIFE color contract, deduplicates sources, allocates non-overwriting names, and reports skipped HDR/unsupported inputs. It stores tasks in SQLite under the Windows local application data directory (or `--data-dir`) and stores last-used FPS, model, runtime, output, encoder and container settings in a local `preferences.ini`. The QML controls expose sequential start, safe pause/resume, stop, per-task cancellation, failed retry, interrupted restart-from-zero and opening completed output folders. Source files are preserved. Services own media and GPU work on background threads; QML owns no FFmpeg, CUDA or ONNX contexts.
 
-This is still a development workflow, not the complete product. The offline Model Center registers local model directories and verifies each model descriptor, tensor contract, bundled license and ONNX SHA-256 before selection; the catalog and default model persist locally and are revalidated on refresh. Model downloads, a provenance/version registry and multiple qualified model families remain required. The queue persists task state and preferences, but long-term history pagination, profiles, cross-process active control, safe stale-artifact cleanup, segment-boundary recovery/stitching, comparison playback, advanced quality/encoding controls, all four languages and release packaging remain required. The UI currently uses Simplified Chinese. No network acquisition occurs inside the desktop application.
+This is still a development workflow, not the complete product. The offline Model Center registers local model directories and verifies each model descriptor, tensor contract, bundled license and ONNX SHA-256 before selection; the catalog and default model persist locally and are revalidated on refresh. The workstation run folder currently includes one qualified model, RIFE 4.25 FP32 for BT.709 8-bit SDR, and default processing settings. Model downloads, a provenance/version registry and multiple qualified model families remain required. The queue persists task state and preferences, but long-term history pagination, profiles, cross-process active control, safe stale-artifact cleanup, segment-boundary recovery/stitching, comparison playback, advanced quality/encoding controls, all four languages and a redistributable installer remain required. The UI currently uses Simplified Chinese. No network acquisition occurs inside the desktop application.
+
+## Run the local workstation bundle
+
+On this workstation, build and launch the self-contained app folder with:
+
+```powershell
+.\packaging\windows\package-local.ps1
+```
+
+The script writes `out/RifeLove-local/`, deploys Qt and FFmpeg runtime files, copies the verified RIFE model and notices, creates first-run local preferences, then launches a startup smoke check and captures `first-run.png`. Open `out/RifeLove-local/RifeLove.exe` to use it. The folder is ignored by Git because it contains build outputs and model weights.
+
+This is a local runnable folder rather than a portable release: its `runtime` directory links to the CUDA/ONNX runtime SDK already installed on this machine. It includes one validated model, not a multi-model catalog. App settings and task history are stored under the bundle's `data` folder; no network access is needed for normal use.
 
 ## SDK
 

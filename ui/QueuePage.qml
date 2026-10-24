@@ -15,6 +15,7 @@ Item {
     property string encoder: "auto"
     property string container: "mkv"
     property bool recursive: false
+    property bool advancedOpen: false
     property var selectedSources: []
 
     function applyDefaults() {
@@ -32,6 +33,11 @@ Item {
         queueController.addItems(sources, outputFolder, rateBox.editText, modelFolder, runtimeFolder,
                                  encoder, container, recursive)
         selectedSources = []
+    }
+    function persistDefaults() {
+        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
+        queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
+            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv")
     }
     function statusText(value) {
         const labels = {queued: qsTr("等待处理"), running: qsTr("正在处理"), paused: qsTr("已暂停"),
@@ -58,9 +64,9 @@ Item {
         onAccepted: page.add(selectedFiles)
     }
     FolderDialog { id: sourceFolderDialog; title: qsTr("选择包含视频的文件夹"); onAccepted: page.add([selectedFolder]) }
-    FolderDialog { id: outputFolderDialog; title: qsTr("选择输出文件夹"); onAccepted: page.outputFolder = selectedFolder }
-    FolderDialog { id: modelDialog; title: qsTr("选择已校验的本地 RIFE 模型包"); onAccepted: page.modelFolder = selectedFolder }
-    FolderDialog { id: runtimeDialog; title: qsTr("选择 ONNX Runtime CUDA 运行库目录"); onAccepted: page.runtimeFolder = selectedFolder }
+    FolderDialog { id: outputFolderDialog; title: qsTr("选择输出文件夹"); onAccepted: { page.outputFolder = selectedFolder; page.persistDefaults() } }
+    FolderDialog { id: modelDialog; title: qsTr("选择已校验的本地 RIFE 模型包"); onAccepted: { page.modelFolder = selectedFolder; page.persistDefaults() } }
+    FolderDialog { id: runtimeDialog; title: qsTr("选择 ONNX Runtime CUDA 运行库目录"); onAccepted: { page.runtimeFolder = selectedFolder; page.persistDefaults() } }
 
     ColumnLayout {
         anchors.fill: parent
@@ -73,7 +79,7 @@ Item {
                 Label { text: qsTr("任务队列"); font.pixelSize: 27; font.bold: true }
                 Label { text: qsTr("批量导入、持久保存任务，并在安全检查点控制处理。中断任务从头重启，不会伪装成断点续传。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
-            Button { text: qsTr("重新连接"); visible: !page.queueController.available; onClicked: page.queueController.reconnect() }
+            ActionButton { text: qsTr("重新连接"); visible: !page.queueController.available; onClicked: page.queueController.reconnect() }
         }
         Rectangle {
             Layout.fillWidth: true
@@ -94,8 +100,8 @@ Item {
                 spacing: 12
                 RowLayout {
                     Label { text: qsTr("导入到队列"); font.bold: true; Layout.fillWidth: true }
-                    Button { text: qsTr("选择多个视频"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: filesDialog.open() }
-                    Button { text: qsTr("选择文件夹"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: sourceFolderDialog.open() }
+                    ActionButton { text: qsTr("选择多个视频"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: filesDialog.open() }
+                    ActionButton { text: qsTr("选择文件夹"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: sourceFolderDialog.open() }
                 }
                 Label { text: qsTr("拖入视频文件或文件夹；自动检查媒体轨道和模型支持的色彩格式。重复文件、已有队列输出和输出目录中的已生成文件会跳过。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12 }
                 RowLayout {
@@ -103,44 +109,48 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("目标 FPS"); font.bold: true }
-                        ComboBox { id: rateBox; objectName: "queueTargetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; onEditTextChanged: page.targetRate = editText }
+                        ComboBox { id: rateBox; objectName: "queueTargetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; onEditTextChanged: page.targetRate = editText; onActivated: page.persistDefaults(); onAccepted: page.persistDefaults() }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("输出容器"); font.bold: true }
-                        ComboBox { id: containerBox; Layout.fillWidth: true; model: ["mkv", "mp4", "mov"]; onActivated: page.container = currentText }
+                        ComboBox { id: containerBox; Layout.fillWidth: true; model: ["mkv", "mp4", "mov"]; onActivated: { page.container = currentText; page.persistDefaults() } }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("编码器"); font.bold: true }
-                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动 / H.264"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex] }
+                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动 / H.264"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex]; page.persistDefaults() } }
                     }
                 }
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: qsTr("输出位置"); Layout.preferredWidth: 75 }
                     TextField { Layout.fillWidth: true; readOnly: true; text: page.outputFolder.toString(); placeholderText: qsTr("留空时使用首个来源文件夹"); selectByMouse: true }
-                    Button { text: qsTr("选择"); onClicked: outputFolderDialog.open() }
-                    Button { text: qsTr("清除"); enabled: !!page.outputFolder.toString(); onClicked: page.outputFolder = "" }
+                    ActionButton { text: qsTr("选择"); onClicked: outputFolderDialog.open() }
+                    ActionButton { text: qsTr("清除"); enabled: !!page.outputFolder.toString(); onClicked: { page.outputFolder = ""; page.persistDefaults() } }
                 }
+                ActionButton { text: page.advancedOpen ? qsTr("收起模型与运行库") : qsTr("高级设置 · 模型与运行库"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.advancedOpen = !page.advancedOpen }
                 RowLayout {
+                    visible: page.advancedOpen
                     Layout.fillWidth: true
                     Label { text: qsTr("RIFE 模型"); Layout.preferredWidth: 75 }
                     TextField { objectName: "queueModelPath"; Layout.fillWidth: true; readOnly: true; text: page.modelFolder.toString(); placeholderText: qsTr("选择 model.json 所在的已校验目录"); selectByMouse: true }
-                    Button { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: modelDialog.open() }
+                    ActionButton { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: modelDialog.open() }
                 }
                 RowLayout {
+                    visible: page.advancedOpen
                     Layout.fillWidth: true
                     Label { text: qsTr("CUDA 运行库"); Layout.preferredWidth: 75 }
                     TextField { objectName: "queueRuntimePath"; Layout.fillWidth: true; readOnly: true; text: page.runtimeFolder.toString(); placeholderText: qsTr("选择 ONNX Runtime 与 CUDA DLL 目录"); selectByMouse: true }
-                    Button { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: runtimeDialog.open() }
+                    ActionButton { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: runtimeDialog.open() }
                 }
                 RowLayout {
                     CheckBox { text: qsTr("扫描子文件夹"); checked: page.recursive; onToggled: page.recursive = checked; enabled: !page.queueController.busy && !page.queueController.importing }
                     Item { Layout.fillWidth: true }
-                    Button {
+                    ActionButton {
                         text: page.queueController.importing ? qsTr("取消导入") : qsTr("加入队列")
                         highlighted: true
+                        primary: true
                         enabled: page.queueController.available && !page.queueController.busy &&
                                  (page.queueController.importing || (page.modelFolder.toString() !== "" && page.runtimeFolder.toString() !== ""))
                         onClicked: {
@@ -157,10 +167,10 @@ Item {
             spacing: 8
             Label { text: qsTr("%1 项").arg(page.queueController.counts.total || 0); font.bold: true; Layout.fillWidth: true }
             Label { text: qsTr("等待 %1 · 运行 %2 · 完成 %3 · 失败 %4").arg(page.queueController.counts.queued || 0).arg(page.queueController.counts.running || 0).arg(page.queueController.counts.completed || 0).arg(page.queueController.counts.failed || 0); color: "#9aaac0" }
-            Button { objectName: "queueStartButton"; text: qsTr("开始队列"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && (page.queueController.counts.queued || 0) > 0; onClicked: page.queueController.start() }
-            Button { objectName: "queuePauseButton"; text: qsTr("暂停"); visible: page.queueController.busy && ["running", "pausing"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "running"; onClicked: page.queueController.pause() }
-            Button { objectName: "queueResumeButton"; text: qsTr("继续"); visible: page.queueController.busy && ["paused", "resuming"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "paused"; onClicked: page.queueController.resume() }
-            Button { text: page.queueController.importing ? qsTr("取消导入") : qsTr("停止队列"); visible: page.queueController.busy || page.queueController.importing; onClicked: page.queueController.stop() }
+            ActionButton { objectName: "queueStartButton"; text: qsTr("开始队列"); primary: true; enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && (page.queueController.counts.queued || 0) > 0; onClicked: page.queueController.start() }
+            ActionButton { objectName: "queuePauseButton"; text: qsTr("暂停"); visible: page.queueController.busy && ["running", "pausing"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "running"; onClicked: page.queueController.pause() }
+            ActionButton { objectName: "queueResumeButton"; text: qsTr("继续"); primary: true; visible: page.queueController.busy && ["paused", "resuming"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "paused"; onClicked: page.queueController.resume() }
+            ActionButton { text: page.queueController.importing ? qsTr("取消导入") : qsTr("停止队列"); visible: page.queueController.busy || page.queueController.importing; onClicked: page.queueController.stop() }
         }
         Rectangle {
             Layout.fillWidth: true
@@ -213,10 +223,10 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { text: outputPath; elide: Text.ElideMiddle; color: "#8da1bd"; font.pixelSize: 11; Layout.fillWidth: true; textFormat: Text.PlainText }
-                        Button { objectName: "cancelTaskButton"; text: qsTr("取消任务"); visible: taskState === "queued" || taskState === "running" || taskState === "paused"; enabled: taskState !== "running" || page.queueController.busy; onClicked: page.queueController.cancelTask(taskId) }
-                        Button { objectName: "retryTaskButton"; text: qsTr("重试"); visible: taskState === "failed" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.retryTask(taskId) }
-                        Button { text: qsTr("从头重启"); visible: taskState === "interrupted" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.restartTask(taskId) }
-                        Button { text: qsTr("打开输出位置"); visible: taskState === "completed"; onClicked: page.queueController.openOutputFolder(taskId) }
+                        ActionButton { objectName: "cancelTaskButton"; text: qsTr("取消任务"); visible: taskState === "queued" || taskState === "running" || taskState === "paused"; enabled: taskState !== "running" || page.queueController.busy; onClicked: page.queueController.cancelTask(taskId) }
+                        ActionButton { objectName: "retryTaskButton"; text: qsTr("重试"); visible: taskState === "failed" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.retryTask(taskId) }
+                        ActionButton { text: qsTr("从头重启"); visible: taskState === "interrupted" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.restartTask(taskId) }
+                        ActionButton { text: qsTr("打开输出位置"); visible: taskState === "completed"; onClicked: page.queueController.openOutputFolder(taskId) }
                     }
                 }
             }
