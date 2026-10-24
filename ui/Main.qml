@@ -85,6 +85,7 @@ ApplicationWindow {
                 Rectangle { Layout.fillWidth: true; height: 1; color: "#2b394e"; Layout.topMargin: 16; Layout.bottomMargin: 10 }
                 Button { text: qsTr("插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
                 Button { text: qsTr("任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
+                Button { text: qsTr("模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
                 Item { Layout.fillHeight: true }
                 Label { text: qsTr("NVIDIA GPU"); color: "#9aaac0"; font.pixelSize: 12 }
                 Label { text: window.info.gpu || qsTr("导入后检测"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
@@ -194,10 +195,18 @@ ApplicationWindow {
             }
             }
             Loader {
+                id: queuePageLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 active: processingAvailable
                 sourceComponent: queuePageComponent
+            }
+            Loader {
+                id: modelPageLoader
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: processingAvailable
+                sourceComponent: modelCenterComponent
             }
         }
     }
@@ -206,6 +215,17 @@ ApplicationWindow {
         QueuePage {
             queueController: taskQueue
             processingAvailable: true
+        }
+    }
+    Component {
+        id: modelCenterComponent
+        ModelCenterPage { queueController: taskQueue }
+    }
+    Connections {
+        target: modelPageLoader.item
+        function onDefaultModelSelected(directory) {
+            window.modelFolder = directory
+            if (queuePageLoader.item) queuePageLoader.item.modelFolder = directory
         }
     }
 }

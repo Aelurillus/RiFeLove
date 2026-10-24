@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
+#include <QSettings>
 #include <iostream>
 #include <stdexcept>
 #include <functional>
@@ -42,7 +43,7 @@ void click(QObject* button, const char* name = "unnamed") {
 }
 QObject* findVisual(QQuickItem* parent, const QString& name) {
     if (!parent) return nullptr;
-    if (parent->objectName() == name) return parent;
+    if (parent->objectName() == name && parent->isVisible()) return parent;
     for (auto* child : parent->childItems()) if (auto* found = findVisual(child,name)) return found;
     return nullptr;
 }
@@ -194,9 +195,60 @@ int main(int argc, char** argv) {
                 "Queue settings changed after task operations");
         QEventLoop finalPaint; QTimer::singleShot(120,&finalPaint,&QEventLoop::quit); finalPaint.exec();
         require(window->grabWindow().save(arguments[6] + QStringLiteral(".queue.png")), "Final queue page screenshot failed");
+        root->setProperty("currentPage",2);
+        auto* modelCenter = root->findChild<QObject*>("modelCenterPage");
+        require(modelCenter, "Offline model center page was not loaded");
+        waitUntil([&] { return !taskQueue.verifyingModels() && !taskQueue.models().isEmpty(); }, "Local model center did not validate the saved default model",20000);
+        require(taskQueue.models().size() == 1 && taskQueue.models().front().toMap().value("valid").toBool() &&
+                taskQueue.models().front().toMap().value("id").toString() == "rife-4.25-fp32-sdr8",
+                "Model center did not verify the active local RIFE pack");
+        const auto localModelCopy = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-model-copy");
+        taskQueue.addLocalModel(QUrl::fromLocalFile(localModelCopy));
+        waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 2; }, "Local model import or integrity verification failed",20000);
+        const auto copiedModel = QUrl::fromLocalFile(localModelCopy);
+        auto* setDefaultButton = findVisual(window->contentItem(),"setDefaultModelButton");
+        require(setDefaultButton && setDefaultButton->property("enabled").toBool(), "A verified alternative model cannot be selected in the model center");
+        click(setDefaultButton,"set verified default model");
+        waitUntil([&] { return QFileInfo(taskQueue.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath(); },
+            "Selected local model was not saved as the next-run default",10000);
+        require(QFileInfo(root->property("modelFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath(),
+                "Studio did not receive the selected verified local model");
+        QueueController catalogReload(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("model-catalog-reload.sqlite"));
+        waitUntil([&] { return catalogReload.available() || catalogReload.state() == "error"; }, "Model catalog persistence check did not initialize");
+        require(catalogReload.available(), qPrintable(catalogReload.detail()));
+        catalogReload.refreshModels();
+        waitUntil([&] { return !catalogReload.verifyingModels(); }, "Saved model catalog re-verification did not finish",20000);
+        if (catalogReload.models().size() != 2) {
+            QSettings persisted(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("preferences.ini"),QSettings::IniFormat);
+            persisted.sync();
+            const auto paths = persisted.value("modelCatalog/paths").toStringList();
+            throw std::runtime_error(QString("Saved model catalog did not reload: entries=%1 paths=%2 detail=%3 selected=%4")
+                .arg(catalogReload.models().size()).arg(paths.size()).arg(catalogReload.detail())
+                .arg(catalogReload.defaults().value("model").toUrl().toLocalFile()).toStdString());
+        }
+        require(QFileInfo(catalogReload.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath(),
+                "Selected model default did not persist across controller restart");
+        const auto corruptModel = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("corrupt-model-copy");
+        catalogReload.addLocalModel(QUrl::fromLocalFile(corruptModel));
+        waitUntil([&] { return !catalogReload.verifyingModels(); }, "Corrupt model rejection did not finish",20000);
+        require(catalogReload.state() == "error" && catalogReload.detail().contains("SHA-256 mismatch") && catalogReload.models().size() == 2,
+                "Model center accepted a package whose ONNX hash no longer matches its manifest");
+        catalogReload.refreshModels();
+        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 2; }, "Model catalog did not recover after a rejected package",20000);
+        catalogReload.removeLocalModel(QUrl::fromLocalFile(arguments[3]));
+        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 1; }, "Removing an unused local model did not update the catalog",20000);
+        QueueController finalReload(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("model-catalog-final.sqlite"));
+        waitUntil([&] { return finalReload.available() || finalReload.state() == "error"; }, "Final model catalog persistence check did not initialize");
+        require(finalReload.available(), qPrintable(finalReload.detail()));
+        finalReload.refreshModels();
+        waitUntil([&] { return !finalReload.verifyingModels() && finalReload.models().size() == 1; }, "Removed model reappeared after controller restart",20000);
+        require(QFileInfo(finalReload.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath(),
+                "Removing another pack changed the selected default model");
+        QEventLoop modelPaint; QTimer::singleShot(120,&modelPaint,&QEventLoop::quit); modelPaint.exec();
+        require(window->grabWindow().save(arguments[6] + QStringLiteral(".models.png")), "Local model center screenshot failed");
         QFile report(arguments[7]); require(report.open(QIODevice::WriteOnly | QIODevice::Truncate), "Could not write workflow report");
-        report.write(QString("{\"success\":true,\"outputFrames\":36,\"aiFrames\":%1,\"responsiveTicks\":%2,\"existingOutputProtected\":true,\"cancelledWithoutOutput\":true,\"queueCompleted\":3,\"recursiveBatch\":true,\"duplicateInputsDeduplicated\":true,\"unsupportedHdrReported\":true,\"controllerRetry\":true,\"controllerQueuedCancel\":true}\n").arg(aiFrames).arg(responsiveTicks).toUtf8());
-        std::cout << "Desktop QML studio and persistent queue: batch import, pause/resume, retry, queued cancellation and output checks passed\n";
+        report.write(QString("{\"success\":true,\"outputFrames\":36,\"aiFrames\":%1,\"responsiveTicks\":%2,\"existingOutputProtected\":true,\"cancelledWithoutOutput\":true,\"queueCompleted\":3,\"recursiveBatch\":true,\"duplicateInputsDeduplicated\":true,\"unsupportedHdrReported\":true,\"controllerRetry\":true,\"controllerQueuedCancel\":true,\"localModelShaValidated\":true,\"invalidModelRejected\":true,\"modelRemovalPersisted\":true,\"modelCatalogEntries\":1,\"defaultModelReloaded\":true}\n").arg(aiFrames).arg(responsiveTicks).toUtf8());
+        std::cout << "Desktop QML studio, persistent queue and offline model catalog workflows passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

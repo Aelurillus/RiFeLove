@@ -22,6 +22,10 @@ with tempfile.TemporaryDirectory(prefix="rifelove-desktop-") as folder:
     nested = batch / "nested"
     nested.mkdir(parents=True)
     shutil.copy2(source, nested / source.name)
+    shutil.copytree(pack, root / "local-model-copy")
+    shutil.copytree(pack, root / "corrupt-model-copy")
+    with (root / "corrupt-model-copy" / "model.onnx").open("ab") as corrupt_model:
+        corrupt_model.write(b"integrity-check regression fixture")
     hdr = batch / "unsupported-hdr.mkv"
     subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=5:duration=0.6",
                     "-vf", "setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc:range=limited",

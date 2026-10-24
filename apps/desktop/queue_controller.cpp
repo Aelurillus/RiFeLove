@@ -2,6 +2,7 @@
 #include "application/task_queue.hpp"
 #include "application/job_serialization.hpp"
 #include "application/import_service.hpp"
+#include "inference/model_pack.hpp"
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -28,6 +29,10 @@ struct PathLess {
         return CompareStringOrdinal(reinterpret_cast<LPCWCH>(a.utf16()),a.size(),reinterpret_cast<LPCWCH>(b.utf16()),b.size(),TRUE) == CSTR_LESS_THAN;
     }
 };
+bool samePath(const QString& a, const QString& b) {
+    const auto left = canonical(a), right = canonical(b);
+    return !PathLess{}(left,right) && !PathLess{}(right,left);
+}
 QJsonObject object(const std::string& value) { return QJsonDocument::fromJson(QByteArray::fromStdString(value)).object(); }
 UiTaskRow uiRow(const ConfiguredTask& source) {
     UiTaskRow row; row.id = text(source.task.id); row.source = text(source.task.sourcePath); row.output = text(source.task.outputPath);
@@ -103,6 +108,79 @@ public:
         const auto warning = writeDefaults(rate,model,runtime,output,encoder,container);
         if (!warning.isEmpty()) post([warning](QueueController& c) { c.detail_ = warning; emit c.changed(); });
     }
+    void refreshModels() {
+        try {
+            if (!settings_) throw std::runtime_error("Local model catalog is unavailable");
+            settings_->sync();
+            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not read local model catalog settings");
+            const auto storedPaths = settings_->value("modelCatalog/paths").toStringList();
+            QStringList paths;
+            for (const auto& value : storedPaths) {
+                const auto normalized = canonical(value);
+                if (std::none_of(paths.begin(),paths.end(),[&](const QString& path) { return samePath(path,normalized); })) paths.push_back(normalized);
+            }
+            const auto selected = settings_->value("model").toUrl();
+            if (selected.isLocalFile()) {
+                const auto selectedPath = canonical(selected.toLocalFile());
+                if (std::none_of(paths.begin(),paths.end(),[&](const QString& path) { return samePath(path,selectedPath); })) paths.push_back(selectedPath);
+            }
+            if (paths != storedPaths) {
+                settings_->setValue("modelCatalog/paths",paths); settings_->sync();
+                if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not save the current model in the local catalog");
+            }
+            QVariantList entries;
+            for (const auto& value : paths) entries.push_back(inspectModel(value));
+            post([entries](QueueController& c) { c.models_ = entries; c.verifyingModels_ = false; c.state_ = "ready"; c.detail_.clear(); emit c.modelsChanged(); emit c.changed(); });
+        } catch (const std::exception& error) {
+            post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
+        }
+    }
+    void addLocalModel(QString directory) {
+        try {
+            if (!settings_) throw std::runtime_error("Local model catalog is unavailable");
+            settings_->sync();
+            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not read local model catalog settings");
+            const auto normalizedPath = canonical(directory);
+            auto entry = inspectModel(normalizedPath);
+            if (!entry.value("valid").toBool()) throw std::invalid_argument(utf8(entry.value("error").toString()));
+            auto paths = settings_->value("modelCatalog/paths").toStringList();
+            for (auto& value : paths) value = canonical(value);
+            if (std::none_of(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,normalizedPath); })) paths.push_back(normalizedPath);
+            settings_->setValue("modelCatalog/paths",paths); settings_->sync();
+            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not save local model catalog");
+            paths = settings_->value("modelCatalog/paths").toStringList();
+            QVariantList entries; for (const auto& value : paths) entries.push_back(inspectModel(value));
+            post([entries,id=entry.value("id").toString()](QueueController& c) {
+                c.models_ = entries; c.verifyingModels_ = false; c.state_ = "ready"; c.detail_ = tr("已校验并加入本地模型：") + id;
+                emit c.modelsChanged(); emit c.changed(); emit c.operationFinished("model_added");
+            });
+        } catch (const std::exception& error) {
+            post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
+        }
+    }
+    void removeLocalModel(QString directory) {
+        try {
+            if (!settings_) throw std::runtime_error("Local model catalog is unavailable");
+            settings_->sync();
+            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not read local model catalog settings");
+            const auto storedPaths = settings_->value("modelCatalog/paths").toStringList();
+            QStringList paths;
+            for (const auto& value : storedPaths) {
+                const auto normalized = canonical(value);
+                if (std::none_of(paths.begin(),paths.end(),[&](const QString& path) { return samePath(path,normalized); })) paths.push_back(normalized);
+            }
+            paths.erase(std::remove_if(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,directory); }),paths.end());
+            settings_->setValue("modelCatalog/paths",paths); settings_->sync();
+            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not update local model catalog");
+            QVariantList entries; for (const auto& value : paths) entries.push_back(inspectModel(value));
+            const auto selected = settings_->value("model").toUrl();
+            if (selected.isLocalFile() && std::none_of(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,selected.toLocalFile()); }))
+                entries.push_back(inspectModel(selected.toLocalFile()));
+            post([entries](QueueController& c) { c.models_ = entries; c.verifyingModels_ = false; c.state_ = "ready"; emit c.modelsChanged(); emit c.changed(); });
+        } catch (const std::exception& error) {
+            post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
+        }
+    }
     void importItems(QList<QUrl> inputs, QUrl output, QString rate, QUrl model, QUrl runtime, QString encoder, QString container, bool recursive, std::stop_token stop) {
         try {
             requireQueue();
@@ -171,6 +249,16 @@ private:
             if (!QFileInfo::exists(output) && used.insert(output).second) return output;
         }
         throw std::runtime_error("Could not allocate a new output filename");
+    }
+    static QVariantMap inspectModel(const QString& directory) {
+        QVariantMap entry{{"directory",directory},{"valid",false}};
+        try {
+            const auto model = inference::loadModelPack(path(directory));
+            entry["valid"] = true; entry["id"] = text(model.id); entry["version"] = text(model.version); entry["sha256"] = text(model.sha256);
+            entry["directory"] = QString::fromStdWString(model.directory.wstring());
+            entry["error"] = QString();
+        } catch (const std::exception& error) { entry["error"] = text(error.what()); }
+        return entry;
     }
     void snapshot() {
         std::vector<UiTaskRow> rows; if (queue_) for (const auto& row : queue_->list()) rows.push_back(uiRow(row));
@@ -261,4 +349,31 @@ void QueueController::restartTask(const QString& id) { if (available_ && !import
 void QueueController::openOutputFolder(const QString& id) { if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->openFolder(id); },Qt::QueuedConnection); }
 void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output, const QString& encoder, const QString& container) {
     if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container] { w->saveDefaults(rate,model,runtime,output,encoder,container); },Qt::QueuedConnection);
+}
+void QueueController::refreshModels() {
+    if (!available_ || busy_ || importing_ || verifyingModels_) return;
+    verifyingModels_ = true; state_ = "verifying_models"; detail_ = tr("正在校验本地模型及 SHA-256…"); emit changed();
+    QMetaObject::invokeMethod(worker_,[w=worker_] { w->refreshModels(); },Qt::QueuedConnection);
+}
+void QueueController::addLocalModel(const QUrl& directory) {
+    if (!available_ || busy_ || importing_ || verifyingModels_) { setError(tr("队列忙碌或本地模型校验正在运行。")); return; }
+    if (!directory.isLocalFile() || directory.toLocalFile().isEmpty()) { setError(tr("只能添加本机目录中的模型包。")); return; }
+    verifyingModels_ = true; state_ = "verifying_models"; detail_ = tr("正在验证模型描述、许可证和 ONNX SHA-256…"); emit changed();
+    QMetaObject::invokeMethod(worker_,[w=worker_,path=directory.toLocalFile()] { w->addLocalModel(path); },Qt::QueuedConnection);
+}
+void QueueController::removeLocalModel(const QUrl& directory) {
+    if (!available_ || busy_ || importing_ || verifyingModels_ || !directory.isLocalFile()) return;
+    verifyingModels_ = true; state_ = "updating_models"; detail_ = tr("正在更新本地模型列表…"); emit changed();
+    QMetaObject::invokeMethod(worker_,[w=worker_,path=directory.toLocalFile()] { w->removeLocalModel(path); },Qt::QueuedConnection);
+}
+void QueueController::setDefaultModel(const QUrl& directory) {
+    if (!directory.isLocalFile() || directory.toLocalFile().isEmpty()) { setError(tr("默认模型必须位于本机目录。")); return; }
+    const auto target = QFileInfo(directory.toLocalFile()).absoluteFilePath();
+    const bool verified = std::any_of(models_.begin(),models_.end(),[&](const QVariant& value) {
+        const auto entry = value.toMap();
+        return entry.value("valid").toBool() && QFileInfo(entry.value("directory").toString()).absoluteFilePath().compare(target,Qt::CaseInsensitive) == 0;
+    });
+    if (!verified) { setError(tr("请先校验该模型包，再将其设为默认模型。")); return; }
+    saveDefaults(defaults_.value("rate","60").toString(),directory,defaults_.value("runtime").toUrl(),
+        defaults_.value("output").toUrl(),defaults_.value("encoder","auto").toString(),defaults_.value("container","mkv").toString());
 }

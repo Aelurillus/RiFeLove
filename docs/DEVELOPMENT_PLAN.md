@@ -73,10 +73,12 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete Home, qualified quality profiles and remaining desktop preferences/workspace behavior.
   - Recursive folder/multi-file import, duplicate elimination, unsupported-color reporting, collision-safe output naming, persistent local defaults and isolated data-directory selection now run through the desktop workflow; profiles remain open.
 - [x] Validate real QML start-to-output, GUI event-loop responsiveness, no-overwrite handling and cooperative cancellation with native RIFE.
-- [ ] Complete acceptance for the persistent desktop queue, progress, retry, pause and cancellation.
+- [x] Add offline Model Center local registration, manifest/license/ONNX hash verification, default-model selection and persisted catalog revalidation.
+- [x] Complete acceptance for the persistent desktop queue, progress, retry, pause and cancellation.
   - The Qt page is connected to the SQLite service with virtualized task rows, sequential execution, pause/resume, stop, per-task cancel/retry and interrupted restart-from-zero controls. Actual GPU workflow checks recursive batch import, same-name output collision handling, HDR rejection, pause/resume, deterministic output failure/retry, queued cancellation, successful output/audio and preference reload. Full history and safe segment recovery remain open.
 - [ ] Add comparison player, split mode and frame stepping.
-- [ ] Add model center, profiles and expert controls.
+- [ ] Complete model lifecycle with provenance-rich model profiles, qualified presets and expert controls.
+  - The desktop Model Center verifies locally installed packs, lists SHA-256 and selects a persistent default without network access; model downloads, multiple qualified model families, presets and expert controls remain open.
 - [ ] Localize zh-CN, zh-TW, en and ja; verify accessibility and keyboard use.
 
 ## Phase 7 — reliability/pro

@@ -2,6 +2,7 @@
 #include "task_list_model.hpp"
 #include <QThread>
 #include <QUrl>
+#include <QVariantList>
 #include <QVariantMap>
 #include <stop_token>
 
@@ -16,6 +17,8 @@ class QueueController final : public QObject {
     Q_PROPERTY(QString detail READ detail NOTIFY changed)
     Q_PROPERTY(QVariantMap counts READ counts NOTIFY changed)
     Q_PROPERTY(QVariantMap defaults READ defaults NOTIFY defaultsChanged)
+    Q_PROPERTY(QVariantList models READ models NOTIFY modelsChanged)
+    Q_PROPERTY(bool verifyingModels READ verifyingModels NOTIFY changed)
 public:
     explicit QueueController(QString database, QObject* parent = nullptr);
     ~QueueController() override;
@@ -27,6 +30,8 @@ public:
     QString detail() const { return detail_; }
     QVariantMap counts() const { return counts_; }
     QVariantMap defaults() const { return defaults_; }
+    QVariantList models() const { return models_; }
+    bool verifyingModels() const { return verifyingModels_; }
     Q_INVOKABLE void addItems(const QList<QUrl>& sources, const QUrl& outputFolder, const QString& rate,
         const QUrl& model, const QUrl& runtime, const QString& encoder, const QString& container, bool recursive);
     Q_INVOKABLE void start();
@@ -40,9 +45,16 @@ public:
     Q_INVOKABLE void openOutputFolder(const QString& id);
     Q_INVOKABLE void saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
         const QString& encoder, const QString& container);
+    Q_INVOKABLE void refreshModels();
+    Q_INVOKABLE void addLocalModel(const QUrl& directory);
+    Q_INVOKABLE void removeLocalModel(const QUrl& directory);
+    Q_INVOKABLE void setDefaultModel(const QUrl& directory);
+    Q_INVOKABLE QUrl localUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
+    Q_INVOKABLE QString localPath(const QUrl& url) const { return url.isLocalFile() ? url.toLocalFile() : QString(); }
 signals:
     void changed();
     void defaultsChanged();
+    void modelsChanged();
     void operationFinished(const QString& state);
 private:
     friend class QueueWorker;
@@ -55,5 +67,7 @@ private:
     bool available_ = false, busy_ = false, importing_ = false;
     QString state_ = "loading", detail_;
     QVariantMap counts_, defaults_;
+    QVariantList models_;
+    bool verifyingModels_ = false;
     std::stop_source importCancel_;
 };
