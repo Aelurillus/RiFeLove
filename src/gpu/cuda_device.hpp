@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 namespace rifelove::gpu {
 
@@ -81,6 +82,27 @@ public:
     void copy(const DeviceBuffer& source, DeviceBuffer& destination, std::size_t bytes, std::stop_token stop = {}) const;
 private:
     std::shared_ptr<detail::CudaState> state_;
+};
+
+// Reuses completed, exclusive frame buffers while keeping the number of cached
+// allocations bounded. Active buffers are never overwritten or evicted. The
+// pool is intended for one pipeline thread and is not internally synchronized.
+class DeviceBufferPool final {
+public:
+    explicit DeviceBufferPool(CudaDevice& device, std::size_t maxCachedBuffers = 2);
+    DeviceBufferPool(const DeviceBufferPool&) = delete;
+    DeviceBufferPool& operator=(const DeviceBufferPool&) = delete;
+    [[nodiscard]] std::shared_ptr<DeviceBuffer> acquire(std::size_t bytes, std::stop_token stop = {});
+    void clear() noexcept;
+    [[nodiscard]] std::size_t allocationCount() const noexcept { return allocations_; }
+    [[nodiscard]] std::size_t reuseCount() const noexcept { return reuses_; }
+    [[nodiscard]] std::size_t cachedBufferCount() const noexcept { return buffers_.size(); }
+private:
+    CudaDevice* device_;
+    std::size_t maxCachedBuffers_;
+    std::vector<std::shared_ptr<DeviceBuffer>> buffers_;
+    std::size_t allocations_ = 0;
+    std::size_t reuses_ = 0;
 };
 
 } // namespace rifelove::gpu

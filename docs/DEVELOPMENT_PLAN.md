@@ -59,6 +59,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
   - Auto encoding retries software H.264 when this workstation's NVENC open returns `Function not implemented`; a synthetic 720p TensorRT-to-output run validates the H.264 output and retained audio, and the updated Studio explains that processing continues. Successful NVENC hardware encoding and NVDEC remain unqualified. Local driver 560.94 exposes NVENC API 12.2; this FFmpeg build requires API 13.0 / driver 570.0 or newer.
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
+  - The sequential RIFE path now reuses up to two completed source-frame buffers and releases idle cache entries when allocation pressure requires space; buffers still referenced by an inference request are never recycled. The allocator regression passes on the local GTX 1660 SUPER; end-to-end pipeline profiling, throughput benchmarking and stage overlap remain open.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
 - [ ] Evaluate CUDA Graph, FP16, profiles and optional overlapped tiling.
 

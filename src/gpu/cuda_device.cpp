@@ -271,4 +271,47 @@ void CudaDevice::copy(const DeviceBuffer& source, DeviceBuffer& destination, std
     state_->check(state_->syncStream(nullptr), "complete CUDA device copy");
     cancelled(stop);
 }
+
+DeviceBufferPool::DeviceBufferPool(CudaDevice& device, std::size_t maxCachedBuffers)
+    : device_(&device), maxCachedBuffers_(maxCachedBuffers) {}
+
+std::shared_ptr<DeviceBuffer> DeviceBufferPool::acquire(std::size_t bytes, std::stop_token stop) {
+    cancelled(stop);
+    if (bytes == 0) throw GpuError(GpuErrorKind::invalidRequest, "CUDA pool allocations must have a positive size");
+    for (const auto& buffer : buffers_) {
+        if (buffer->size() == bytes && buffer.use_count() == 1) {
+            ++reuses_;
+            return buffer;
+        }
+    }
+
+    // If the cache is full, replace an idle differently-sized allocation. A
+    // still-referenced buffer remains pinned until its inference future ends.
+    if (buffers_.size() >= maxCachedBuffers_) {
+        const auto idle = std::find_if(buffers_.begin(), buffers_.end(), [](const auto& buffer) {
+            return buffer.use_count() == 1;
+        });
+        if (idle != buffers_.end()) buffers_.erase(idle);
+    }
+
+    auto storage = [&] { return device_->allocate(bytes, stop); };
+    std::shared_ptr<DeviceBuffer> result;
+    try {
+        result = storage();
+    } catch (const GpuError& error) {
+        if (error.kind() != GpuErrorKind::outOfMemory) throw;
+        const auto previousSize = buffers_.size();
+        buffers_.erase(std::remove_if(buffers_.begin(), buffers_.end(), [](const auto& buffer) {
+            return buffer.use_count() == 1;
+        }), buffers_.end());
+        if (buffers_.size() == previousSize) throw;
+        result = storage();
+    }
+
+    ++allocations_;
+    if (buffers_.size() < maxCachedBuffers_) buffers_.push_back(result);
+    return result;
+}
+
+void DeviceBufferPool::clear() noexcept { buffers_.clear(); }
 } // namespace rifelove::gpu

@@ -158,6 +158,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::optional<Rational> pendingTime;
     std::optional<Rational> origin;
     std::shared_ptr<gpu::DeviceBuffer> reusableOutput;
+    gpu::DeviceBufferPool inputBuffers(device,2);
     media::RifeSdrFrame generated{};
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
         if (progress) { const double seconds = elapsed(); progress({stage,clock ? clock->index() : 0,result.aiFrames,time,seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail,{}}); }
@@ -171,7 +172,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     };
     const auto upload = [&](CachedFrame& frame) -> const inference::GpuFrame& {
         if (!frame.gpu) {
-            auto storage = device.allocate(frame.prepared.pixels.size() * sizeof(float),stop);
+            auto storage = inputBuffers.acquire(frame.prepared.pixels.size() * sizeof(float),stop);
             storage->upload(std::as_bytes(std::span(frame.prepared.pixels)),0,stop);
             frame.gpu = inference::GpuFrame{std::move(storage),frame.prepared.paddedWidth,frame.prepared.paddedHeight};
         }

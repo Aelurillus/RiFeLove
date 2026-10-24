@@ -4,6 +4,7 @@
 #include <vector>
 
 using rifelove::gpu::CudaDevice;
+using rifelove::gpu::DeviceBufferPool;
 using rifelove::gpu::GpuError;
 using rifelove::gpu::GpuErrorKind;
 
@@ -87,4 +88,37 @@ TEST_F(CudaHardware, ReclaimRequiresExclusiveCompletedStorageAndPreservesItsAllo
     reclaimed->upload(std::as_bytes(std::span(input)));
     reclaimed->download(std::as_writable_bytes(std::span(output)));
     EXPECT_EQ(input,output);
+}
+
+TEST_F(CudaHardware, BufferPoolReusesOnlyCompletedSizeMatchesAndReleasesIdleMemory) {
+    DeviceBufferPool pool(*device,2);
+    auto first = pool.acquire(4096);
+    const auto firstAddress = first->address();
+    auto second = pool.acquire(4096);
+    EXPECT_NE(second->address(),firstAddress);
+    EXPECT_EQ(pool.allocationCount(),2U);
+    EXPECT_EQ(pool.reuseCount(),0U);
+    EXPECT_EQ(pool.cachedBufferCount(),2U);
+    EXPECT_EQ(device->allocatedBytes(),8192U);
+
+    first.reset();
+    auto reused = pool.acquire(4096);
+    EXPECT_EQ(reused->address(),firstAddress);
+    EXPECT_EQ(pool.reuseCount(),1U);
+    reused.reset();
+    second.reset();
+    pool.clear();
+    EXPECT_EQ(device->allocatedBytes(),0U);
+
+    auto idleA = pool.acquire(4096);
+    auto idleB = pool.acquire(4096);
+    idleA.reset();
+    idleB.reset();
+    auto smaller = pool.acquire(1);
+    EXPECT_EQ(smaller->size(),1U);
+    EXPECT_EQ(pool.cachedBufferCount(),2U);
+    EXPECT_EQ(device->allocatedBytes(),4097U);
+    smaller.reset();
+    pool.clear();
+    EXPECT_EQ(device->allocatedBytes(),0U);
 }
