@@ -18,6 +18,7 @@ struct PipelineProgress {
     std::optional<Rational> timestamp;
     double processingFps = 0;
     std::string detail;
+    std::string encoder;
 };
 struct OutputTimingValidation {
     std::size_t decodedFrames = 0;

@@ -118,11 +118,18 @@ void readV2Metadata(const std::filesystem::path& directory, const Json& descript
     model.spatialMultiple = capabilities.at("spatialMultiple").get<int>();
     if (model.spatialMultiple != 64) throw std::invalid_argument("Unsupported RIFE spatial multiple");
     model.supportedInputProfiles = requireStringArray(capabilities, "supportedInputProfiles");
+    const std::vector<std::string> knownProfiles{"bt709-sdr8","bt470bg-sdr8","bt709-sdr10","bt470bg-sdr10","hdr","legacy-unverified"};
+    for (const auto& profile : model.supportedInputProfiles)
+        if (std::find(knownProfiles.begin(),knownProfiles.end(),profile) == knownProfiles.end())
+            throw std::invalid_argument("Unknown RIFE input profile: " + profile);
     if (!capabilities.contains("hdrQualified") || !capabilities.at("hdrQualified").is_boolean())
         throw std::invalid_argument("Model HDR qualification metadata is missing");
     model.hdrQualified = capabilities.at("hdrQualified").get<bool>();
     if (!model.hdrQualified && std::find(model.supportedInputProfiles.begin(), model.supportedInputProfiles.end(), "hdr") != model.supportedInputProfiles.end())
         throw std::invalid_argument("Model cannot claim an HDR profile without HDR qualification");
+    if (const auto declaredProfiles = report.find("supported_input_profiles"); declaredProfiles != report.end() &&
+        (!declaredProfiles->is_array() || requireStringArray(report,"supported_input_profiles") != model.supportedInputProfiles))
+        throw std::invalid_argument("Model validation report does not match the declared input profiles");
     model.metadataIntegrityVerified = true;
 }
 
@@ -145,6 +152,12 @@ std::string sha256(std::span<const std::byte> bytes) {
     std::string output;
     for (const auto byte : digest) { output += digits[byte >> 4]; output += digits[byte & 15]; }
     return output;
+}
+
+bool supportsInputProfile(const ModelPack& model, std::string_view profile) {
+    if (std::find(model.supportedInputProfiles.begin(),model.supportedInputProfiles.end(),profile) != model.supportedInputProfiles.end()) return true;
+    const bool isSdr8 = profile.ends_with("-sdr8");
+    return isSdr8 && std::find(model.supportedInputProfiles.begin(),model.supportedInputProfiles.end(),"legacy-unverified") != model.supportedInputProfiles.end();
 }
 
 std::vector<std::byte> readLocalFile(const std::filesystem::path& path, std::size_t limit) {

@@ -66,15 +66,31 @@ ApplicationWindow {
         const probes = window.info.encoders
         if (encoder.currentIndex === 0) {
             const nvenc = probes.h264_nvenc
-            const software = probes.libopenh264
-            return (!!nvenc && !!nvenc.contextOpened) || (!!software && !!software.contextOpened)
+            return (!!nvenc && !!nvenc.contextOpened) || window.automaticSoftwareEncoder() !== ""
         }
         const names = ["libopenh264", "libkvazaar", "libaom-av1"]
         const probe = probes[names[encoder.currentIndex - 1]]
         return !!probe && !!probe.contextOpened
     }
+    readonly property bool selectedModelSupportsInputProfile: {
+        const profile = window.info.inputProfile || ""
+        if (!profile || profile.endsWith("-sdr8")) return true
+        const path = window.modelFolder.toLocalFile()
+        if (!path || !taskQueue || !taskQueue.models) return false
+        const normalizePath = value => String(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+        const selectedPath = normalizePath(path)
+        const models = taskQueue.models
+        for (let index = 0; index < models.length; ++index) {
+            const model = models[index]
+            if (normalizePath(model.directory) !== selectedPath || !model.valid) continue
+            const profiles = model.supportedInputProfiles || []
+            return profiles.indexOf(profile) >= 0
+        }
+        return false
+    }
     readonly property bool canStart: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor &&
-        !!window.info.gpuAvailable && window.selectedEncoderReady && window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
+        !!window.info.gpuAvailable && window.selectedEncoderReady && window.selectedModelSupportsInputProfile &&
+        window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
 
     function applyLocalDefaults() {
         if (!processingAvailable) return
@@ -99,6 +115,19 @@ ApplicationWindow {
         if (studioQualityMode.currentIndex === 1) mode = encoder.currentIndex === 2 ? "qp" : "crf"
         return { bitrateKbps: studioBitrate.value, qualityMode: mode, quality: studioQuality.value, gopSize: studioGop.value }
     }
+    function automaticSoftwareEncoder() {
+        const probes = window.info.encoders || ({})
+        for (const name of ["libopenh264", "libkvazaar", "libaom-av1"])
+            if (probes[name] && probes[name].contextOpened) return name
+        return ""
+    }
+    function automaticSoftwareEncoderLabel() {
+        const name = window.automaticSoftwareEncoder()
+        if (name === "libopenh264") return qsTr("软件 H.264")
+        if (name === "libkvazaar") return qsTr("软件 HEVC")
+        if (name === "libaom-av1") return qsTr("软件 AV1")
+        return qsTr("兼容的软件编码器")
+    }
     function persistLocalDefaults() {
         if (!processingAvailable) return
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
@@ -107,10 +136,12 @@ ApplicationWindow {
     }
     function encoderHint() {
         if (!window.info.width) return qsTr("导入后会检查本机的 GPU 与视频编码能力。")
-        if (!window.info.nvencContextOpened && window.info.softwareH264ContextOpened)
-            return qsTr("NVENC 当前不可用；自动模式会用软件 H.264 编码，RIFE 仍由 CUDA 推理。")
+        if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型没有声明支持这个 10-bit SDR 输入配置。")
+        if (!window.info.nvencContextOpened && window.automaticSoftwareEncoder() !== "")
+            return qsTr("NVENC 当前不可用；自动模式会用%1编码，RIFE 仍由 CUDA 推理。")
+                .arg(window.automaticSoftwareEncoderLabel())
         if (window.info.nvencContextOpened) return qsTr("NVENC 可以初始化；最终以实际导出结果为准。")
-        return qsTr("H.264 编码器暂不可用，请检查本机视频运行环境。")
+        return qsTr("没有兼容的自动编码器，请检查本机视频运行环境。")
     }
     Component.onCompleted: { applyLocalDefaults(); refreshSelectedModelDisplayName() }
     Connections {
@@ -129,6 +160,7 @@ ApplicationWindow {
         if (value === "inspected" && window.info.width) {
             if (!window.info.supportedColor) return qsTr("色彩格式暂不支持")
             if (!window.info.gpuAvailable) return qsTr("NVIDIA GPU 不可用")
+            if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型不支持此输入配置")
             if (!window.selectedEncoderReady) return qsTr("所选编码器不可用")
             if (!window.modelFolder.toString() || !window.runtimeFolder.toString()) return qsTr("请配置模型与运行库")
             return qsTr("可以开始")
@@ -239,8 +271,8 @@ ApplicationWindow {
                         }
                         Label {
                             visible: !!window.info.width
-                            text: !window.info.nvencContextOpened && window.info.softwareH264ContextOpened
-                                ? qsTr("NVENC 不可用 · 自动使用软件 H.264")
+                            text: !window.info.nvencContextOpened && window.automaticSoftwareEncoder() !== ""
+                                ? qsTr("NVENC 不可用 · 自动使用%1").arg(window.automaticSoftwareEncoderLabel())
                                 : window.info.nvencContextOpened ? qsTr("NVENC 编码器可初始化") : qsTr("H.264 编码器不可用")
                             color: window.info.nvencContextOpened ? "#9ee6c8" : "#f0c98a"
                             font.pixelSize: 11
@@ -339,7 +371,7 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: qsTr("编码器"); font.bold: true }
-                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
+                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
                         }
                     }
                     RowLayout {
@@ -423,7 +455,7 @@ ApplicationWindow {
                             Label {
                                 text: encoder.currentIndex === 2 ? qsTr("HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。")
                                     : encoder.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
-                                    : qsTr("当前 H.264 编码器使用目标码率。自动模式会在 NVENC 不可用时回退到软件 H.264。")
+                                    : qsTr("自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。")
                                 color: "#9aaac0"
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
@@ -454,7 +486,7 @@ ApplicationWindow {
                                 TextField { Layout.fillWidth: true; readOnly: true; text: window.runtimeFolder.toString(); placeholderText: qsTr("包含 ONNX Runtime / CUDA DLL 的目录"); selectByMouse: true }
                                 ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: runtimeDialog.open() }
                             }
-                            Label { text: qsTr("当前已验证：RIFE 4.25、BT.709 及 BT.470BG/SMPTE 170M 8-bit SDR。HDR、10-bit 和未标记色彩的视频暂不支持。模型和运行库仅从所选本地目录加载。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
+                            Label { text: qsTr("RIFE 色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库仅从所选本地目录加载。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                         }
                     }
                     RowLayout {

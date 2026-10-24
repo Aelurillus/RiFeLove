@@ -99,6 +99,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             std::cout << "{\"event\":\"interpolation_progress\",\"stage\":" << jsonString(current.stage)
                 << ",\"output_frames\":" << current.outputFrames << ",\"ai_frames\":" << current.aiFrames
                 << ",\"pts\":" << (current.timestamp ? jsonString(current.timestamp->toString()) : "null")
+                << ",\"encoder\":" << jsonString(current.encoder)
                 << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << (seconds > 0 ? static_cast<double>(current.outputFrames) / seconds : 0)
                 << ",\"detail\":" << jsonString(current.detail) << "}\n" << std::flush;
         }) : std::function<void(const PipelineProgress&)>(),token);

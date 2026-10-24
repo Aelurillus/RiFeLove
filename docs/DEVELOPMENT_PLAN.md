@@ -67,8 +67,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Implement first cut detection and disable cross-cut interpolation, with synthetic hard-cut regression.
 - [x] Add first conservative duplicate/abnormal-pair hold policies.
 - [ ] Tune and qualify protection on real content, occlusion/fast motion and abnormal model output.
-- [ ] Implement color-managed SDR/HDR and 10-bit conversions.
-  - Tagged BT.470BG/SMPTE 170M 8-bit SDR now uses explicit BT.601-family YUV coefficients and preserves source primaries/transfer/matrix/range through an actual RIFE encode/decode check; HDR/10-bit and gamut conversion remain open.
+- [ ] Complete color-managed SDR/HDR, gamut conversion and 10-bit visual qualification.
+  - Tagged BT.709/BT.601-family 8/10-bit SDR conversion now uses explicit matrix/range handling, maps source profiles into the selected model contract and preserves source bit depth when the chosen encoder accepts it. 10-bit tests currently cover synthetic CPU color conversion; HDR and real-content 10-bit quality remain open.
 - [ ] Add animation/text/HUD temporal QA and seam/flicker regression fixtures.
 - [ ] Publish objective and blind-review benchmark protocol.
 

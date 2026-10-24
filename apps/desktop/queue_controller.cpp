@@ -215,7 +215,8 @@ public:
             QStringList skipped;
             for (const auto& rejected : result.rejected) {
                 if (skipped.size() >= 50) break;
-                const auto reason = rejected.reason == ImportRejection::unsupportedColor ? tr("当前模型仅支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8-bit SDR。") :
+                const auto reason = rejected.reason == ImportRejection::unsupportedColor ? tr("视频色彩标签、像素格式或位深不在支持范围内。") :
+                    rejected.reason == ImportRejection::unsupportedModelProfile ? tr("当前模型未声明支持这个视频输入配置。") :
                     rejected.reason == ImportRejection::noVideo ? tr("文件中没有视频轨。") : tr("无法读取媒体：") + text(rejected.detail);
                 skipped.push_back(QString::fromStdWString(rejected.path.filename().wstring()) + ": " + reason);
             }

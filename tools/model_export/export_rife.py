@@ -185,9 +185,11 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
         graph_hash = digest(onnx_path.read_bytes())
         passed = all(case["passed"] for case in validation)
         validated_backends = ["pytorch_cpu", "onnxruntime_cpu"]
+        supported_input_profiles = ["bt709-sdr8", "bt470bg-sdr8", "bt709-sdr10", "bt470bg-sdr10"]
         report = {"status": "passed_cpu_reference" if passed else "failed_cpu_reference", "providers": session.get_providers(),
                   "torch": torch.__version__, "onnx": onnx.__version__, "onnxruntime": ort.__version__,
                   "model_sha256": graph_hash, "numerical_profile": numerical_profile,
+                  "supported_input_profiles": supported_input_profiles,
                   "validated_backends": validated_backends,
                   "warp_adapter_max_abs_error": adapter_error, "ort_max_abs_error_limit": limits["maximum"], "minimum_psnr_db": limits["psnr"],
                   "cases": validation, "elapsed_seconds": time.perf_counter() - started,
@@ -204,7 +206,7 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
         source_manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
         license_bytes = sources["LICENSE.txt"]
         descriptor = {"schemaVersion": 2, "id": pack_id,
-                      "displayName": f"{display_name} FP32 {numerical_profile.upper()}",
+                      "displayName": f"{display_name} FP32 {numerical_profile.upper()} SDR 8/10-bit",
                       "family": "rife", "version": model_version,
                       "modelFile": "model.onnx", "sha256": graph_hash,
                       "license": {"id": "MIT", "file": "LICENSE.txt", "sha256": digest(license_bytes)},
@@ -212,7 +214,7 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
                       "capabilities": {"inputLayout": "NCHW", "dtype": "float32", "channels": 3, "batch": 1,
                                        "inputRange": [0.0, 1.0], "spatialMultiple": 64,
                                        "timestepShape": [1, 1, 1, 1], "dynamicTimestep": True, "dynamicSpatial": True,
-                                       "supportedInputProfiles": ["bt709-sdr8", "bt470bg-sdr8"], "hdrQualified": False},
+                                       "supportedInputProfiles": supported_input_profiles, "hdrQualified": False},
                       "validation": {"reportFile": "validation.json", "reportSha256": digest(validation_bytes),
                                      "numericalProfile": numerical_profile, "validatedBackends": validated_backends}}
         (temporary / "validation.json").write_bytes(validation_bytes)

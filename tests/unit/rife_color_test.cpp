@@ -59,6 +59,47 @@ TEST(RifeColor, Bt470BgSmpte170mUses601CoefficientsAndPreservesSourceColorTags) 
     EXPECT_EQ(restored.color.matrix,"smpte170m"); EXPECT_EQ(restored.color.range,"tv");
     EXPECT_NEAR(restored.planes[0].data[0],81,1); EXPECT_NEAR(restored.planes[1].data[0],90,1); EXPECT_NEAR(restored.planes[2].data[0],240,1);
 }
+TEST(RifeColor, Limited709TenBitPreservesPrecisionRangeAndTags) {
+    auto samples = std::make_shared<std::vector<std::uint16_t>>(std::initializer_list<std::uint16_t>{64,64,940,940,512,512});
+    DecodedFrame frame{}; frame.width = 2; frame.height = 2;
+    frame.color = rgbFixture().color; frame.color.pixelFormat = "yuv420p10le"; frame.color.bitDepth = 10;
+    frame.color.transfer = "bt709"; frame.color.matrix = "bt709"; frame.color.range = "tv";
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(samples->data());
+    frame.storage = samples; frame.planes[0] = {bytes,4}; frame.planes[1] = {bytes + 8,2}; frame.planes[2] = {bytes + 10,2};
+
+    EXPECT_NO_THROW(validateRifeSdrColor(frame.color));
+    const auto prepared = prepareRifeSdr(frame);
+    for (std::size_t channel = 0; channel < 3; ++channel) {
+        EXPECT_LT(prepared.pixels[channel * 4096],0.01F);
+        EXPECT_GT(prepared.pixels[channel * 4096 + 64],0.99F);
+    }
+    const auto restored = restoreRifeSdr(prepared);
+    ASSERT_TRUE(restored.storage);
+    EXPECT_EQ(restored.color.pixelFormat,"yuv420p10le"); EXPECT_EQ(restored.color.bitDepth,10);
+    EXPECT_EQ(restored.color.primaries,"bt709"); EXPECT_EQ(restored.color.transfer,"bt709");
+    EXPECT_EQ(restored.color.matrix,"bt709"); EXPECT_EQ(restored.color.range,"tv");
+    const auto* output = reinterpret_cast<const std::uint16_t*>(restored.planes[0].data);
+    EXPECT_NEAR(output[0],64,2); EXPECT_NEAR(output[restored.planes[0].stride / 2],940,2);
+    EXPECT_NEAR(*reinterpret_cast<const std::uint16_t*>(restored.planes[1].data),512,2);
+    EXPECT_NEAR(*reinterpret_cast<const std::uint16_t*>(restored.planes[2].data),512,2);
+    EXPECT_EQ(rifeSdrInputProfile(frame.color),"bt709-sdr10");
+}
+TEST(RifeColor, TenBitBt601ProfileUsesTheLegacyInputProfile) {
+    auto frame = rgbFixture();
+    frame.color.pixelFormat = "yuv420p10le"; frame.color.bitDepth = 10; frame.color.primaries = "smpte170m";
+    frame.color.transfer = "smpte170m"; frame.color.matrix = "smpte170m"; frame.color.range = "tv";
+    EXPECT_EQ(rifeSdrInputProfile(frame.color),"bt470bg-sdr10");
+}
+TEST(RifeColor, TenBitLimited601CoefficientsProduceRed) {
+    auto samples = std::make_shared<std::vector<std::uint16_t>>(std::initializer_list<std::uint16_t>{324,324,324,324,360,960});
+    DecodedFrame frame{}; frame.width = 2; frame.height = 2;
+    frame.color = rgbFixture().color; frame.color.pixelFormat = "yuv420p10le"; frame.color.bitDepth = 10;
+    frame.color.primaries = "bt470bg"; frame.color.transfer = "bt709"; frame.color.matrix = "smpte170m"; frame.color.range = "tv";
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(samples->data());
+    frame.storage = samples; frame.planes[0] = {bytes,4}; frame.planes[1] = {bytes + 8,2}; frame.planes[2] = {bytes + 10,2};
+    const auto prepared = prepareRifeSdr(frame);
+    EXPECT_GT(prepared.pixels[0],0.98F); EXPECT_LT(prepared.pixels[4096],0.04F); EXPECT_LT(prepared.pixels[8192],0.04F);
+}
 TEST(RifeColor, NormalizesKnownContainerAndBitstreamBt601SdrTagConflict) {
     auto streamColor = rgbFixture().color;
     streamColor.pixelFormat = "yuv420p"; streamColor.bitDepth = 8; streamColor.primaries = "bt470bg";
@@ -84,7 +125,7 @@ TEST(RifeColor, UnknownHdrPrecisionInvalidPixelsAndCancellationFailExplicitly) {
     EXPECT_THROW((void)prepareRifeSdr(source),std::invalid_argument);
     source = rgbFixture(); source.color.hdrTransfer = true;
     EXPECT_THROW((void)prepareRifeSdr(source),std::invalid_argument);
-    source = rgbFixture(); source.color.bitDepth = 10;
+    source = rgbFixture(); source.color.bitDepth = 12;
     EXPECT_THROW((void)prepareRifeSdr(source),std::invalid_argument);
     EXPECT_THROW((void)prepareRifeSdr(rgbFixture(),1),std::invalid_argument);
     auto prepared = prepareRifeSdr(rgbFixture()); prepared.pixels[0] = std::numeric_limits<float>::quiet_NaN();

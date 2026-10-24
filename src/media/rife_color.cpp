@@ -17,9 +17,10 @@ AVPixelFormat checkColor(const ColorInfo& color) {
     const auto* descriptor = av_pix_fmt_desc_get(format);
     const bool supportedPrimaries = color.primaries == "bt709" || color.primaries == "bt470bg" || color.primaries == "smpte170m";
     const bool supportedTransfer = color.transfer == "bt709" || color.transfer == "smpte170m" || color.transfer == "iec61966-2-1";
-    if (!descriptor || color.bitDepth != 8 || descriptor->comp[0].depth != 8 || color.hdrTransfer || color.masteringDisplay || color.contentLight ||
+    const bool supportedBitDepth = color.bitDepth == 8 || color.bitDepth == 10;
+    if (!descriptor || !supportedBitDepth || descriptor->comp[0].depth != color.bitDepth || color.hdrTransfer || color.masteringDisplay || color.contentLight ||
         !supportedPrimaries || !supportedTransfer)
-        throw std::invalid_argument("RIFE SDR path requires tagged 8-bit BT.709 or BT.470BG/SMPTE 170M primaries and SDR transfer; HDR/unknown color needs a separately validated path");
+        throw std::invalid_argument("RIFE SDR path requires tagged 8-bit or 10-bit BT.709 or BT.470BG/SMPTE 170M primaries and SDR transfer; HDR/unknown color needs a separately validated path");
     if (descriptor->flags & (AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_ALPHA | AV_PIX_FMT_FLAG_FLOAT))
         throw std::invalid_argument("RIFE SDR path does not accept hardware, palette, alpha or floating source pixels");
     const bool rgb = (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
@@ -50,6 +51,11 @@ std::unique_ptr<SwsContext, ScaleDeleter> converter(int width, int height, AVPix
 }
 }
 void validateRifeSdrColor(const ColorInfo& color) { (void)checkColor(color); }
+std::string rifeSdrInputProfile(const ColorInfo& color) {
+    (void)checkColor(color);
+    const auto family = color.primaries == "bt709" ? "bt709" : "bt470bg";
+    return std::string(family) + "-sdr" + std::to_string(color.bitDepth);
+}
 ColorInfo normalizeDecodedSdrColor(const ColorInfo& decodedColor, const ColorInfo& streamColor) {
     try {
         (void)checkColor(decodedColor);
@@ -68,7 +74,7 @@ ColorInfo normalizeDecodedSdrColor(const ColorInfo& decodedColor, const ColorInf
 
     // Some files carry BT.601-family VUI tags that disagree with the container tags.
     // Keep the container stream as the single output metadata contract after verifying
-    // that both descriptions are explicit, SDR, 8-bit, and agree on primaries and range.
+    // that both descriptions are explicit, supported SDR, and agree on primaries and range.
     auto normalized = decodedColor;
     normalized.transfer = streamColor.transfer;
     normalized.matrix = streamColor.matrix;

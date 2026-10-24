@@ -77,7 +77,7 @@ def main():
         report = {"status":"passed_upstream_video_reference","model_sha256":job["model_sha256"],"source_frames":4,"output_frames":8,
                   "ai_frames":3,"reference":"verified upstream PyTorch CPU plus explicit FFmpeg BT.709 color conversion",
                   "torch":torch.__version__,"cases":cases,"limits":{"maximum_code_error":2,"mean_code_error":0.05},
-                  "pending":["full resolutions/content matrix","visual blind review","HDR/10-bit","TensorRT/FP16"]}
+                  "pending":["full resolutions/content matrix","visual blind review","real-content 10-bit/HDR","TensorRT/FP16"]}
         args.report.write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
         print(json.dumps(report))
 

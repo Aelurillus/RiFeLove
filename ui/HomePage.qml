@@ -98,7 +98,7 @@ Item {
                                 Label { text: page.processingStatus; font.pixelSize: 18; font.bold: true; color: page.processing ? "#9ee6c8" : "#eaf0fa"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "#263548"; Layout.topMargin: 3; Layout.bottomMargin: 3 }
                                 Label { text: qsTr("本机处理"); color: "#9ee6c8"; font.bold: true }
-                                Label { text: qsTr("视频不会上传；NVENC 不可用时会切换到软件编码。") ; color: "#91a1b4"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: qsTr("视频仅在本机处理；自动模式会按驱动和源格式选择兼容的本地编码器。") ; color: "#91a1b4"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             }
                         }
                     }

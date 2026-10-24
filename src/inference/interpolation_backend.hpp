@@ -21,6 +21,7 @@ struct ModelCapabilities {
     bool dynamicTimestep;
     bool fp16;
     std::string fallbackReason;
+    std::vector<std::string> supportedInputProfiles;
 };
 // Immutable through this interface. The uploader must relinquish mutable aliases
 // before submitting a frame, and keep its data unchanged until its future ends.

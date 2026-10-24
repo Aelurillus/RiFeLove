@@ -40,7 +40,7 @@ Studio and Queue expose a target bitrate in kbit/s and a maximum GOP length. The
 
 HEVC software encoding adds a constant-QP mode (0–51) through FFmpeg's `libkvazaar` `kvazaar-params` option. AV1 software encoding adds libaom CRF mode (0–63); in these quality modes the target bitrate is set to zero so the codec uses constant quality. H.264 OpenH264 remains target-bitrate only. Encoder-specific choices are checked before a task is queued or started. These quality numbers are encoder controls, not a promise of equal perceptual quality across codecs.
 
-The current RIFE interpolation path is qualified only for tagged 8-bit SDR. The desktop does not offer 10-bit or HDR output controls until the model/color pipeline can preserve and validate them end to end.
+The RIFE path accepts model-declared tagged 8/10-bit SDR source profiles and keeps the source pixel format for output. Automatic mode probes software H.264, HEVC and AV1 compatibility and selects the first encoder that accepts the source format. If none can preserve the source depth, it fails before interpolation instead of silently converting to 8-bit. HDR, user-selected precision conversion and real-content 10-bit quality remain unqualified.
 
 ## Remaining acceptance
 

@@ -33,6 +33,8 @@ The local environment is installed and the exporter has been executed. The origi
 
 A separate, explicitly selected `sdr8` numerical profile requires maximum normalized RGB error <= `0.5/255` and PSNR >=80 dB against upstream FP32. This relates the numerical comparison to half an 8-bit code value; it is neither a guarantee of identical rounded pixels nor a perceptual/HDR/10-bit quality claim. The default remains `strict`. Failed gates do not publish model packs. Native CUDA uses the same pack-specific limits and additionally checks actual operator placement.
 
+The model descriptor's input profiles are separate from that numerical-error threshold. Current local packs declare the tagged BT.709 and BT.470BG-family SDR8 and SDR10 profiles because the adapter converts those inputs to the same normalized FP32 NCHW contract. The SDR10 color converter has synthetic CPU regression coverage; real-content 10-bit RIFE quality still needs visual and end-to-end review.
+
 ```powershell
 .\work\model-tools\Scripts\python.exe tools/model_export/export_rife.py --numerical-profile sdr8 --output-dir models/cache/rife-4.25-fp32-sdr8-v2
 ```

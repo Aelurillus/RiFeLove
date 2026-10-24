@@ -136,7 +136,7 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("编码器"); font.bold: true }
-                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动 / H.264"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
+                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
                     }
                 }
                 ActionButton { text: page.encodingAdvancedOpen ? qsTr("收起高级编码") : qsTr("高级编码设置"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.encodingAdvancedOpen = !page.encodingAdvancedOpen }
@@ -188,7 +188,7 @@ Item {
                         Label {
                             text: encoderBox.currentIndex === 2 ? qsTr("HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。")
                                 : encoderBox.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
-                                : qsTr("当前 H.264 编码器使用目标码率。自动模式会在 NVENC 不可用时回退到软件 H.264。")
+                                : qsTr("自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。")
                             color: "#9aaac0"
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap

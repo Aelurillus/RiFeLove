@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace rifelove::inference {
@@ -41,5 +42,6 @@ struct ModelPack {
 [[nodiscard]] std::vector<std::byte> readVerifiedFile(const std::filesystem::path& path, const std::string& expectedSha256, std::size_t limit);
 [[nodiscard]] std::filesystem::path packFile(const std::filesystem::path& directory, const std::string& relative);
 [[nodiscard]] ModelPack loadModelPack(const std::filesystem::path& directory);
+[[nodiscard]] bool supportsInputProfile(const ModelPack& model, std::string_view profile);
 
 } // namespace rifelove::inference

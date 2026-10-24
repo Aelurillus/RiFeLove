@@ -2,6 +2,7 @@
 #include "encoding_settings.hpp"
 #include "gpu/cuda_device.hpp"
 #include "timeline/timeline.hpp"
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QDir>
 #include <QStringList>
@@ -12,6 +13,17 @@ std::string utf8(const QString& text) { return text.toUtf8().toStdString(); }
 QString text(const std::string& value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 std::filesystem::path path(const QUrl& url) { return std::filesystem::path(url.toLocalFile().toStdWString()); }
 double seconds(rifelove::Rational value) { return static_cast<double>(value.toLongDouble()); }
+QString automaticSoftwareEncoder(const QVariantMap& encoders) {
+    for (const auto& candidate : {QStringLiteral("libopenh264"),QStringLiteral("libkvazaar"),QStringLiteral("libaom-av1")})
+        if (encoders.value(candidate).toMap().value(QStringLiteral("contextOpened")).toBool()) return candidate;
+    return {};
+}
+QString softwareEncoderLabel(const QString& encoder) {
+    if (encoder == QStringLiteral("libopenh264")) return QCoreApplication::translate("StudioController","软件 H.264");
+    if (encoder == QStringLiteral("libkvazaar")) return QCoreApplication::translate("StudioController","软件 HEVC");
+    if (encoder == QStringLiteral("libaom-av1")) return QCoreApplication::translate("StudioController","软件 AV1");
+    return QCoreApplication::translate("StudioController","兼容的软件编码器");
+}
 }
 StudioController::StudioController(QObject* parent) : QObject(parent) {
     try {
@@ -64,10 +76,10 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         if (encoder == QStringLiteral("auto")) {
             const auto nvencCapability = encoders.value(QStringLiteral("h264_nvenc")).toMap();
             const auto nvenc = nvencCapability.value(QStringLiteral("contextOpened")).toBool();
-            const auto software = encoders.value(QStringLiteral("libopenh264")).toMap().value(QStringLiteral("contextOpened")).toBool();
-            if (!nvenc && !software) throw std::invalid_argument("Automatic H.264 is unavailable: neither NVENC nor software H.264 could initialize");
+            const auto software = automaticSoftwareEncoder(encoders);
+            if (!nvenc && software.isEmpty()) throw std::invalid_argument("Automatic encoding is unavailable: NVENC and all compatible software encoders failed to initialize");
             if (!nvenc) {
-                resolvedEncoder = QStringLiteral("libopenh264");
+                resolvedEncoder = software;
                 preflightEncoderFallback = nvencCapability.value(QStringLiteral("reason")).toString();
                 if (preflightEncoderFallback.isEmpty())
                     preflightEncoderFallback = tr("NVENC could not initialize for this source profile.");
@@ -89,7 +101,9 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         busy_ = true; status_ = "loading_model"; detail_.clear(); progress_.clear();
         if (!preflightEncoderFallback.isEmpty()) {
             progress_["encoderFallbackReason"] = preflightEncoderFallback;
-            detail_ = tr("NVENC 与当前环境不兼容，已选择软件 H.264 编码；RIFE 插帧仍由 CUDA 执行。");
+            progress_["encoder"] = resolvedEncoder;
+            detail_ = tr("NVENC 不可用，已选择%1编码；RIFE 插帧仍由 CUDA 执行。")
+                .arg(softwareEncoderLabel(resolvedEncoder));
         }
         if (const auto count = rifelove::estimateOutputFrameCount(job.sourceDurationEstimate,job.settings.targetRate))
             progress_["estimatedFrames"] = QVariant::fromValue<qulonglong>(*count);
@@ -106,13 +120,17 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         progress_["aiFrames"] = QVariant::fromValue<qulonglong>(event.aiFrames);
         progress_["fps"] = event.processingFps;
         if (event.timestamp) progress_["timestamp"] = seconds(*event.timestamp);
-        if (event.stage == "encoder_fallback") progress_["encoderFallbackReason"] = text(event.detail);
+        if (event.stage == "encoder_fallback") {
+            progress_["encoderFallbackReason"] = text(event.detail);
+            if (!event.encoder.empty()) progress_["encoder"] = text(event.encoder);
+        }
         if (event.kind == Kind::prepared && !event.detail.empty()) progress_["inferenceFallbackReason"] = text(event.detail);
         QStringList notices;
         if (!progress_.value("inferenceFallbackReason").toString().isEmpty())
             notices.push_back(tr("TensorRT 当前不可用，已回退到 ONNX Runtime CUDA 推理。"));
         if (!progress_.value("encoderFallbackReason").toString().isEmpty())
-            notices.push_back(tr("NVIDIA 视频编码器当前不可用，已切换到软件 H.264；补帧仍在进行。"));
+            notices.push_back(tr("NVIDIA 视频编码器当前不可用，已切换到%1；RIFE 插帧仍在进行。")
+                .arg(softwareEncoderLabel(progress_.value("encoder").toString())));
         if (!notices.isEmpty()) detail_ = notices.join('\n');
         else if (event.stage != "encoder_fallback" && !event.detail.empty()) detail_ = text(event.detail);
         else detail_.clear();
@@ -132,8 +150,10 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             media_["encoders"] = encoders;
             const auto nvenc = encoders.value(QStringLiteral("h264_nvenc")).toMap();
             const auto softwareH264 = encoders.value(QStringLiteral("libopenh264")).toMap();
+            const auto softwareFallback = automaticSoftwareEncoder(encoders);
             media_["nvencContextOpened"] = nvenc.value("contextOpened").toBool();
             media_["softwareH264ContextOpened"] = softwareH264.value("contextOpened").toBool();
+            media_["automaticSoftwareEncoder"] = softwareFallback;
             media_["nvencReason"] = nvenc.value("reason").toString();
             bool hasVideo = false;
             QStringList notices;
@@ -152,6 +172,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                 media_["depth"] = stream.color.bitDepth;
                 media_["hdr"] = stream.color.hdrTransfer;
                 media_["supportedColor"] = event.sourceColorSupported;
+                media_["inputProfile"] = text(event.sourceInputProfile);
                 if (stream.duration) media_["duration"] = seconds(*stream.duration);
                 else if (event.media->duration) media_["duration"] = seconds(*event.media->duration);
                 if (stream.start) media_["start"] = seconds(*stream.start);
@@ -161,16 +182,18 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             media_["gpuAvailable"] = event.device.has_value();
             media_["streams"] = static_cast<int>(event.media->streams.size());
             if (hasVideo && !media_.value("nvencContextOpened").toBool()) {
-                if (media_.value("softwareH264ContextOpened").toBool()) {
+                if (!softwareFallback.isEmpty()) {
                     const auto reason = media_.value("nvencReason").toString();
                     const bool apiMismatch = reason.contains(QStringLiteral("Function not implemented"),Qt::CaseInsensitive) ||
                         reason.contains(QStringLiteral("minimum required Nvidia driver"),Qt::CaseInsensitive) ||
                         reason.contains(QStringLiteral("required nvenc API version"),Qt::CaseInsensitive);
                     notices.push_back(apiMismatch
-                        ? tr("NVENC 与当前 NVIDIA 驱动不兼容；自动编码将使用软件 H.264，RIFE 插帧仍使用 GPU。")
-                        : tr("NVENC 当前无法初始化；自动编码将使用软件 H.264，RIFE 插帧仍使用 GPU。"));
+                        ? tr("NVENC 与当前 NVIDIA 驱动不兼容；自动编码将使用%1，RIFE 插帧仍使用 GPU。")
+                            .arg(softwareEncoderLabel(softwareFallback))
+                        : tr("NVENC 当前无法初始化；自动编码将使用%1，RIFE 插帧仍使用 GPU。")
+                            .arg(softwareEncoderLabel(softwareFallback)));
                 } else {
-                    notices.push_back(tr("NVENC 和软件 H.264 均未能初始化；请选择其他可用编码器或检查本机编码运行环境。"));
+                    notices.push_back(tr("NVENC 和兼容的软件编码器均未能初始化；请检查本机视频编码运行环境。"));
                 }
             }
             if (hasVideo) {
@@ -183,7 +206,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                     .arg(unavailable.join(QStringLiteral("、"))));
             }
             if (hasVideo && !media_.value("supportedColor").toBool())
-                notices.push_back(tr("当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8-bit SDR；HDR、10-bit 和未标记色彩需要后续色彩处理支持。"));
+                notices.push_back(tr("当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩需要单独验证。"));
             detail_ = notices.join('\n');
             if (!hasVideo) { media_.clear(); status_ = "failed"; detail_ = tr("文件中没有可处理的视频轨。 "); }
         } else if (event.kind == Kind::completed && event.result) {
@@ -197,9 +220,10 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                 .arg(result.video.framesSubmitted).arg(result.aiFrames);
             if (!result.encoderFallbackReason.empty()) {
                 progress_["encoderFallbackReason"] = text(result.encoderFallbackReason);
-                detail_ += "\n" + tr("GPU 编码器无法在当前环境启动，已使用软件 H.264；RIFE 插帧仍由 GPU 运行。");
-            } else if (!progress_.value("encoderFallbackReason").toString().isEmpty() && result.video.encoder == "libopenh264") {
-                detail_ += "\n" + tr("NVENC 与当前环境不兼容，已使用软件 H.264；RIFE 插帧仍由 GPU 运行。");
+            }
+            if (!progress_.value("encoderFallbackReason").toString().isEmpty()) {
+                detail_ += "\n" + tr("NVENC 不可用，已使用%1；RIFE 插帧仍由 GPU 运行。")
+                    .arg(softwareEncoderLabel(text(result.video.encoder)));
             }
             if (!result.inferenceFallbackReason.empty()) {
                 progress_["inferenceFallbackReason"] = text(result.inferenceFallbackReason);

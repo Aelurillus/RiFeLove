@@ -65,6 +65,10 @@ class NativeRifePipeline(unittest.TestCase):
         invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","color=black:size=96x64:rate=4:duration=0.5",
                "-f","lavfi","-i","color=white:size=96x64:rate=4:duration=0.5",
                "-filter_complex",f"[0:v][1:v]concat=n=2:v=1:a=0,{cls.color}","-c:v","ffv1",cls.cut)
+        cls.tenBit = cls.root / "ten-bit-bt709.mkv"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=5:duration=0.8",
+               "-vf",cls.color,"-c:v","ffv1","-pix_fmt","yuv420p10le",
+               "-color_primaries","bt709","-color_trc","bt709","-colorspace","bt709","-color_range","tv",cls.tenBit)
 
     @classmethod
     def tearDownClass(cls): cls.temporary.cleanup()
@@ -166,6 +170,20 @@ class NativeRifePipeline(unittest.TestCase):
         self.assertEqual((output_video["color_primaries"],output_video["color_transfer"],output_video["color_space"]),
                          ("bt470bg","bt709","smpte170m"))
         self.assert_audio_samples_equal(self.bt601TagConflict,output)
+
+    def test_ten_bit_sdr_model_profile_preserves_output_depth_and_color_tags(self):
+        input_video = probe(self.tenBit,"-select_streams","v:0","-show_streams")["streams"][0]
+        self.assertEqual(input_video["pix_fmt"],"yuv420p10le")
+        self.assertEqual((input_video["color_primaries"],input_video["color_transfer"],input_video["color_space"],input_video["color_range"]),
+                         ("bt709","bt709","bt709","tv"))
+        output = self.root / "ten-bit-rife.mkv"
+        result,_ = self.run_job(self.tenBit,output,"10","--encoder","auto")
+        self.verify_timing(output,result)
+        self.assertGreater(result["ai_frames"],0)
+        output_video = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]
+        self.assertEqual(output_video["pix_fmt"],"yuv420p10le")
+        self.assertEqual((output_video["color_primaries"],output_video["color_transfer"],output_video["color_space"],output_video["color_range"]),
+                         ("bt709","bt709","bt709","tv"))
 
     def test_hevc_and_av1_real_interpolation_and_audio_copy(self):
         for encoder,extension,options in (

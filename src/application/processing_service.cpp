@@ -65,7 +65,7 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         const auto now = std::chrono::steady_clock::now();
         if (value.stage == lastStage && now - lastUpdate < std::chrono::milliseconds(100)) return;
         lastUpdate = now; lastStage = value.stage;
-        ProcessingEvent event; event.stage = value.stage; event.detail = value.detail;
+        ProcessingEvent event; event.stage = value.stage; event.detail = value.detail; event.encoder = value.encoder;
         event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames; event.timestamp = value.timestamp;
         const auto seconds = std::chrono::duration<double>(now - started).count();
         event.processingFps = seconds > 0 ? static_cast<double>(value.outputFrames) / seconds : 0;
@@ -117,7 +117,8 @@ bool ProcessingService::inspect(std::string source, Callback callback) {
         event.kind = ProcessingEvent::Kind::inspected;
         event.media = media::MediaEngine::probe(source, stop);
         for (const auto& stream : event.media->streams) if (stream.index == event.media->preferredVideoStream) {
-            try { media::validateRifeSdrColor(stream.color); event.sourceColorSupported = true; } catch (const std::exception&) {}
+            try { event.sourceInputProfile = media::rifeSdrInputProfile(stream.color); event.sourceColorSupported = true; }
+            catch (const std::exception&) {}
             constexpr std::array<const char*,4> encoderNames{"h264_nvenc","libopenh264","libkvazaar","libaom-av1"};
             for (const auto* name : encoderNames) event.encoderCapabilities.push_back(media::MediaEngine::probeEncoder(name,stream,{},stop));
         }

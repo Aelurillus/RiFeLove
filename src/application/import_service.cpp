@@ -46,6 +46,9 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
     if (request.inputs.empty() || request.settings.settings.targetRate <= Rational(0) ||
         (request.container != "mkv" && request.container != "mp4" && request.container != "mov")) throw std::invalid_argument("Invalid import selection, FPS or container");
     auto settings = request.settings; pinModelDescriptor(settings);
+    const auto modelPack = inference::loadModelPack(settings.modelDirectory);
+    if (modelPack.sha256 != settings.expectedModelSha256 || modelPack.id != settings.expectedModelId || modelPack.version != settings.expectedModelVersion)
+        throw std::invalid_argument("Selected model differs from the verified local model pack");
     const auto first = normalized(request.inputs.front());
     ImportResult result; result.outputDirectory = request.outputDirectory.empty() ? (fs::is_directory(first) ? first : first.parent_path()) : normalized(request.outputDirectory);
     if (!fs::is_directory(result.outputDirectory)) throw std::invalid_argument("Output directory does not exist");
@@ -83,8 +86,14 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
             if (video == info.streams.end()) result.rejected.push_back({source,ImportRejection::noVideo,"No video stream"});
             else {
                 bool valid = true;
-                try { media::validateRifeSdrColor(video->color); }
+                std::string profile;
+                try { profile = media::rifeSdrInputProfile(video->color); }
                 catch (const std::exception& error) { result.rejected.push_back({source,ImportRejection::unsupportedColor,error.what()}); valid = false; }
+                if (valid && !inference::supportsInputProfile(modelPack,profile)) {
+                    result.rejected.push_back({source,ImportRejection::unsupportedModelProfile,
+                        "Selected model does not declare support for input profile " + profile});
+                    valid = false;
+                }
                 if (valid) {
                     auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
                     if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;

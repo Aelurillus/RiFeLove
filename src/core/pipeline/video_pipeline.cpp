@@ -2,6 +2,7 @@
 #include "media/rife_color.hpp"
 #include "timeline/timeline.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <numeric>
@@ -25,6 +26,16 @@ OutputTimingValidation validateOutput(const std::string& path, int selected, Rat
     const auto info = media::MediaEngine::probe(path,stop);
     const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const media::StreamInfo& stream) { return stream.index == selected && stream.type == "video"; });
     if (video == info.streams.end() || video->timeBase <= Rational(0)) throw std::runtime_error("Output has no valid video time base");
+    const auto originalVideo = std::find_if(source.streams.begin(),source.streams.end(),[&](const media::StreamInfo& stream) {
+        return stream.index == selected && stream.type == "video";
+    });
+    if (originalVideo == source.streams.end()) throw std::runtime_error("Original selected video stream is unavailable for output validation");
+    const auto& inputColor = originalVideo->color;
+    const auto& outputColor = video->color;
+    if (outputColor.pixelFormat != inputColor.pixelFormat || outputColor.bitDepth != inputColor.bitDepth ||
+        outputColor.primaries != inputColor.primaries || outputColor.transfer != inputColor.transfer ||
+        outputColor.matrix != inputColor.matrix || outputColor.range != inputColor.range)
+        throw std::runtime_error("Output pixel format, bit depth or color tags did not preserve the source contract");
     OutputTimingValidation result{}; result.timeBase = video->timeBase;
     if (video->declaredEnd) {
         result.declaredEndError = *video->declaredEnd - end;
@@ -52,7 +63,7 @@ OutputTimingValidation validateOutput(const std::string& path, int selected, Rat
         result.maximumTimestampError = std::max(result.maximumTimestampError,error);
         ++result.decodedFrames;
         lastEnd = frame.duration ? std::optional<Rational>(*frame.timestamp + *frame.duration) : std::nullopt;
-        if (progress && result.decodedFrames % 120 == 0) progress({"validating",result.decodedFrames,0,frame.timestamp,0,{}});
+        if (progress && result.decodedFrames % 120 == 0) progress({"validating",result.decodedFrames,0,frame.timestamp,0,{}, {}});
     },selected,stop);
     if (scan.missingTimestamps || scan.nonIncreasingTimestamps || result.decodedFrames != expectedCount || !lastEnd)
         throw std::runtime_error("Output frame count, ordering or final-frame duration could not be verified");
@@ -84,8 +95,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto paddedHeight = static_cast<std::size_t>(((video->height + 63) / 64) * 64);
     if (paddedWidth * paddedHeight * 3 * sizeof(float) > settings.hostFloatBufferLimit)
         throw std::invalid_argument("Input exceeds the configured host float-buffer limit");
-    if (video->color.hdrTransfer || video->color.bitDepth > 8)
-        throw std::invalid_argument("This RIFE adapter is qualified for 8-bit SDR; HDR/high-depth needs a separately validated model/color path");
+    const auto inputProfile = media::rifeSdrInputProfile(video->color);
+    const bool legacySdr8 = video->color.bitDepth == 8 &&
+        std::find(capabilities.supportedInputProfiles.begin(),capabilities.supportedInputProfiles.end(),"legacy-unverified") != capabilities.supportedInputProfiles.end();
+    if (!legacySdr8 && std::find(capabilities.supportedInputProfiles.begin(),capabilities.supportedInputProfiles.end(),inputProfile) == capabilities.supportedInputProfiles.end())
+        throw std::invalid_argument("Selected RIFE model does not declare support for input profile " + inputProfile);
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
     encoding.frameRate = settings.targetRate;
     std::string fallback;
@@ -100,8 +114,38 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             }
         } else fallback = "h264_nvenc is not registered in this FFmpeg build";
         if (!writer) {
-            encoding.encoder = "libopenh264";
-            if (progress) progress({"encoder_fallback",0,0,{},0,fallback});
+            const std::array<const char*,3> softwareEncoders{"libopenh264","libkvazaar","libaom-av1"};
+            auto attempts = fallback;
+            for (const auto* candidate : softwareEncoders) {
+                checkStop(stop);
+                const auto capability = media::MediaEngine::probeEncoder(candidate,*video,settings.targetRate,stop);
+                checkStop(stop);
+                if (!capability.contextOpened) {
+                    if (!attempts.empty()) attempts += "; ";
+                    attempts += capability.encoder + ": " + capability.reason;
+                    continue;
+                }
+                encoding.encoder = candidate;
+                try { writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop); }
+                catch (const media::MediaError& error) {
+                    if (error.operation() != "open video encoder " + encoding.encoder || stop.stop_requested()) throw;
+                    if (!attempts.empty()) attempts += "; ";
+                    attempts += error.what();
+                    continue;
+                } catch (const std::invalid_argument& error) {
+                    if (std::string(error.what()).find("encoder does not support the requested pixel format") == std::string::npos) throw;
+                    if (!attempts.empty()) attempts += "; ";
+                    attempts += encoding.encoder + ": " + error.what();
+                    continue;
+                }
+                fallback = attempts;
+                break;
+            }
+            if (!writer) throw std::runtime_error("Automatic encoding could not open a software encoder compatible with the source format: " + attempts);
+            if (progress) {
+                PipelineProgress event{"encoder_fallback",0,0,{},0,fallback,encoding.encoder};
+                progress(event);
+            }
         }
     }
     if (!writer) writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop);
@@ -116,7 +160,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::shared_ptr<gpu::DeviceBuffer> reusableOutput;
     media::RifeSdrFrame generated{};
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
-        if (progress) { const double seconds = elapsed(); progress({stage,clock ? clock->index() : 0,result.aiFrames,time,seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail}); }
+        if (progress) { const double seconds = elapsed(); progress({stage,clock ? clock->index() : 0,result.aiFrames,time,seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail,{}}); }
     };
     const auto emit = [&](media::DecodedFrame frame) {
         const auto time = clock->timestamp();

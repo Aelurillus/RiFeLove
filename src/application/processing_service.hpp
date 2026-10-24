@@ -34,6 +34,8 @@ struct ProcessingEvent {
     Kind kind = Kind::progress;
     std::string stage;
     std::string detail;
+    std::string encoder;
+    std::string sourceInputProfile;
     std::size_t outputFrames = 0;
     std::size_t aiFrames = 0;
     double processingFps = 0;

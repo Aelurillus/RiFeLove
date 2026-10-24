@@ -321,6 +321,7 @@ public:
         }
         if (!session.value) session = buildSession(false);
         modelId = model.id;
+        supportedInputProfiles = model.supportedInputProfiles;
         profiled = !config.profilePrefix.empty();
     }
     std::future<InterpolationResult> submit(InterpolationRequest request) {
@@ -349,7 +350,7 @@ public:
     }
     ModelCapabilities capabilities() const {
         std::lock_guard lock(mutex);
-        return {resolvedBackend, modelId, 64, true, false, fallbackReason};
+        return {resolvedBackend, modelId, 64, true, false, fallbackReason, supportedInputProfiles};
     }
 private:
     InterpolationResult execute(InterpolationRequest& request, std::stop_token shutdown) {
@@ -454,6 +455,7 @@ private:
     bool active = false;
     bool profiled = false;
     std::string modelId;
+    std::vector<std::string> supportedInputProfiles;
     std::string resolvedBackend = "onnxruntime_cuda";
     std::string fallbackReason;
     std::jthread worker;

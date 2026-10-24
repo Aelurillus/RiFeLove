@@ -44,9 +44,10 @@ void makeV2Pack(const std::filesystem::path& root) {
         {"licenseScopeEvidence", "https://example.invalid/license-scope"}
     }.dump(2) + "\n";
     const std::vector<std::string> backends{"pytorch_cpu", "onnxruntime_cpu"};
+    const std::vector<std::string> profiles{"bt709-sdr8","bt470bg-sdr8","bt709-sdr10","bt470bg-sdr10"};
     const std::string validation = Json{
         {"status", "passed_cpu_reference"}, {"model_sha256", hashText(graph)},
-        {"numerical_profile", "sdr8"}, {"validated_backends", backends},
+        {"numerical_profile", "sdr8"}, {"validated_backends", backends}, {"supported_input_profiles",profiles},
         {"cases", Json::array({Json{{"passed", true}}})}
     }.dump(2) + "\n";
     writeText(root / "model.onnx", graph);
@@ -62,7 +63,7 @@ void makeV2Pack(const std::filesystem::path& root) {
             {"inputLayout", "NCHW"}, {"dtype", "float32"}, {"batch", 1}, {"channels", 3},
             {"inputRange", Json::array({0.0, 1.0})}, {"spatialMultiple", 64},
             {"timestepShape", Json::array({1, 1, 1, 1})}, {"dynamicTimestep", true}, {"dynamicSpatial", true},
-            {"supportedInputProfiles", Json::array({"bt709-sdr8", "bt470bg-sdr8"})}, {"hdrQualified", false}
+            {"supportedInputProfiles", profiles}, {"hdrQualified", false}
         }},
         {"validation", {
             {"reportFile", "validation.json"}, {"reportSha256", hashText(validation)},
@@ -123,9 +124,19 @@ TEST(ModelIntegrity, V2PackVerifiesWeightsLicenseProvenanceAndValidation) {
     EXPECT_EQ(model.upstreamCommit, "abcdef0123456789");
     EXPECT_EQ(model.numericalProfile, "sdr8");
     EXPECT_EQ(model.validatedBackends, (std::vector<std::string>{"pytorch_cpu", "onnxruntime_cpu"}));
-    EXPECT_EQ(model.supportedInputProfiles, (std::vector<std::string>{"bt709-sdr8", "bt470bg-sdr8"}));
+    EXPECT_EQ(model.supportedInputProfiles, (std::vector<std::string>{"bt709-sdr8","bt470bg-sdr8","bt709-sdr10","bt470bg-sdr10"}));
     EXPECT_FALSE(model.hdrQualified);
     EXPECT_TRUE(model.metadataIntegrityVerified);
+}
+
+TEST(ModelIntegrity, InputProfileMatchingKeepsLegacyPacksToSdr8) {
+    ModelPack current; current.supportedInputProfiles = {"bt709-sdr8","bt709-sdr10"};
+    EXPECT_TRUE(supportsInputProfile(current,"bt709-sdr8"));
+    EXPECT_TRUE(supportsInputProfile(current,"bt709-sdr10"));
+    EXPECT_FALSE(supportsInputProfile(current,"bt470bg-sdr10"));
+    ModelPack legacy; legacy.supportedInputProfiles = {"legacy-unverified"};
+    EXPECT_TRUE(supportsInputProfile(legacy,"bt709-sdr8"));
+    EXPECT_FALSE(supportsInputProfile(legacy,"bt709-sdr10"));
 }
 
 TEST(ModelIntegrity, V2PackRejectsChangedSidecarsAndEscapingPaths) {
@@ -161,6 +172,16 @@ TEST(ModelIntegrity, V2ValidationMustMatchTheGraphAndDeclaredBackends) {
     writeJson(temporary.value / "validation.json", report);
     const auto backendReportBytes = readLocalFile(temporary.value / "validation.json", 1024 * 1024);
     descriptor["validation"]["reportSha256"] = sha256(backendReportBytes);
+    writeJson(temporary.value / "model.json", descriptor);
+    EXPECT_THROW((void)loadModelPack(temporary.value), std::invalid_argument);
+
+    makeV2Pack(temporary.value);
+    descriptor = readJson(temporary.value / "model.json");
+    report = readJson(temporary.value / "validation.json");
+    report["supported_input_profiles"] = Json::array({"bt709-sdr8"});
+    writeJson(temporary.value / "validation.json", report);
+    const auto profileReportBytes = readLocalFile(temporary.value / "validation.json", 1024 * 1024);
+    descriptor["validation"]["reportSha256"] = sha256(profileReportBytes);
     writeJson(temporary.value / "model.json", descriptor);
     EXPECT_THROW((void)loadModelPack(temporary.value), std::invalid_argument);
 
