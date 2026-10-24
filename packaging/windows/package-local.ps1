@@ -36,8 +36,9 @@ if ($duplicateIds) { throw "Model pack ids must be unique in a local bundle: $($
 $defaultModelPack = $modelPacks[0]
 $modelNames = ($modelPacks | ForEach-Object { if ($_.descriptor.displayName) { [string]$_.descriptor.displayName } else { [string]$_.descriptor.id } }) -join ", "
 $executable = Join-Path $build "RifeLove.exe"
+$cliExecutable = Join-Path $build "rifelove-cli.exe"
 $deployTool = Join-Path $qt "bin/windeployqt.exe"
-foreach ($required in @($executable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"))) {
+foreach ($required in @($executable,$cliExecutable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"))) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required packaging input is missing: $required" }
 }
 foreach ($pack in $modelPacks) {
@@ -58,6 +59,7 @@ if (Test-Path -LiteralPath $target) {
 }
 New-Item -ItemType Directory -Path $target | Out-Null
 Copy-Item -LiteralPath $executable -Destination $target
+Copy-Item -LiteralPath $cliExecutable -Destination $target
 $savedPath = $env:PATH
 try {
     $env:PATH = "$qt/bin;$ffmpeg/bin;$savedPath"
@@ -114,6 +116,7 @@ RifeLove 本机运行包
 默认推理：优先尝试 TensorRT 10.9；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT 引擎缓存位于本机用户目录。
 默认视频编码：导入时预检查 NVIDIA NVENC；若当前驱动不兼容，会在任务开始前选择 H.264 软件编码并说明原因。RIFE 插帧仍使用 CUDA。
 导入视频时会按源视频的分辨率和像素格式预检查 NVENC、软件 H.264、HEVC 与 AV1；这项检查只打开编码器上下文，最终仍以实际导出结果为准。
+本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\$($defaultModelPack.descriptor.id)" --runtime-dir ".\runtime" --progress。也可以用 `rifelove-cli.exe --help` 查看全部本地命令。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。
 进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。
 
@@ -145,6 +148,11 @@ try {
 if (-not (Test-Path -LiteralPath (Join-Path $target "data/preferences.ini") -PathType Leaf)) {
     throw "Packaged RifeLove did not create its first-run preferences."
 }
+$cliHelp = & (Join-Path $target "rifelove-cli.exe") --help 2>&1
+$cliExitCode = $LASTEXITCODE
+if ($cliExitCode -ne 0 -or (($cliHelp -join "`n") -notmatch "interpolate") -or (($cliHelp -join "`n") -notmatch "queue-run")) {
+    throw "Packaged RifeLove CLI did not expose the local interpolation and queue commands."
+}
 
 $preferences = Get-Content -LiteralPath (Join-Path $target "data/preferences.ini") -Raw
 if ($preferences -notmatch [regex]::Escape([string]$defaultModelPack.descriptor.id) -or $preferences -notmatch "onnxruntime\.dll|runtime") {
@@ -159,6 +167,7 @@ foreach ($pack in $modelPacks) {
 $manifest = @(
     "RifeLove local bundle SHA-256",
     ((Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe"),
+    ((Get-FileHash -LiteralPath (Join-Path $target "rifelove-cli.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  rifelove-cli.exe"),
     ((Get-FileHash -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Algorithm SHA256).Hash.ToLowerInvariant() + "  models/default-model.txt")
 )
 foreach ($pack in $modelPacks) {

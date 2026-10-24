@@ -12,7 +12,7 @@ On this workstation, build and launch the self-contained app folder with:
 .\packaging\windows\package-local.ps1
 ```
 
-The script writes `out/RifeLove-local/`, deploys Qt and FFmpeg runtime files, copies the selected RIFE model packs and notices, creates first-run local preferences, then launches a startup smoke check and captures `first-run.png`. Open `out/RifeLove-local/RifeLove.exe` to use it. The folder is ignored by Git because it contains build outputs and model weights.
+The script writes `out/RifeLove-local/`, deploys Qt and FFmpeg runtime files, copies the desktop and CLI programs plus selected RIFE model packs, creates first-run local preferences, launches a desktop startup smoke check, captures `first-run.png`, and checks that the CLI exposes interpolation and queue commands. Run `out/RifeLove-local/RifeLove.exe` for the desktop app or `out/RifeLove-local/rifelove-cli.exe --help` for command usage. The folder is ignored by Git because it contains build outputs and model weights.
 
 At startup, a missing or invalid saved model/runtime path falls back to the verified model and CUDA runtime bundled beside the app. This repairs stale local settings without resetting saved FPS, encoder, output or task history.
 
