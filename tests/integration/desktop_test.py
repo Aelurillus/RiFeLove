@@ -38,7 +38,8 @@ with tempfile.TemporaryDirectory(prefix="rifelove-desktop-") as folder:
         return subprocess.check_output([ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "s16le", "-"])
     assert pcm(source) == pcm(output), "Desktop output changed decoded audio samples"
     queue_files = sorted((root / "queue-output").glob("*_RifeLove*.mkv"))
-    assert len(queue_files) == 2, f"Expected two collision-safe queue outputs, got {queue_files}"
+    assert len(queue_files) == 3, f"Expected three completed collision-safe queue outputs, got {queue_files}"
+    assert not (root / "queue-output" / "cancel-source_RifeLove.mkv").exists(), "Cancelled queued task published an output"
     for queued in queue_files:
         result = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-count_frames", "-show_streams", "-of", "json", str(queued)]))
         video = next(stream for stream in result["streams"] if stream["codec_type"] == "video")

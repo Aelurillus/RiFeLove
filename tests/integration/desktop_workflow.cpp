@@ -5,6 +5,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QQuickItem>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -14,6 +15,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <functional>
+#include <algorithm>
 
 namespace {
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -26,16 +28,23 @@ void wait(StudioController& studio) {
     timeout.start(90000); loop.exec();
     require(!studio.busy(), "Desktop operation timed out");
 }
-void waitUntil(const std::function<bool()>& ready, const char* message) {
+void waitUntil(const std::function<bool()>& ready, const char* message, int timeoutMs = 90000) {
     QElapsedTimer elapsed; elapsed.start();
     while (!ready()) {
-        require(elapsed.elapsed() < 90000, message);
+        require(elapsed.elapsed() < timeoutMs, message);
         QEventLoop loop; QTimer::singleShot(10, &loop, &QEventLoop::quit); loop.exec();
     }
 }
-void click(QObject* button) {
-    require(button && button->property("enabled").toBool(), "QML start button is unavailable");
-    require(QMetaObject::invokeMethod(button, "clicked", Qt::DirectConnection), "Could not activate QML start button");
+void click(QObject* button, const char* name = "unnamed") {
+    if (!button) throw std::runtime_error(std::string("Required QML control was not created: ") + name);
+    if (!button->property("enabled").toBool()) throw std::runtime_error("QML control is disabled: " + button->objectName().toStdString());
+    if (!QMetaObject::invokeMethod(button, "clicked", Qt::DirectConnection)) throw std::runtime_error("Could not activate QML control: " + button->objectName().toStdString());
+}
+QObject* findVisual(QQuickItem* parent, const QString& name) {
+    if (!parent) return nullptr;
+    if (parent->objectName() == name) return parent;
+    for (auto* child : parent->childItems()) if (auto* found = findVisual(child,name)) return found;
+    return nullptr;
 }
 }
 int main(int argc, char** argv) {
@@ -73,7 +82,7 @@ int main(int argc, char** argv) {
         QTimer heartbeat; heartbeat.setInterval(5);
         QObject::connect(&heartbeat, &QTimer::timeout, [&] { ++responsiveTicks; });
         heartbeat.start();
-        click(button);
+        click(button,"studio start");
         require(studio.busy(), "QML start did not submit asynchronous work");
         wait(studio);
         require(studio.status() == "completed", qPrintable(studio.detail()));
@@ -87,13 +96,13 @@ int main(int argc, char** argv) {
         auto* window = qobject_cast<QQuickWindow*>(root);
         require(window && window->grabWindow().save(arguments[6]), "Workflow screenshot failed");
         // A repeated start must reject an existing output before worker launch.
-        click(button);
+        click(button,"studio existing-output start");
         require(studio.status() == "failed" && !studio.busy(), "Existing output was not protected");
         const auto cancelledOutput = arguments[2] + ".cancelled.mkv";
         studio.setOutput(QUrl::fromLocalFile(cancelledOutput));
         auto* rate = root->findChild<QObject*>("targetRate");
         require(rate && rate->setProperty("editText", "240"), "Target rate control is unavailable");
-        click(button);
+        click(button,"studio cancel workflow start");
         QTimer::singleShot(30, &studio, &StudioController::cancel);
         wait(studio);
         require(studio.status() == "cancelled", "Desktop cancellation was not observed");
@@ -111,18 +120,25 @@ int main(int argc, char** argv) {
         require(queuePage, "Queue page was not loaded into the desktop UI");
         queuePage->setProperty("modelFolder",QUrl::fromLocalFile(arguments[3]));
         queuePage->setProperty("runtimeFolder",QUrl::fromLocalFile(arguments[4]));
+        require(QFileInfo(queuePage->property("modelFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
+                QFileInfo(queuePage->property("runtimeFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[4]).absoluteFilePath(),
+                "Queue page did not retain its selected local model/runtime directories");
+        auto* modelPathField = root->findChild<QObject*>("queueModelPath");
+        auto* runtimePathField = root->findChild<QObject*>("queueRuntimePath");
+        require(modelPathField && !modelPathField->property("text").toString().isEmpty() && runtimePathField &&
+                !runtimePathField->property("text").toString().isEmpty(), "Queue page did not display its selected local model/runtime paths");
         auto* queueList = root->findChild<QObject*>("queueTaskList");
         require(queueList, "Virtualized desktop task list was not created");
         root->setProperty("currentPage",1);
         auto* queueStart = root->findChild<QObject*>("queueStartButton");
         auto* queuePause = root->findChild<QObject*>("queuePauseButton");
         auto* queueResume = root->findChild<QObject*>("queueResumeButton");
-        click(queueStart);
+        click(queueStart,"queue start initial batch");
         waitUntil([&] { return queuePause && queuePause->property("visible").toBool() && queuePause->property("enabled").toBool(); }, "Queue pause control did not become available");
-        click(queuePause);
+        click(queuePause,"queue pause");
         waitUntil([&] { return taskQueue.state() == "paused" || !taskQueue.busy(); }, "Queue did not acknowledge its cooperative pause");
         require(taskQueue.state() == "paused" && queueResume && queueResume->property("enabled").toBool(), "Queue pause was not reflected in the QML controls");
-        click(queueResume);
+        click(queueResume,"queue resume");
         waitUntil([&] { return !taskQueue.busy(); }, "Desktop queue processing timed out");
         require(taskQueue.counts().value("completed").toInt() == 2, qPrintable(taskQueue.detail()));
         QEventLoop queuePaint; QTimer::singleShot(120,&queuePaint,&QEventLoop::quit); queuePaint.exec();
@@ -134,9 +150,53 @@ int main(int argc, char** argv) {
                 QFileInfo(reopened.defaults().value("runtime").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[4]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("output").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(queueFolder).absoluteFilePath(),
                 "Local queue defaults were not persisted for the next launch");
+        const auto retrySource = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("retry-source.mkv");
+        require(QFile::copy(arguments[1],retrySource), "Could not create isolated retry fixture");
+        taskQueue.addItems({QUrl::fromLocalFile(retrySource)},QUrl::fromLocalFile(queueFolder),"60",
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",false);
+        waitUntil([&] { return !taskQueue.importing(); }, "Retry fixture import timed out");
+        auto* rows = qobject_cast<TaskListModel*>(taskQueue.tasks());
+        require(rows && rows->rowCount() == 3, "Retry fixture was not added to the task list");
+        const auto retryOutput = rows->index(2,0).data(TaskListModel::OutputPath).toString();
+        QFile collision(retryOutput);
+        require(collision.open(QIODevice::WriteOnly) && collision.write("owned-existing-output") > 0, "Could not prepare a deterministic output collision");
+        collision.close();
+        click(queueStart,"queue start collision failure");
+        waitUntil([&] { return !taskQueue.busy() && taskQueue.counts().value("failed").toInt() == 1; }, "Deterministic queue output failure was not recorded");
+        require(QFile::remove(retryOutput), "Could not remove the test-owned collision file");
+        const bool positionedAtEnd = QMetaObject::invokeMethod(queueList,"positionViewAtEnd",Qt::DirectConnection);
+        queueList->setProperty("contentY",std::max(0.0,queueList->property("contentHeight").toReal() - queueList->property("height").toReal()));
+        QEventLoop retryPaint; QTimer::singleShot(120,&retryPaint,&QEventLoop::quit); retryPaint.exec();
+        auto* retryButton = findVisual(window->contentItem(),"retryTaskButton");
+        if (!retryButton) throw std::runtime_error(std::string("Failed retry row was not instantiated in ListView; positionViewAtEnd=") + (positionedAtEnd ? "true" : "false"));
+        require(retryButton->property("enabled").toBool(), "Failed task retry control is disabled");
+        const auto retryId = rows->index(2,0).data(TaskListModel::TaskId).toString();
+        taskQueue.retryTask(retryId);
+        waitUntil([&] { return taskQueue.counts().value("queued").toInt() == 1 && taskQueue.counts().value("failed").toInt() == 0; }, "Failed task was not retried from its saved configuration",10000);
+        click(queueStart,"queue start after retry");
+        waitUntil([&] { return !taskQueue.busy() && taskQueue.counts().value("completed").toInt() == 3; }, "Retried task did not complete");
+        const auto cancelSource = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("cancel-source.mkv");
+        require(QFile::copy(arguments[1],cancelSource), "Could not create isolated queued-cancel fixture");
+        taskQueue.addItems({QUrl::fromLocalFile(cancelSource)},QUrl::fromLocalFile(queueFolder),"60",
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",false);
+        waitUntil([&] { return !taskQueue.importing(); }, "Queued-cancel fixture import timed out");
+        require(taskQueue.counts().value("queued").toInt() == 1, "Queued-cancel fixture was not pending");
+        QMetaObject::invokeMethod(queueList,"positionViewAtEnd",Qt::DirectConnection);
+        queueList->setProperty("contentY",std::max(0.0,queueList->property("contentHeight").toReal() - queueList->property("height").toReal()));
+        QEventLoop cancelPaint; QTimer::singleShot(120,&cancelPaint,&QEventLoop::quit); cancelPaint.exec();
+        auto* cancelButton = findVisual(window->contentItem(),"cancelTaskButton");
+        require(cancelButton && cancelButton->property("enabled").toBool(), "Queued cancel control is unavailable in the task row");
+        const auto cancelId = rows->index(3,0).data(TaskListModel::TaskId).toString();
+        taskQueue.cancelTask(cancelId);
+        waitUntil([&] { return taskQueue.counts().value("queued").toInt() == 0 && taskQueue.counts().value("cancelled").toInt() == 1; }, "Queued task cancellation was not persisted",10000);
+        require(QFileInfo(queuePage->property("modelFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
+                QFileInfo(queuePage->property("runtimeFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[4]).absoluteFilePath(),
+                "Queue settings changed after task operations");
+        QEventLoop finalPaint; QTimer::singleShot(120,&finalPaint,&QEventLoop::quit); finalPaint.exec();
+        require(window->grabWindow().save(arguments[6] + QStringLiteral(".queue.png")), "Final queue page screenshot failed");
         QFile report(arguments[7]); require(report.open(QIODevice::WriteOnly | QIODevice::Truncate), "Could not write workflow report");
-        report.write(QString("{\"success\":true,\"outputFrames\":36,\"aiFrames\":%1,\"responsiveTicks\":%2,\"existingOutputProtected\":true,\"cancelledWithoutOutput\":true,\"queueCompleted\":2,\"recursiveBatch\":true,\"duplicateInputsDeduplicated\":true,\"unsupportedHdrReported\":true}\n").arg(aiFrames).arg(responsiveTicks).toUtf8());
-        std::cout << "Desktop QML studio and persistent queue: recursive batch, collision-safe outputs, duplicate input and HDR rejection passed\n";
+        report.write(QString("{\"success\":true,\"outputFrames\":36,\"aiFrames\":%1,\"responsiveTicks\":%2,\"existingOutputProtected\":true,\"cancelledWithoutOutput\":true,\"queueCompleted\":3,\"recursiveBatch\":true,\"duplicateInputsDeduplicated\":true,\"unsupportedHdrReported\":true,\"controllerRetry\":true,\"controllerQueuedCancel\":true}\n").arg(aiFrames).arg(responsiveTicks).toUtf8());
+        std::cout << "Desktop QML studio and persistent queue: batch import, pause/resume, retry, queued cancellation and output checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

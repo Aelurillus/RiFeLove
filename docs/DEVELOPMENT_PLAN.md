@@ -74,7 +74,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
   - Recursive folder/multi-file import, duplicate elimination, unsupported-color reporting, collision-safe output naming, persistent local defaults and isolated data-directory selection now run through the desktop workflow; profiles remain open.
 - [x] Validate real QML start-to-output, GUI event-loop responsiveness, no-overwrite handling and cooperative cancellation with native RIFE.
 - [ ] Complete acceptance for the persistent desktop queue, progress, retry, pause and cancellation.
-  - The Qt page is connected to the SQLite service with virtualized task rows, sequential execution, pause/resume, stop, per-task cancel/retry and interrupted restart-from-zero controls. Actual GPU workflow checks recursive batch import, same-name output collision handling, HDR rejection, pause/resume, successful queue output/audio and preference reload. UI retry/cancel failure-path coverage, full history and safe segment recovery remain open.
+  - The Qt page is connected to the SQLite service with virtualized task rows, sequential execution, pause/resume, stop, per-task cancel/retry and interrupted restart-from-zero controls. Actual GPU workflow checks recursive batch import, same-name output collision handling, HDR rejection, pause/resume, deterministic output failure/retry, queued cancellation, successful output/audio and preference reload. Full history and safe segment recovery remain open.
 - [ ] Add comparison player, split mode and frame stepping.
 - [ ] Add model center, profiles and expert controls.
 - [ ] Localize zh-CN, zh-TW, en and ja; verify accessibility and keyboard use.

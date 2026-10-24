@@ -119,20 +119,20 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: qsTr("输出位置"); Layout.preferredWidth: 75 }
-                    TextField { Layout.fillWidth: true; readOnly: true; text: page.outputFolder.toLocalFile(); placeholderText: qsTr("留空时使用首个来源文件夹"); selectByMouse: true }
+                    TextField { Layout.fillWidth: true; readOnly: true; text: page.outputFolder.toString(); placeholderText: qsTr("留空时使用首个来源文件夹"); selectByMouse: true }
                     Button { text: qsTr("选择"); onClicked: outputFolderDialog.open() }
                     Button { text: qsTr("清除"); enabled: !!page.outputFolder.toString(); onClicked: page.outputFolder = "" }
                 }
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: qsTr("RIFE 模型"); Layout.preferredWidth: 75 }
-                    TextField { Layout.fillWidth: true; readOnly: true; text: page.modelFolder.toLocalFile(); placeholderText: qsTr("选择 model.json 所在的已校验目录"); selectByMouse: true }
+                    TextField { objectName: "queueModelPath"; Layout.fillWidth: true; readOnly: true; text: page.modelFolder.toString(); placeholderText: qsTr("选择 model.json 所在的已校验目录"); selectByMouse: true }
                     Button { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: modelDialog.open() }
                 }
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: qsTr("CUDA 运行库"); Layout.preferredWidth: 75 }
-                    TextField { Layout.fillWidth: true; readOnly: true; text: page.runtimeFolder.toLocalFile(); placeholderText: qsTr("选择 ONNX Runtime 与 CUDA DLL 目录"); selectByMouse: true }
+                    TextField { objectName: "queueRuntimePath"; Layout.fillWidth: true; readOnly: true; text: page.runtimeFolder.toString(); placeholderText: qsTr("选择 ONNX Runtime 与 CUDA DLL 目录"); selectByMouse: true }
                     Button { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: runtimeDialog.open() }
                 }
                 RowLayout {
@@ -213,8 +213,8 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { text: outputPath; elide: Text.ElideMiddle; color: "#8da1bd"; font.pixelSize: 11; Layout.fillWidth: true; textFormat: Text.PlainText }
-                        Button { text: qsTr("取消任务"); visible: taskState === "queued" || taskState === "running" || taskState === "paused"; enabled: taskState !== "running" || page.queueController.busy; onClicked: page.queueController.cancelTask(taskId) }
-                        Button { text: qsTr("重试"); visible: taskState === "failed" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.retryTask(taskId) }
+                        Button { objectName: "cancelTaskButton"; text: qsTr("取消任务"); visible: taskState === "queued" || taskState === "running" || taskState === "paused"; enabled: taskState !== "running" || page.queueController.busy; onClicked: page.queueController.cancelTask(taskId) }
+                        Button { objectName: "retryTaskButton"; text: qsTr("重试"); visible: taskState === "failed" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.retryTask(taskId) }
                         Button { text: qsTr("从头重启"); visible: taskState === "interrupted" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.restartTask(taskId) }
                         Button { text: qsTr("打开输出位置"); visible: taskState === "completed"; onClicked: page.queueController.openOutputFolder(taskId) }
                     }
