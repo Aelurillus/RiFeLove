@@ -195,6 +195,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         result.validation = validateOutput(temporary,encoding.videoStreamIndex,*origin,end,settings.targetRate,clock->index(),info,progress,stop);
     });
     result.sourceFrames = decoded.frameCount;
+    result.recoveredTimestamps = decoded.recoveredTimestamps;
     result.elapsedSeconds = elapsed();
     result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
     notify("completed",end);

@@ -138,6 +138,8 @@ class NativeRifePipeline(unittest.TestCase):
         self.assertEqual(report["output"]["targetFrameRate"],"60000/1001")
         self.assertEqual(report["output"]["encoder"],result["encoder"])
         self.assertEqual(report["pipelineResult"]["outputFrames"],result["output_frames"])
+        self.assertEqual(report["source"]["recoveredTimestamps"],0)
+        self.assertEqual(result["recovered_timestamps"],0)
         self.assertFalse(report["qualityDiagnostics"]["perceptualMetricsMeasured"])
         self.assertIn(result["encoder"],("h264_nvenc","libopenh264"))
         encoded = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]

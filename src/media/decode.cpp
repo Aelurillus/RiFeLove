@@ -1,5 +1,6 @@
 #include "media/ffmpeg_helpers.hpp"
 #include "media/rife_color.hpp"
+#include "media/timestamp_recovery.hpp"
 
 namespace rifelove::media {
 
@@ -30,6 +31,8 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
     std::optional<Rational> previous;
     std::optional<Rational> delta;
     bool variable = false;
+    const auto streamStart = detail::timestamp(stream->start_time,stream->time_base);
+    TimestampRecovery timestampRecovery(streamStart);
     const auto rate = stream->avg_frame_rate.num > 0 && stream->avg_frame_rate.den > 0 ? stream->avg_frame_rate : stream->r_frame_rate;
     const bool hasRate = rate.num > 0 && rate.den > 0;
     bool matchesQuantizedConstantRate = hasRate;
@@ -40,9 +43,13 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
             if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) return status;
             detail::check(status, "receive decoded frame");
             const auto pts = frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
-            const auto timestamp = detail::timestamp(pts, stream->time_base);
+            const auto observedTimestamp = detail::timestamp(pts, stream->time_base);
+            const auto duration = frame->duration > 0 ? detail::timestamp(frame->duration,stream->time_base) : std::optional<Rational>{};
+            const auto resolution = timestampRecovery.resolve(observedTimestamp,duration);
+            const auto timestamp = resolution.timestamp;
             if (!timestamp) ++summary.missingTimestamps;
             else {
+                if (resolution.recovered) ++summary.recoveredTimestamps;
                 if (!summary.firstTimestamp) summary.firstTimestamp = timestamp;
                 summary.lastTimestamp = timestamp;
                 if (hasRate) {
@@ -67,7 +74,8 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
                 output.width = retained->width;
                 output.height = retained->height;
                 output.timestamp = timestamp;
-                if (retained->duration > 0) output.duration = detail::timestamp(retained->duration, stream->time_base);
+                output.duration = duration;
+                output.timestampRecovered = resolution.recovered;
                 output.color = normalizeDecodedSdrColor(detail::color(retained.get()), streamColor);
                 for (std::size_t i = 0; i < output.planes.size(); ++i) output.planes[i] = {retained->data[i], retained->linesize[i]};
                 output.storage = std::move(retained);

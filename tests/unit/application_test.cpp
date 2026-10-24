@@ -71,7 +71,7 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     result.video.encoder = "libopenh264"; result.video.framesSubmitted = 120; result.video.videoPackets = 120; result.video.copiedPackets = 48;
     result.video.firstTimestamp = Rational(3,2); result.video.endExclusive = Rational(7,2);
     result.sourceFrames = 60; result.aiFrames = 60; result.originalFrames = 60; result.heldFrames = 0;
-    result.sceneCuts = 1; result.duplicatePairs = 2; result.abnormalPairs = 3;
+    result.sceneCuts = 1; result.duplicatePairs = 2; result.abnormalPairs = 3; result.recoveredTimestamps = 4;
     result.modelId = "rife-4.25-fp32-sdr8"; result.backend = "onnxruntime_tensorrt_cuda";
     result.inferenceFallbackReason.clear(); result.encoderFallbackReason = "NVENC API unavailable"; result.sourceEndEvidence = "declared_stream_end";
     result.elapsedSeconds = 10.0; result.processingFps = 12.0;
@@ -99,8 +99,10 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     EXPECT_EQ(report.at("performance").at("pipelineOutputFramesPerSecond"),12.0);
     EXPECT_EQ(report.at("qualityDiagnostics").at("sceneCuts"),1);
     EXPECT_EQ(report.at("qualityDiagnostics").at("perceptualMetricsMeasured"),false);
+    EXPECT_EQ(report.at("source").at("recoveredTimestamps"),4);
     EXPECT_EQ(report.at("timingValidation").at("timeBase"),"1/120");
     EXPECT_EQ(report.at("pipelineResult").at("abnormalPairs"),3);
+    EXPECT_EQ(report.at("pipelineResult").at("recoveredTimestamps"),4);
 }
 TEST(ProcessingReport, PublishesUnicodeJsonWithoutReplacingExistingFiles) {
     const auto directory = std::filesystem::temp_directory_path() / ("rifelove-report-" + std::to_string(std::random_device{}()));

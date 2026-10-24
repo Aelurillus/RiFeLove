@@ -99,6 +99,7 @@ struct DecodedFrame {
     int height;
     std::optional<Rational> timestamp;
     std::optional<Rational> duration;
+    bool timestampRecovered = false;
     ColorInfo color;
     std::array<FramePlane, 4> planes;
     // Owns reference-counted decoder storage, including original pixel precision and side data.
@@ -107,6 +108,7 @@ struct DecodedFrame {
 struct DecodeSummary {
     std::size_t frameCount = 0;
     std::size_t missingTimestamps = 0;
+    std::size_t recoveredTimestamps = 0;
     std::size_t nonIncreasingTimestamps = 0;
     std::string cadence = "insufficient_data";
     std::optional<Rational> firstTimestamp;

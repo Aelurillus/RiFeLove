@@ -38,6 +38,7 @@ struct PipelineResult {
     std::size_t sceneCuts;
     std::size_t duplicatePairs;
     std::size_t abnormalPairs;
+    std::size_t recoveredTimestamps;
     std::string modelId;
     std::string backend;
     std::string inferenceFallbackReason;

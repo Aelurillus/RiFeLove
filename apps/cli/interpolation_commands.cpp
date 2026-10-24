@@ -117,6 +117,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             << ",\"source_frames\":" << result.sourceFrames << ",\"output_frames\":" << result.video.framesSubmitted << ",\"ai_frames\":" << result.aiFrames
             << ",\"original_frames\":" << result.originalFrames << ",\"held_frames\":" << result.heldFrames << ",\"scene_cuts\":" << result.sceneCuts
             << ",\"duplicate_pairs\":" << result.duplicatePairs << ",\"abnormal_pairs\":" << result.abnormalPairs
+            << ",\"recovered_timestamps\":" << result.recoveredTimestamps
             << ",\"first_pts\":" << jsonString(result.video.firstTimestamp.toString()) << ",\"end_exclusive\":" << jsonString(result.video.endExclusive.toString())
             << ",\"source_end_evidence\":" << jsonString(result.sourceEndEvidence)
             << ",\"timing_quantized\":" << (result.validation.quantized ? "true" : "false") << ",\"validation_time_base\":" << jsonString(result.validation.timeBase.toString())

@@ -126,6 +126,7 @@ std::string serializeResult(const PipelineResult& r) {
     return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},{"inferenceFallbackReason",r.inferenceFallbackReason},
         {"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
         {"aiFrames",r.aiFrames},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
+        {"recoveredTimestamps",r.recoveredTimestamps},
         {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",r.processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
         {"validation",{{"decodedFrames",r.validation.decodedFrames},{"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},
             {"durationError",r.validation.durationError.toString()},{"declaredEndError",optional(r.validation.declaredEndError)},{"auxiliaryMaximumEndError",r.validation.auxiliaryMaximumEndError.toString()},{"quantized",r.validation.quantized}}}}.dump();
@@ -146,7 +147,7 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
     const Json report{
         {"schemaVersion",1},
         {"application",{{"name","RifeLove"},{"ffmpegRuntime",media::MediaEngine::runtimeVersion()}}},
-        {"source",{{"path",context.sourcePath},{"decodedFrames",result.sourceFrames},{"endEvidence",result.sourceEndEvidence}}},
+        {"source",{{"path",context.sourcePath},{"decodedFrames",result.sourceFrames},{"recoveredTimestamps",result.recoveredTimestamps},{"endEvidence",result.sourceEndEvidence}}},
         {"output",{{"path",context.outputPath},{"targetFrameRate",context.targetFrameRate},{"encoder",result.video.encoder},
             {"submittedFrames",result.video.framesSubmitted},{"videoPackets",result.video.videoPackets},{"copiedPackets",result.video.copiedPackets},
             {"firstTimestamp",result.video.firstTimestamp.toString()},{"endExclusive",result.video.endExclusive.toString()}}},

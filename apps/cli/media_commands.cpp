@@ -182,12 +182,14 @@ int runMediaCommand(const std::vector<std::string>& args) {
         }
         const auto summary = MediaEngine::decodeVideo(args[2], frames ? std::function<void(const DecodedFrame&)>([](const DecodedFrame& frame) {
             std::cout << "{\"event\":\"decoded_frame\",\"index\":" << frame.index << ",\"pts\":" << number(frame.timestamp)
-                << ",\"duration\":" << number(frame.duration) << ",\"width\":" << frame.width << ",\"height\":" << frame.height << ",\"color\":";
+                << ",\"duration\":" << number(frame.duration) << ",\"pts_recovered\":" << (frame.timestampRecovered ? "true" : "false")
+                << ",\"width\":" << frame.width << ",\"height\":" << frame.height << ",\"color\":";
             writeColor(std::cout, frame.color);
             std::cout << "}\n";
         }) : std::function<void(const DecodedFrame&)>(), stream);
         std::cout << "{\"event\":\"decode_summary\",\"frames\":" << summary.frameCount << ",\"cadence\":" << jsonString(summary.cadence)
-            << ",\"missing_timestamps\":" << summary.missingTimestamps << ",\"non_increasing_timestamps\":" << summary.nonIncreasingTimestamps
+            << ",\"missing_timestamps\":" << summary.missingTimestamps << ",\"recovered_timestamps\":" << summary.recoveredTimestamps
+            << ",\"non_increasing_timestamps\":" << summary.nonIncreasingTimestamps
             << ",\"first_pts\":" << number(summary.firstTimestamp) << ",\"last_pts\":" << number(summary.lastTimestamp) << "}\n";
         return 0;
     }

@@ -98,6 +98,8 @@ class NativeMediaIntegration(unittest.TestCase):
         self.assertEqual(records[-1]["frames"], 12)
         self.assertEqual(records[-1]["cadence"], "constant")
         self.assertEqual(records[-1]["non_increasing_timestamps"], 0)
+        self.assertEqual(records[-1]["recovered_timestamps"], 0)
+        self.assertTrue(all(not frame["pts_recovered"] for frame in records[:-1]))
         self.assertTrue(all(frame["color"]["bit_depth"] == 10 for frame in records[:-1]))
         self.assertTrue(all(frame["color"]["hdr_transfer"] for frame in records[:-1]))
 
@@ -115,7 +117,9 @@ class NativeMediaIntegration(unittest.TestCase):
     def test_vfr_scan_preserves_actual_intervals(self):
         records = self.scan(self.vfr)
         self.assertEqual(records[-1]["cadence"], "variable")
+        self.assertEqual(records[-1]["recovered_timestamps"], 0)
         values = [Fraction(frame["pts"]) for frame in records[:-1]]
+        self.assertTrue(all(not frame["pts_recovered"] for frame in records[:-1]))
         self.assertEqual(len(values), 12)
         self.assertGreater(max(b - a for a, b in zip(values, values[1:])), Fraction(1, 20))
 

@@ -44,7 +44,7 @@ Enable the media engine by supplying a local FFmpeg SDK with `check.ps1 -FFmpegR
 
 `rifelove-cli tasks-recover <database-path>` is a separate legacy maintenance operation for an existing database, to be used after all workers have stopped. It marks `running`/`paused` records as `interrupted`; it does not resume video processing. The configured processing queue now establishes live ownership before recovery; safe segment checkpoints remain roadmap work.
 
-With the media engine enabled, `media-probe INPUT` reports streams/metadata, `media-scan INPUT --frames` decodes and reports rational PTS/color, and `remux INPUT OUTPUT` copies compatible streams into a new MP4/MOV/MKV file. Remuxing preserves compressed streams; it does not change frame rate or generate AI frames.
+With the media engine enabled, `media-probe INPUT` reports streams/metadata, `media-scan INPUT --frames` decodes and reports rational PTS/color plus any evidence-based PTS repairs, and `remux INPUT OUTPUT` copies compatible streams into a new MP4/MOV/MKV file. Remuxing preserves compressed streams; it does not change frame rate or generate AI frames.
 
 `transcode INPUT OUTPUT --encoder NAME --progress` re-encodes the selected video at its original presentation times while copying other compatible streams. Software H.264/HEVC/AV1 and FFV1 are covered by the local suite. The current FFmpeg SDK's NVENC path is incompatible with this machine's driver; explicit encoder requests fail visibly. See [encoding contracts and tests](docs/development/ENCODING.md).
 

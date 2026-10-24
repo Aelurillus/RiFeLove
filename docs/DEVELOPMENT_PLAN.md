@@ -26,6 +26,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Scan actual timestamp cadence with fractional-CFR quantization handling and VFR fixtures.
 - [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.
 - [ ] Complete codec/container coverage, missing-PTS recovery and full mastering/rotation metadata fixture coverage.
+  - Decoder now repairs an absent frame PTS only from a declared stream start or the preceding frame's positive decoded duration, never from average FPS alone; media-scan, interpolation results and reports expose the repair count. Unanchored timestamps still fail visibly; broader container/metadata coverage remains open.
 - [ ] Add explicit color/pixel-format and HDR metadata handling.
 - [x] Add the first explicit tagged BT.709 8-bit SDR conversion to normalized RGB, replicated padding and restored crop; reject unknown/HDR/higher-depth inputs in this path.
 - [x] Add a model-independent CPU-frame encoder/mux writer and transcode path with compatible original audio/subtitle stream copy.
