@@ -49,6 +49,8 @@ class NativeMediaIntegration(unittest.TestCase):
         cls.reordered = cls.root / "reordered.mp4"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=24:duration=0.5",
                "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:v", "mpeg4", "-bf", "2", "-q:v", "4", "-c:a", "aac", cls.reordered)
+        cls.rotated = cls.root / "rotated.mp4"
+        invoke(FFMPEG, "-v", "error", "-nostdin", "-display_rotation", "90", "-i", cls.reordered, "-c", "copy", cls.rotated)
         cls.vfr = cls.root / "vfr.mkv"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=30:duration=0.4",
                "-vf", "setpts='if(lt(N,6),N,6+(N-6)*2)/(30*TB)'", "-fps_mode", "vfr", "-c:v", "ffv1", cls.vfr)
@@ -92,6 +94,23 @@ class NativeMediaIntegration(unittest.TestCase):
             self.assertEqual(entry["context_opened"], entry["registered"] and not bool(entry["reason"]))
             if entry["registered"] and not entry["context_opened"]:
                 self.assertTrue(entry["reason"])
+
+    def test_display_rotation_matches_ffprobe_and_survives_remux_and_transcode(self):
+        source = self.probe(self.rotated)["streams"][0]
+        reference_stream = reference(self.rotated, "-show_streams")["streams"][0]
+        reference_rotation = next(side["rotation"] for side in reference_stream["side_data_list"]
+                                  if side["side_data_type"] == "Display Matrix")
+        self.assertAlmostEqual(source["rotation_degrees"], reference_rotation, delta=0.01)
+        for operation, extension in (("remux", "mp4"), ("transcode", "mp4")):
+            with self.subTest(operation=operation):
+                output = self.root / f"rotation-{operation}.{extension}"
+                if operation == "remux":
+                    invoke(CLI, "remux", self.rotated, output)
+                else:
+                    invoke(CLI, "transcode", self.rotated, output, "--encoder", "libopenh264")
+                output_stream = self.probe(output)["streams"][0]
+                self.assertAlmostEqual(output_stream["rotation_degrees"], source["rotation_degrees"], delta=0.01)
+                self.assertTrue(any(side["name"] == "Display Matrix" for side in output_stream["side_data"]))
 
     def test_fractional_cfr_is_not_confused_with_timestamp_quantization(self):
         records = self.scan(self.source)

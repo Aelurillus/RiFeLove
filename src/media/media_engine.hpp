@@ -65,7 +65,7 @@ struct StreamInfo {
     int height;
     int sampleRate;
     int channels;
-    std::optional<double> rotationDegrees;
+    std::optional<double> rotationDegrees; // FFmpeg display-matrix counterclockwise angle.
     ColorInfo color;
     Metadata metadata;
     std::vector<SideDataInfo> sideData;
