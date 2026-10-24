@@ -3,6 +3,7 @@
 #include "application/job_serialization.hpp"
 #include "application/import_service.hpp"
 #include "inference/model_pack.hpp"
+#include "timeline/timeline.hpp"
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -39,6 +40,13 @@ UiTaskRow uiRow(const ConfiguredTask& source) {
     row.state = text(toString(source.task.state)); row.error = text(source.task.error);
     const auto config = object(source.configuration), progress = object(source.progress), result = object(source.result);
     row.targetRate = config.value("targetRate").toString(); row.model = config.value("expectedModelId").toString();
+    const auto duration = config.value("sourceDurationEstimate").toString();
+    if (!duration.isEmpty() && !row.targetRate.isEmpty()) {
+        try {
+            if (const auto count = estimateOutputFrameCount(Rational::parse(utf8(duration)),Rational::parse(utf8(row.targetRate))))
+                row.estimatedFrames = static_cast<qulonglong>(*count);
+        } catch (const std::exception&) {}
+    }
     row.stage = progress.value("stage").toString(); row.frames = progress.value("frames").toVariant().toULongLong();
     row.aiFrames = progress.value("aiFrames").toVariant().toULongLong(); row.speed = progress.value("processingFps").toDouble();
     if (source.task.state == TaskState::completed) {

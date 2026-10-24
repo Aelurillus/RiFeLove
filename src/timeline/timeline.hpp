@@ -3,9 +3,14 @@
 #include "common/rational.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace rifelove {
+
+// Approximate output count from a declared source duration. Runtime scheduling
+// still uses decoded PTS and the verified exclusive end boundary.
+[[nodiscard]] std::optional<std::size_t> estimateOutputFrameCount(std::optional<Rational> sourceDuration, Rational targetRate);
 
 // Streaming CFR clock: memory use is independent of clip length. Source pair
 // selection remains with the decoder; each timestamp is derived from the exact

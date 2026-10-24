@@ -3,6 +3,7 @@
 #include "application/local_lease.hpp"
 #include "application/pause_gate.hpp"
 #include <atomic>
+#include <optional>
 #include <thread>
 
 namespace rifelove::application {
@@ -12,6 +13,7 @@ struct ProcessingJob {
     std::filesystem::path modelDirectory;
     std::filesystem::path runtimeDirectory;
     PipelineSettings settings;
+    std::optional<Rational> sourceDurationEstimate;
     int deviceOrdinal = 0;
     std::string expectedSourceSha256;
     std::string expectedModelSha256;

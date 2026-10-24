@@ -86,7 +86,11 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                 try { media::validateRifeSdrColor(video->color); }
                 catch (const std::exception& error) { result.rejected.push_back({source,ImportRejection::unsupportedColor,error.what()}); valid = false; }
                 if (valid) {
-                    auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved)); jobs.push_back(std::move(job));
+                    auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
+                    if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;
+                    else if (video->declaredEnd && video->start && *video->declaredEnd > *video->start) job.sourceDurationEstimate = *video->declaredEnd - *video->start;
+                    else if (info.duration && *info.duration > Rational(0)) job.sourceDurationEstimate = info.duration;
+                    jobs.push_back(std::move(job));
                 }
             }
         } catch (const std::exception& error) { checkStop(stop); result.rejected.push_back({source,ImportRejection::unreadable,error.what()}); }

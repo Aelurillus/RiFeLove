@@ -16,6 +16,7 @@ ProcessingJob configuredJob() {
     ProcessingJob job; job.source = "C:/recordings/source.mkv"; job.output = "C:/exports/result.mkv";
     job.modelDirectory = L"C:/models/local"; job.runtimeDirectory = L"C:/runtime";
     job.settings.targetRate = Rational(60000,1001); job.deviceOrdinal = 1;
+    job.sourceDurationEstimate = Rational(1001,24000);
     job.settings.hostFloatBufferLimit = 256 * 1024 * 1024;
     job.expectedModelId = "rife-4.25"; job.expectedModelVersion = "4.25"; job.expectedModelSha256 = std::string(64,'a'); job.expectedSourceSha256 = std::string(64,'b');
     auto& e = job.settings.encoding; e.encoder = "hevc_nvenc"; e.pixelFormat = "p010le"; e.videoStreamIndex = 2;
@@ -30,10 +31,14 @@ TEST(ProcessingConfiguration, RoundTripsAllAdvancedSettingsAndPinnedIdentity) {
     EXPECT_EQ(restored.source,job.source); EXPECT_EQ(restored.output,job.output);
     EXPECT_EQ(serializeJob(restored),encoded);
     EXPECT_EQ(restored.settings.targetRate,Rational(60000,1001)); EXPECT_EQ(restored.settings.encoding.timeBase,Rational(1,120000));
+    EXPECT_EQ(restored.sourceDurationEstimate,job.sourceDurationEstimate);
     EXPECT_EQ(restored.settings.encoding.encoderOptions.at("preset"),"p5"); EXPECT_EQ(restored.settings.encoding.maxBFrames,3);
 }
 TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThresholds) {
     const auto job = configuredJob(); auto json = nlohmann::json::parse(serializeJob(job));
+    json.erase("sourceDurationEstimate");
+    EXPECT_NO_THROW((void)parseJob(job.source,job.output,json.dump()));
+    json = nlohmann::json::parse(serializeJob(job));
     json["deviceOrdinal"] = 4294967296ULL;
     EXPECT_THROW((void)parseJob(job.source,job.output,json.dump()),std::invalid_argument);
     json = nlohmann::json::parse(serializeJob(job)); json["encoding"]["bitRate"] = 18446744073709551615ULL;

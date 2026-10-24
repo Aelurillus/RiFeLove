@@ -6,6 +6,19 @@
 
 namespace rifelove {
 
+std::optional<std::size_t> estimateOutputFrameCount(std::optional<Rational> sourceDuration, Rational targetRate) {
+    if (!sourceDuration || *sourceDuration <= Rational(0) || targetRate <= Rational(0)) return std::nullopt;
+    Rational exactCount;
+    try { exactCount = *sourceDuration * targetRate; }
+    catch (const std::overflow_error&) { return std::nullopt; }
+    if (exactCount.numerator() <= 0) return std::nullopt;
+    auto whole = exactCount.numerator() / exactCount.denominator();
+    if (exactCount.numerator() % exactCount.denominator() > 0) ++whole;
+    if (whole <= 0 || static_cast<std::uint64_t>(whole) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+        return std::nullopt;
+    return static_cast<std::size_t>(whole);
+}
+
 CfrClock::CfrClock(Rational origin, Rational rate) : origin_(origin), rate_(rate) {
     if (rate <= Rational(0)) throw std::invalid_argument("target frame rate must be positive");
 }
@@ -23,12 +36,10 @@ Timeline::Timeline(std::vector<Rational> presentationTimes, Rational endExclusiv
         if (pts_[i] <= pts_[i - 1]) throw std::invalid_argument("input PTS values must be strictly increasing");
     if (end_ <= pts_.back()) throw std::invalid_argument("exclusive end must be later than the last frame PTS");
 
-    const auto exactCount = (end_ - pts_.front()) * targetRate_;
-    auto whole = exactCount.numerator() / exactCount.denominator();
-    if (exactCount.numerator() % exactCount.denominator() > 0) ++whole;
-    if (whole <= 0 || static_cast<std::uint64_t>(whole) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+    const auto estimatedCount = estimateOutputFrameCount(end_ - pts_.front(),targetRate_);
+    if (!estimatedCount)
         throw std::overflow_error("output frame count is out of range");
-    outputCount_ = static_cast<std::size_t>(whole);
+    outputCount_ = *estimatedCount;
 }
 
 FrameSample Timeline::sample(std::size_t outputIndex) const {

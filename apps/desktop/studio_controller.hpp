@@ -37,6 +37,7 @@ private:
     void fail(const QString& detail);
     bool busy_ = false;
     QString source_, output_, status_ = "ready", detail_;
+    std::optional<rifelove::Rational> sourceDurationEstimate_;
     QVariantMap media_, progress_;
     rifelove::application::ProcessingService service_;
 };

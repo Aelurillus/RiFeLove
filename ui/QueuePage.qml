@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "ProgressEstimate.js" as ProgressEstimate
 
 Item {
     id: page
@@ -200,6 +201,7 @@ Item {
                 required property string errorText
                 required property var frames
                 required property var aiFrames
+                required property var estimatedFrames
                 required property real processingFps
                 required property string fileName
                 width: tasksView.width
@@ -218,7 +220,27 @@ Item {
                         Label { text: page.statusText(taskState); color: taskState === "failed" ? "#ffb3ad" : taskState === "completed" ? "#79d6ba" : "#c4d1e4"; font.bold: true }
                         Label { text: targetRate + qsTr(" FPS"); color: "#9aaac0" }
                     }
-                    Label { text: stage ? page.stageText(stage) + qsTr(" · ") + frames + qsTr(" 帧 · AI ") + aiFrames + qsTr(" 帧 · ") + Number(processingFps).toFixed(1) + qsTr(" FPS") : qsTr("模型：") + modelLabel; color: "#9aaac0"; font.pixelSize: 12; textFormat: Text.PlainText }
+                    Label {
+                        text: {
+                            if (!stage)
+                                return qsTr("模型：") + modelLabel
+                            const expected = Number(estimatedFrames || 0)
+                            const speed = Number(processingFps || 0)
+                            let value = page.stageText(stage) + " · "
+                            value += expected > 0 ? qsTr("%1 / 约 %2 帧").arg(frames).arg(expected) : qsTr("%1 帧").arg(frames)
+                            value += qsTr(" · AI %1 帧 · %2 FPS").arg(aiFrames).arg(speed.toFixed(1))
+                            if (taskState === "running") {
+                                if (expected > 0 && speed > 0)
+                                    value += qsTr(" · 剩余约 %1").arg(ProgressEstimate.formatDuration(Math.max(0,expected - Number(frames)) / speed))
+                                else if (expected > 0)
+                                    value += qsTr(" · 预计剩余时间计算中")
+                            }
+                            return value
+                        }
+                        color: "#9aaac0"
+                        font.pixelSize: 12
+                        textFormat: Text.PlainText
+                    }
                     Label { visible: taskState === "failed"; text: errorText; color: "#ffb3ad"; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; font.pixelSize: 12; textFormat: Text.PlainText }
                     RowLayout {
                         Layout.fillWidth: true

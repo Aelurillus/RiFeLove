@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "ProgressEstimate.js" as ProgressEstimate
 
 ApplicationWindow {
     id: window
@@ -271,7 +272,24 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { objectName: "studioStatusLabel"; text: window.stateText(window.state); color: window.stateColor(window.state); font.bold: true; Layout.fillWidth: true }
-                        Label { text: (window.progress.frames || 0) + qsTr(" 帧  ·  ") + Number(window.progress.fps || 0).toFixed(1) + qsTr(" 处理 FPS"); color: "#9aaac0" }
+                        Label {
+                            objectName: "studioProgressLabel"
+                            text: {
+                                const frames = Number(window.progress.frames || 0)
+                                const expected = Number(window.progress.estimatedFrames || 0)
+                                const speed = Number(window.progress.fps || 0)
+                                let value = expected > 0 ? qsTr("%1 / 约 %2 帧").arg(frames).arg(expected) : qsTr("%1 帧").arg(frames)
+                                value += " · " + speed.toFixed(1) + qsTr(" 处理 FPS")
+                                if (studio.busy) {
+                                    if (expected > 0 && speed > 0)
+                                        value += " · " + qsTr("剩余约 %1").arg(ProgressEstimate.formatDuration(Math.max(0,expected - frames) / speed))
+                                    else
+                                        value += " · " + qsTr("预计剩余时间计算中")
+                                }
+                                return value
+                            }
+                            color: "#9aaac0"
+                        }
                         ActionButton { text: qsTr("取消"); visible: processingAvailable && studio.busy; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
                         ActionButton {
                             objectName: "startButton"

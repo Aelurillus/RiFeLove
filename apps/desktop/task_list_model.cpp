@@ -9,13 +9,15 @@ QVariant TaskListModel::data(const QModelIndex& item, int role) const {
     case TaskId: return row.id; case SourcePath: return row.source; case OutputPath: return row.output;
     case TaskState: return row.state; case TargetRate: return row.targetRate; case ModelLabel: return row.model;
     case Stage: return row.stage; case Error: return row.error; case Frames: return QVariant::fromValue(row.frames);
-    case AiFrames: return QVariant::fromValue(row.aiFrames); case Speed: return row.speed; case FileName: return QFileInfo(row.source).fileName();
+    case AiFrames: return QVariant::fromValue(row.aiFrames); case EstimatedFrames: return QVariant::fromValue(row.estimatedFrames);
+    case Speed: return row.speed; case FileName: return QFileInfo(row.source).fileName();
     default: return {};
     }
 }
 QHash<int,QByteArray> TaskListModel::roleNames() const {
     return {{TaskId,"taskId"},{SourcePath,"sourcePath"},{OutputPath,"outputPath"},{TaskState,"taskState"},{TargetRate,"targetRate"},
-        {ModelLabel,"modelLabel"},{Stage,"stage"},{Error,"errorText"},{Frames,"frames"},{AiFrames,"aiFrames"},{Speed,"processingFps"},{FileName,"fileName"}};
+        {ModelLabel,"modelLabel"},{Stage,"stage"},{Error,"errorText"},{Frames,"frames"},{AiFrames,"aiFrames"},
+        {EstimatedFrames,"estimatedFrames"},{Speed,"processingFps"},{FileName,"fileName"}};
 }
 void TaskListModel::indexRows() {
     index_.clear(); for (int i = 0; i < rowCount(); ++i) index_.insert(rows_[static_cast<std::size_t>(i)].id,i);

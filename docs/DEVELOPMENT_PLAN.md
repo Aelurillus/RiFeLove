@@ -77,6 +77,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add offline Model Center local registration, manifest/license/ONNX hash verification, default-model selection and persisted catalog revalidation.
 - [x] Complete acceptance for the persistent desktop queue, progress, retry, pause and cancellation.
   - The Qt page is connected to the SQLite service with virtualized task rows, sequential execution, pause/resume, stop, per-task cancel/retry and interrupted restart-from-zero controls. Actual GPU workflow checks recursive batch import, same-name output collision handling, HDR rejection, pause/resume, deterministic output failure/retry, queued cancellation, successful output/audio and preference reload. Full history and safe segment recovery remain open.
+- [x] Show estimated output frame totals and remaining time in Studio and persistent queue rows.
+  - Estimates are derived from the probed video duration and exact target-rate rational, are retained with task configuration, and remain explicitly approximate until the pipeline verifies the decoded end boundary.
 - [x] Add a local comparison player with split view, synchronized playback and output-frame-rate time stepping.
   - Desktop workflow verifies source/result loading, timestamp stepping, playback synchronization within the test tolerance and pause. Exact decoded-frame landing and artifact navigation remain open.
 - [ ] Complete model lifecycle with provenance-rich model profiles, qualified presets and expert controls.

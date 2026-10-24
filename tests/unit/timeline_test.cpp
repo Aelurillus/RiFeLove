@@ -5,6 +5,13 @@
 using rifelove::Rational;
 using rifelove::Timeline;
 
+TEST(Timeline, EstimatesOutputFramesFromExactDurationAndRate) {
+    EXPECT_EQ(rifelove::estimateOutputFrameCount(Rational(1,2),Rational(60)),std::optional<std::size_t>(30));
+    EXPECT_EQ(rifelove::estimateOutputFrameCount(Rational(1001,24000),Rational(60)),std::optional<std::size_t>(3));
+    EXPECT_EQ(rifelove::estimateOutputFrameCount(std::nullopt,Rational(60)),std::nullopt);
+    EXPECT_EQ(rifelove::estimateOutputFrameCount(Rational(1),Rational(0)),std::nullopt);
+}
+
 TEST(Timeline, PlansNonIntegerRateAgainstVfrTimestamps) {
     const Timeline timeline({Rational(0), Rational(1, 24), Rational(1, 12), Rational(1, 8)}, Rational(1, 6), Rational(60));
     EXPECT_EQ(timeline.outputFrameCount(), 10U);

@@ -1,4 +1,5 @@
 #include "studio_controller.hpp"
+#include "timeline/timeline.hpp"
 #include <QFileInfo>
 #include <QDir>
 #include <QUrl>
@@ -22,6 +23,7 @@ void StudioController::openSource(const QUrl& url) {
     if (busy_) return;
     if (!url.isLocalFile() || !QFileInfo(url.toLocalFile()).isFile()) { fail(tr("请选择本机视频文件。")); return; }
     source_ = QDir::toNativeSeparators(QFileInfo(url.toLocalFile()).absoluteFilePath());
+    sourceDurationEstimate_.reset();
     const QFileInfo source(source_);
     output_ = QDir::toNativeSeparators(source.dir().filePath(source.completeBaseName() + "_RifeLove.mkv"));
     media_.clear(); progress_.clear(); detail_.clear(); status_ = "inspecting"; busy_ = true; emit changed();
@@ -46,8 +48,12 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         job.modelDirectory = path(modelDirectory); job.runtimeDirectory = path(runtimeDirectory);
         job.settings.targetRate = rifelove::Rational::parse(utf8(rate));
         if (job.settings.targetRate <= rifelove::Rational(0)) throw std::invalid_argument("Target FPS must be positive");
+        job.sourceDurationEstimate = sourceDurationEstimate_;
         job.settings.encoding.encoder = utf8(encoder);
-        busy_ = true; status_ = "loading_model"; detail_.clear(); progress_.clear(); emit changed();
+        busy_ = true; status_ = "loading_model"; detail_.clear(); progress_.clear();
+        if (const auto count = rifelove::estimateOutputFrameCount(job.sourceDurationEstimate,job.settings.targetRate))
+            progress_["estimatedFrames"] = QVariant::fromValue<qulonglong>(*count);
+        emit changed();
         if (!service_.submit(std::move(job), callback())) fail(tr("请等待当前操作结束。"));
     } catch (const std::exception& error) { fail(text(error.what())); }
 }
@@ -71,10 +77,15 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         busy_ = false;
         if (event.kind == Kind::inspected && event.media) {
             status_ = "inspected";
+            sourceDurationEstimate_.reset();
             bool hasVideo = false;
             for (const auto& stream : event.media->streams) {
                 if (stream.index != event.media->preferredVideoStream) continue;
                 hasVideo = true;
+                if (stream.duration && *stream.duration > rifelove::Rational(0)) sourceDurationEstimate_ = stream.duration;
+                else if (stream.declaredEnd && stream.start && *stream.declaredEnd > *stream.start)
+                    sourceDurationEstimate_ = *stream.declaredEnd - *stream.start;
+                else if (event.media->duration && *event.media->duration > rifelove::Rational(0)) sourceDurationEstimate_ = event.media->duration;
                 media_["width"] = stream.width; media_["height"] = stream.height;
                 media_["codec"] = text(stream.codec);
                 media_["rate"] = stream.averageRate ? text(stream.averageRate->toString()) : tr("未知");

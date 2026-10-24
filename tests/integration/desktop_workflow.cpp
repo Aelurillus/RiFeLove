@@ -106,20 +106,29 @@ int main(int argc, char** argv) {
         require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Studio did not recover readiness after selecting a supported source");
         studio.setOutput(QUrl::fromLocalFile(arguments[2]));
         require(studioEncoder->setProperty("currentIndex",0), "Could not select automatic hardware-first encoding for fallback verification");
+        auto* progressLabel = root->findChild<QObject*>("studioProgressLabel");
+        require(progressLabel, "Studio progress estimate label is unavailable");
         int responsiveTicks = 0;
         bool sawFallbackNotice = false;
         bool sawRawFallbackError = false;
+        bool sawEta = false;
         QObject::connect(&studio, &StudioController::changed, [&] {
             if (studio.status() == "encoder_fallback" || studio.status() == "processing") {
                 sawFallbackNotice = sawFallbackNotice || studio.detail().contains(QStringLiteral("软件 H.264"));
                 sawRawFallbackError = sawRawFallbackError || studio.detail().contains(QStringLiteral("Function not implemented"));
             }
+            if (studio.status() == "processing")
+                sawEta = sawEta || progressLabel->property("text").toString().contains(QStringLiteral("剩余约"));
         });
         QTimer heartbeat; heartbeat.setInterval(5);
         QObject::connect(&heartbeat, &QTimer::timeout, [&] { ++responsiveTicks; });
         heartbeat.start();
         click(button,"studio start");
         require(studio.busy(), "QML start did not submit asynchronous work");
+        require(studio.progress().value("estimatedFrames").toULongLong() == 36,
+            "Studio did not estimate the 60 FPS output frame count from the probed source duration");
+        require(progressLabel && progressLabel->property("text").toString().contains(QStringLiteral("约 36 帧")),
+            "Studio did not display its estimated frame total");
         wait(studio);
         require(studio.status() == "completed", qPrintable(studio.detail()));
         require(QFileInfo(arguments[2]).isFile(), "Completed output was not published");
@@ -127,6 +136,7 @@ int main(int argc, char** argv) {
         require(studio.progress().value("aiFrames").toULongLong() > 0, "Desktop did not generate AI frames");
         if (!studio.progress().value("encoderFallbackReason").toString().isEmpty())
             require(sawFallbackNotice && !sawRawFallbackError, "Recoverable NVENC fallback was presented as a processing error");
+        require(sawEta, "Studio did not show a remaining-time estimate while generating frames");
         require(responsiveTicks > 5, "UI event loop did not stay responsive during processing");
         const auto aiFrames = studio.progress().value("aiFrames").toULongLong();
         // Exercise the local comparison viewer with the actual source/output pair.
@@ -187,6 +197,9 @@ int main(int argc, char** argv) {
             QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",true);
         waitUntil([&] { return !taskQueue.importing(); }, "Desktop queue import timed out");
         require(taskQueue.tasks()->rowCount() == 2, qPrintable(taskQueue.detail()));
+        auto* importedRows = qobject_cast<TaskListModel*>(taskQueue.tasks());
+        require(importedRows && importedRows->index(0,0).data(TaskListModel::EstimatedFrames).toULongLong() == 36,
+            "Persistent queue did not retain the estimated frame count for its imported task");
         require(taskQueue.detail().contains(QStringLiteral("跳过 1 个不支持的文件")), "Unsupported HDR input was not reported as skipped");
         auto* queuePage = root->findChild<QObject*>("queuePage");
         require(queuePage, "Queue page was not loaded into the desktop UI");

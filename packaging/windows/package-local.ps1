@@ -84,6 +84,7 @@ RifeLove 本机运行包
 本次附带且已校验的模型：RIFE 4.25 FP32 SDR8。当前色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8-bit SDR，并保留输入色彩标签。模型许可与 SHA-256 位于 models 和 licenses 文件夹。
 默认视频编码：自动尝试 NVIDIA NVENC；驱动不支持时会回退到 H.264 软件编码。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。
+进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。
 
 GPU 运行库使用本机已安装的 ONNX Runtime CUDA 1.22.0 与 NVIDIA CUDA 12.8/cuDNN 9 SDK，runtime 是其本机目录联接，不是跨电脑可搬运的发行包。目标电脑仍需 NVIDIA 驱动、兼容的 CUDA/cuDNN 运行环境。此本机目录不代表完成了公开发行所需的第三方再分发审核。
 
