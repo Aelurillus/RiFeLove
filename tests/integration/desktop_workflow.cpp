@@ -186,14 +186,17 @@ int main(int argc, char** argv) {
         int responsiveTicks = 0;
         bool sawFallbackNotice = false;
         bool sawRawFallbackError = false;
+        bool sawModeNotice = false;
         bool sawEta = false;
         QObject::connect(&studio, &StudioController::changed, [&] {
             if (studio.status() == "encoder_fallback" || studio.status() == "processing") {
                 sawFallbackNotice = sawFallbackNotice || studio.detail().contains(QStringLiteral("软件 H.264"));
                 sawRawFallbackError = sawRawFallbackError || studio.detail().contains(QStringLiteral("Function not implemented"));
             }
-            if (studio.status() == "processing")
+            if (studio.status() == "processing") {
                 sawEta = sawEta || progressLabel->property("text").toString().contains(QStringLiteral("剩余约"));
+                sawModeNotice = sawModeNotice || progressLabel->property("text").toString().contains(QStringLiteral("软件编码 · CUDA 补帧"));
+            }
         });
         QTimer heartbeat; heartbeat.setInterval(5);
         QObject::connect(&heartbeat, &QTimer::timeout, [&] { ++responsiveTicks; });
@@ -203,8 +206,9 @@ int main(int argc, char** argv) {
         require(studio.busy(), "QML start did not submit asynchronous work");
         if (preflightSoftwareFallback)
             require(studio.progress().value("encoderFallbackReason").toString().size() > 0 &&
-                    studio.detail().contains(QStringLiteral("软件 H.264")),
-                "Studio did not carry the preflight NVENC fallback into the running job");
+                    studio.detail().contains(QStringLiteral("软件 H.264")) && studio.detail().contains(QStringLiteral("CPU")) &&
+                    studio.detail().contains(QStringLiteral("CUDA")),
+                "Studio did not explain that software encoding and CUDA interpolation are both active");
         require(studio.progress().value("estimatedFrames").toULongLong() == 36,
             "Studio did not estimate the 60 FPS output frame count from the probed source duration");
         require(progressLabel && progressLabel->property("text").toString().contains(QStringLiteral("约 36 帧")),
@@ -223,6 +227,8 @@ int main(int argc, char** argv) {
         if (!studio.progress().value("encoderFallbackReason").toString().isEmpty())
             require(sawFallbackNotice && !sawRawFallbackError && studio.progress().value("encoder").toString() == QStringLiteral("libopenh264"),
                 "Recoverable NVENC fallback was presented as a processing error or did not use software H.264");
+        if (!studio.progress().value("encoderFallbackReason").toString().isEmpty())
+            require(sawModeNotice,"Studio did not label software encoding and CUDA interpolation in the progress display");
         require(sawEta, "Studio did not show a remaining-time estimate while generating frames");
         require(responsiveTicks > 5, "UI event loop did not stay responsive during processing");
         const auto aiFrames = studio.progress().value("aiFrames").toULongLong();

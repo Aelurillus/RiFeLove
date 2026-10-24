@@ -509,6 +509,8 @@ ApplicationWindow {
                                 const speed = Number(window.progress.fps || 0)
                                 let value = expected > 0 ? qsTr("%1 / 约 %2 帧").arg(frames).arg(expected) : qsTr("%1 帧").arg(frames)
                                 value += " · " + speed.toFixed(1) + qsTr(" 处理 FPS")
+                                if (window.progress.encoderFallbackReason)
+                                    value += " · " + qsTr("软件编码 · CUDA 补帧")
                                 if (studio.busy) {
                                     if (expected > 0 && speed > 0)
                                         value += " · " + qsTr("剩余约 %1").arg(ProgressEstimate.formatDuration(Math.max(0,expected - frames) / speed))
@@ -530,7 +532,15 @@ ApplicationWindow {
                                 ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex], window.encodingOptions())
                         }
                     }
-                    ProgressBar { Layout.fillWidth: true; indeterminate: studio.busy; visible: processingAvailable && studio.busy }
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: processingAvailable && studio.busy
+                        indeterminate: Number(window.progress.estimatedFrames || 0) <= 0
+                        value: {
+                            const expected = Number(window.progress.estimatedFrames || 0)
+                            return expected > 0 ? Math.min(1,Number(window.progress.frames || 0) / expected) : 0
+                        }
+                    }
                     Label {
                         objectName: "studioTimingBreakdownLabel"
                         visible: processingAvailable && (studio.busy || window.state === "completed") && !!window.progress.timings

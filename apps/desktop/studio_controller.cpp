@@ -5,7 +5,10 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QDir>
+#include <QRegularExpression>
 #include <QStringList>
+#include <limits>
+#include <numeric>
 #include <QUrl>
 
 namespace {
@@ -23,6 +26,26 @@ QString softwareEncoderLabel(const QString& encoder) {
     if (encoder == QStringLiteral("libkvazaar")) return QCoreApplication::translate("StudioController","软件 HEVC");
     if (encoder == QStringLiteral("libaom-av1")) return QCoreApplication::translate("StudioController","软件 AV1");
     return QCoreApplication::translate("StudioController","兼容的软件编码器");
+}
+QString encoderFallbackNotice(const QString& reason, const QString& encoder) {
+    const auto label = softwareEncoderLabel(encoder);
+    if (reason.contains(QStringLiteral("required nvenc API version"),Qt::CaseInsensitive)) {
+        const QRegularExpression apiPattern(QStringLiteral("Required:\\s*([0-9.]+)\\s+Found:\\s*([0-9.]+)"),QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpression driverPattern(QStringLiteral("minimum required Nvidia driver for nvenc is\\s+([0-9.]+)"),QRegularExpression::CaseInsensitiveOption);
+        const auto api = apiPattern.match(reason);
+        const auto driver = driverPattern.match(reason);
+        if (api.hasMatch() && driver.hasMatch())
+            return QCoreApplication::translate("StudioController",
+                "NVENC 驱动接口不兼容：当前提供 API %1，FFmpeg 需要 API %2（驱动 %3 或更新）。现在由 CPU 使用%4编码，RIFE 仍由 CUDA 插帧。")
+                .arg(api.captured(2),api.captured(1),driver.captured(1),label);
+    }
+    if (reason.contains(QStringLiteral("Function not implemented"),Qt::CaseInsensitive))
+        return QCoreApplication::translate("StudioController",
+            "当前 NVIDIA 驱动无法初始化此 FFmpeg 的 NVENC 接口。现在由 CPU 使用%1编码，RIFE 仍由 CUDA 插帧。")
+            .arg(label);
+    return QCoreApplication::translate("StudioController",
+        "NVENC 未能启动，现在由 CPU 使用%1编码；RIFE 插帧仍由 CUDA 运行。")
+        .arg(label);
 }
 QVariantMap timingMap(const rifelove::PipelineTimingBreakdown& value) {
     return {{QStringLiteral("sourceProbeSeconds"),value.sourceProbeSeconds},
@@ -69,6 +92,7 @@ void StudioController::openSource(const QUrl& url) {
     if (!url.isLocalFile() || !QFileInfo(url.toLocalFile()).isFile()) { fail(tr("请选择本机视频文件。")); return; }
     source_ = QDir::toNativeSeparators(QFileInfo(url.toLocalFile()).absoluteFilePath());
     sourceDurationEstimate_.reset();
+    inspectedMedia_.reset();
     const QFileInfo source(source_);
     output_ = QDir::toNativeSeparators(source.dir().filePath(source.completeBaseName() + "_RifeLove.mkv"));
     media_.clear(); progress_.clear(); detail_.clear(); status_ = "inspecting"; busy_ = true; emit changed();
@@ -84,24 +108,16 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
     const QString& encoder, const QVariantMap& encodingOptions) {
     if (busy_) return;
     try {
-        if (source_.isEmpty() || media_.isEmpty()) throw std::invalid_argument("Select and inspect a source video first");
-        const auto encoders = media_.value("encoders").toMap();
+        if (source_.isEmpty() || media_.isEmpty() || !inspectedMedia_) throw std::invalid_argument("Select and inspect a source video first");
+        const auto targetRate = rifelove::Rational::parse(utf8(rate));
+        if (targetRate <= rifelove::Rational(0)) throw std::invalid_argument("Target frame rate must be positive");
+        const auto selectedStream = std::find_if(inspectedMedia_->streams.begin(),inspectedMedia_->streams.end(),[&](const auto& stream) {
+            return stream.index == inspectedMedia_->preferredVideoStream && stream.type == "video";
+        });
+        if (selectedStream == inspectedMedia_->streams.end())
+            throw std::invalid_argument("Selected video stream is unavailable; inspect the video again");
         QString resolvedEncoder = encoder;
         QString preflightEncoderFallback;
-        if (encoder == QStringLiteral("auto")) {
-            const auto nvencCapability = encoders.value(QStringLiteral("h264_nvenc")).toMap();
-            const auto nvenc = nvencCapability.value(QStringLiteral("contextOpened")).toBool();
-            const auto software = automaticSoftwareEncoder(encoders);
-            if (!nvenc && software.isEmpty()) throw std::invalid_argument("Automatic encoding is unavailable: NVENC and all compatible software encoders failed to initialize");
-            if (!nvenc) {
-                resolvedEncoder = software;
-                preflightEncoderFallback = nvencCapability.value(QStringLiteral("reason")).toString();
-                if (preflightEncoderFallback.isEmpty())
-                    preflightEncoderFallback = tr("NVENC could not initialize for this source profile.");
-            }
-        } else if (!encoders.value(encoder).toMap().value(QStringLiteral("contextOpened")).toBool()) {
-            throw std::invalid_argument("The selected video encoder did not initialize for this source profile");
-        }
         if (output_.isEmpty() || QFileInfo::exists(output_)) throw std::invalid_argument("Output exists or is empty; select a new file path");
         const QString suffix = QFileInfo(output_).suffix().toLower();
         if (suffix != "mkv" && suffix != "mp4" && suffix != "mov") throw std::invalid_argument("Output must use .mkv, .mp4 or .mov");
@@ -109,16 +125,67 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         rifelove::application::ProcessingJob job;
         job.source = utf8(source_); job.output = utf8(output_);
         job.modelDirectory = path(modelDirectory); job.runtimeDirectory = path(runtimeDirectory);
-        job.settings.targetRate = rifelove::Rational::parse(utf8(rate));
-        if (job.settings.targetRate <= rifelove::Rational(0)) throw std::invalid_argument("Target FPS must be positive");
         job.sourceDurationEstimate = sourceDurationEstimate_;
         job.settings.encoding = rifelove::desktop::makeVideoEncodingSettings(resolvedEncoder, encodingOptions);
+        job.settings.targetRate = targetRate;
+        job.settings.encoding.videoStreamIndex = inspectedMedia_->preferredVideoStream;
+        job.settings.encoding.frameRate = targetRate;
+        const auto sourceBaseDenominator = selectedStream->timeBase.denominator();
+        if (sourceBaseDenominator <= 0) throw std::invalid_argument("Selected video stream has no valid time base");
+        const auto timeBaseFactor = sourceBaseDenominator / std::gcd(sourceBaseDenominator,targetRate.numerator());
+        if (timeBaseFactor <= 0 || targetRate.numerator() > std::numeric_limits<std::int32_t>::max() / timeBaseFactor)
+            throw std::invalid_argument("Source and target times need an encoder time base beyond 32-bit range");
+        const auto outputTimeBase = rifelove::Rational(1,timeBaseFactor * targetRate.numerator());
+        job.settings.encoding.timeBase = outputTimeBase;
+        const auto probeSettingsFor = [&](const rifelove::media::VideoEncodingSettings& settings) {
+            rifelove::media::EncoderProbeSettings probe;
+            probe.pixelFormat = settings.pixelFormat;
+            probe.timeBase = outputTimeBase;
+            probe.frameRate = targetRate;
+            probe.bitRate = settings.bitRate;
+            probe.gopSize = settings.gopSize;
+            probe.maxBFrames = settings.maxBFrames;
+            probe.encoderOptions = settings.encoderOptions;
+            return probe;
+        };
+        if (encoder == QStringLiteral("auto")) {
+            const auto nvenc = rifelove::media::MediaEngine::probeEncoderWithSettings(
+                "h264_nvenc",*selectedStream,probeSettingsFor(job.settings.encoding));
+            if (nvenc.contextOpened) {
+                job.settings.encoding.encoder = "auto";
+                preflightEncoderFallback.clear();
+            } else {
+                preflightEncoderFallback = QString::fromStdString(nvenc.reason);
+                bool foundSoftware = false;
+                for (const auto* candidate : {"libopenh264","libkvazaar","libaom-av1"}) {
+                    auto candidateSettings = rifelove::desktop::makeVideoEncodingSettings(QString::fromLatin1(candidate),encodingOptions);
+                    candidateSettings.videoStreamIndex = inspectedMedia_->preferredVideoStream;
+                    candidateSettings.frameRate = targetRate;
+                    candidateSettings.timeBase = outputTimeBase;
+                    const auto capability = rifelove::media::MediaEngine::probeEncoderWithSettings(
+                        candidate,*selectedStream,probeSettingsFor(candidateSettings));
+                    if (capability.contextOpened) {
+                        resolvedEncoder = QString::fromLatin1(candidate);
+                        job.settings.encoding = std::move(candidateSettings);
+                        foundSoftware = true;
+                        break;
+                    }
+                    preflightEncoderFallback += "; " + QString::fromStdString(capability.encoder + ": " + capability.reason);
+                }
+                if (!foundSoftware)
+                    throw std::invalid_argument("Automatic encoding found no software encoder compatible with the requested output settings: " + utf8(preflightEncoderFallback));
+            }
+        } else {
+            const auto capability = rifelove::media::MediaEngine::probeEncoderWithSettings(
+                utf8(encoder),*selectedStream,probeSettingsFor(job.settings.encoding));
+            if (!capability.contextOpened)
+                throw std::invalid_argument("The selected encoder could not open for the requested output frame rate and settings: " + capability.reason);
+        }
         busy_ = true; status_ = "loading_model"; detail_.clear(); progress_.clear();
         if (!preflightEncoderFallback.isEmpty()) {
             progress_["encoderFallbackReason"] = preflightEncoderFallback;
             progress_["encoder"] = resolvedEncoder;
-            detail_ = tr("NVENC 不可用，已选择%1编码；RIFE 插帧仍由 CUDA 执行。")
-                .arg(softwareEncoderLabel(resolvedEncoder));
+            detail_ = encoderFallbackNotice(preflightEncoderFallback,resolvedEncoder);
         }
         if (const auto count = rifelove::estimateOutputFrameCount(job.sourceDurationEstimate,job.settings.targetRate))
             progress_["estimatedFrames"] = QVariant::fromValue<qulonglong>(*count);
@@ -145,14 +212,15 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         if (!progress_.value("inferenceFallbackReason").toString().isEmpty())
             notices.push_back(tr("TensorRT 当前不可用，已回退到 ONNX Runtime CUDA 推理。"));
         if (!progress_.value("encoderFallbackReason").toString().isEmpty())
-            notices.push_back(tr("NVIDIA 视频编码器当前不可用，已切换到%1；RIFE 插帧仍在进行。")
-                .arg(softwareEncoderLabel(progress_.value("encoder").toString())));
+            notices.push_back(encoderFallbackNotice(progress_.value("encoderFallbackReason").toString(),
+                progress_.value("encoder").toString()));
         if (!notices.isEmpty()) detail_ = notices.join('\n');
         else if (event.stage != "encoder_fallback" && !event.detail.empty()) detail_ = text(event.detail);
         else detail_.clear();
     } else {
         busy_ = false;
         if (event.kind == Kind::inspected && event.media) {
+            inspectedMedia_ = *event.media;
             status_ = "inspected";
             sourceDurationEstimate_.reset();
             QVariantMap encoders;
@@ -204,8 +272,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                         reason.contains(QStringLiteral("minimum required Nvidia driver"),Qt::CaseInsensitive) ||
                         reason.contains(QStringLiteral("required nvenc API version"),Qt::CaseInsensitive);
                     notices.push_back(apiMismatch
-                        ? tr("NVENC 与当前 NVIDIA 驱动不兼容；自动编码将使用%1，RIFE 插帧仍使用 GPU。")
-                            .arg(softwareEncoderLabel(softwareFallback))
+                        ? encoderFallbackNotice(reason,softwareFallback)
                         : tr("NVENC 当前无法初始化；自动编码将使用%1，RIFE 插帧仍使用 GPU。")
                             .arg(softwareEncoderLabel(softwareFallback)));
                 } else {
@@ -239,8 +306,8 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                 progress_["encoderFallbackReason"] = text(result.encoderFallbackReason);
             }
             if (!progress_.value("encoderFallbackReason").toString().isEmpty()) {
-                detail_ += "\n" + tr("NVENC 不可用，已使用%1；RIFE 插帧仍由 GPU 运行。")
-                    .arg(softwareEncoderLabel(text(result.video.encoder)));
+                detail_ += "\n" + encoderFallbackNotice(progress_.value("encoderFallbackReason").toString(),
+                    text(result.video.encoder));
             }
             if (!result.inferenceFallbackReason.empty()) {
                 progress_["inferenceFallbackReason"] = text(result.inferenceFallbackReason);

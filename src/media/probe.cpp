@@ -6,11 +6,23 @@
 #include <memory>
 
 namespace rifelove::media {
+namespace {
+struct Dictionary {
+    AVDictionary* value{};
+    ~Dictionary() { av_dict_free(&value); }
+};
+}
 
 std::string MediaEngine::runtimeVersion() { return av_version_info(); }
 bool MediaEngine::hasEncoder(const std::string& name) { return avcodec_find_encoder_by_name(name.c_str()) != nullptr; }
 EncoderCapability MediaEngine::probeEncoder(const std::string& name, const StreamInfo& source,
     std::optional<Rational> frameRate, std::stop_token stop) {
+    EncoderProbeSettings settings;
+    settings.frameRate = frameRate;
+    return probeEncoderWithSettings(name,source,settings,stop);
+}
+EncoderCapability MediaEngine::probeEncoderWithSettings(const std::string& name, const StreamInfo& source,
+    const EncoderProbeSettings& settings, std::stop_token stop) {
     EncoderCapability result{name,false,false,{}};
     if (name.empty()) throw std::invalid_argument("encoder name must not be empty");
     const auto* encoder = avcodec_find_encoder_by_name(name.c_str());
@@ -23,11 +35,18 @@ EncoderCapability MediaEngine::probeEncoder(const std::string& name, const Strea
         detail::checkStopped(stop);
         if (source.width <= 0 || source.height <= 0) throw std::invalid_argument("source dimensions are unknown");
         if (source.color.pixelFormat.empty()) throw std::invalid_argument("source pixel format is unknown");
-        const auto pixelFormat = av_get_pix_fmt(source.color.pixelFormat.c_str());
-        if (pixelFormat == AV_PIX_FMT_NONE) throw std::invalid_argument("source pixel format is not recognized by this FFmpeg build");
-        const auto rate = frameRate.value_or(source.averageRate.value_or(source.nominalRate.value_or(Rational(30))));
+        const auto requestedPixelFormat = settings.pixelFormat.empty() ? source.color.pixelFormat : settings.pixelFormat;
+        const auto pixelFormat = av_get_pix_fmt(requestedPixelFormat.c_str());
+        if (pixelFormat == AV_PIX_FMT_NONE) throw std::invalid_argument("requested pixel format is not recognized by this FFmpeg build");
+        const auto rate = settings.frameRate.value_or(source.averageRate.value_or(source.nominalRate.value_or(Rational(30))));
         if (rate <= Rational(0) || rate.numerator() > std::numeric_limits<int>::max() || rate.denominator() > std::numeric_limits<int>::max())
             throw std::invalid_argument("probe frame rate is invalid or out of range");
+        if (settings.bitRate < 0 || settings.gopSize < 0 || settings.maxBFrames < 0 || settings.maxBFrames > 16)
+            throw std::invalid_argument("probe bitrate, GOP or B-frame setting is invalid");
+        const auto timeBase = settings.timeBase.value_or(Rational(rate.denominator(),rate.numerator()));
+        if (timeBase <= Rational(0) || timeBase.numerator() > std::numeric_limits<int>::max() ||
+            timeBase.denominator() > std::numeric_limits<int>::max())
+            throw std::invalid_argument("probe encoder time base is invalid or out of range");
         auto freeCodec = [](AVCodecContext* context) { avcodec_free_context(&context); };
         std::unique_ptr<AVCodecContext,decltype(freeCodec)> context(avcodec_alloc_context3(encoder),freeCodec);
         if (!context) throw std::bad_alloc();
@@ -35,10 +54,10 @@ EncoderCapability MediaEngine::probeEncoder(const std::string& name, const Strea
         context->height = source.height;
         context->pix_fmt = pixelFormat;
         context->framerate = {static_cast<int>(rate.numerator()),static_cast<int>(rate.denominator())};
-        context->time_base = {context->framerate.den,context->framerate.num};
-        context->bit_rate = 8'000'000;
-        context->gop_size = 120;
-        context->max_b_frames = 0;
+        context->time_base = {static_cast<int>(timeBase.numerator()),static_cast<int>(timeBase.denominator())};
+        context->bit_rate = settings.bitRate;
+        context->gop_size = settings.gopSize;
+        context->max_b_frames = settings.maxBFrames;
         context->thread_count = 1;
         const void* supported = nullptr;
         int supportedCount = 0;
@@ -47,10 +66,17 @@ EncoderCapability MediaEngine::probeEncoder(const std::string& name, const Strea
         if (supported && supportedCount > 0) {
             const auto* formats = static_cast<const AVPixelFormat*>(supported);
             if (std::find(formats,formats + supportedCount,pixelFormat) == formats + supportedCount)
-                throw std::invalid_argument("encoder does not support source pixel format " + source.color.pixelFormat);
+                throw std::invalid_argument("encoder does not support requested pixel format " + requestedPixelFormat);
         }
         detail::checkStopped(stop);
-        detail::check(avcodec_open2(context.get(),encoder,nullptr),"open video encoder " + name);
+        Dictionary options;
+        for (const auto& [key,value] : settings.encoderOptions)
+            detail::check(av_dict_set(&options.value,key.c_str(),value.c_str(),0),"configure encoder probe option");
+        const auto openStatus = avcodec_open2(context.get(),encoder,&options.value);
+        const auto* ignored = av_dict_get(options.value,"",nullptr,AV_DICT_IGNORE_SUFFIX);
+        const std::string ignoredOption = ignored ? ignored->key : std::string{};
+        detail::check(openStatus,"open video encoder " + name);
+        if (!ignoredOption.empty()) throw std::invalid_argument("unsupported encoder option: " + ignoredOption);
         result.contextOpened = true;
     } catch (const std::exception& error) {
         result.reason = error.what();

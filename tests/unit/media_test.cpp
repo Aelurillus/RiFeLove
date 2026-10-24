@@ -217,7 +217,14 @@ TEST(MediaEngine, AssemblesVerifiedVideoSegmentsAndCopiesOriginalAudioOnce) {
         makeSegment("assembled-part-000001.mkv",rifelove::Rational(2,50),rifelove::Rational(1,100))};
 
     const auto output = fixture.directory / "assembled.mkv";
-    const auto result = MediaEngine::assembleVideoSegments(source.string(),output.string(),-1,segments);
+    bool validatedBeforePublish = false;
+    const auto result = MediaEngine::assembleVideoSegments(source.string(),output.string(),-1,segments,{},[&](const std::string& temporary) {
+        validatedBeforePublish = true;
+        EXPECT_TRUE(std::filesystem::exists(temporary));
+        EXPECT_FALSE(std::filesystem::exists(output));
+        EXPECT_EQ(MediaEngine::probe(temporary).streams.size(),2U);
+    });
+    EXPECT_TRUE(validatedBeforePublish);
     EXPECT_EQ(result.segments,2U);
     EXPECT_EQ(result.videoPackets,4U);
     EXPECT_GT(result.auxiliaryPackets,0U);
@@ -238,6 +245,12 @@ TEST(MediaEngine, AssemblesVerifiedVideoSegmentsAndCopiesOriginalAudioOnce) {
     const auto rejectedOutput = fixture.directory / "rejected-assembly.mkv";
     EXPECT_THROW((void)MediaEngine::assembleVideoSegments(source.string(),rejectedOutput.string(),-1,gap),std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(rejectedOutput));
+
+    const auto validationFailureOutput = fixture.directory / "rejected-validation.mkv";
+    EXPECT_THROW((void)MediaEngine::assembleVideoSegments(source.string(),validationFailureOutput.string(),-1,segments,{},[](const std::string&) {
+        throw std::runtime_error("validation rejected the assembled output");
+    }),std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(validationFailureOutput));
 }
 
 TEST(VideoMuxWriter, InvalidTimingAndCancellationRemovePartialFiles) {

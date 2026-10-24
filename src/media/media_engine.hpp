@@ -79,6 +79,15 @@ struct EncoderCapability {
     bool contextOpened = false;
     std::string reason;
 };
+struct EncoderProbeSettings {
+    std::string pixelFormat;
+    std::optional<Rational> timeBase;
+    std::optional<Rational> frameRate;
+    std::int64_t bitRate = 8'000'000;
+    int gopSize = 120;
+    int maxBFrames = 0;
+    Metadata encoderOptions;
+};
 struct ChapterInfo { std::int64_t id; Rational start; Rational end; Metadata metadata; };
 struct MediaInfo {
     std::string path;
@@ -159,6 +168,8 @@ public:
     // missing hardware/driver APIs more accurately than encoder registration.
     [[nodiscard]] static EncoderCapability probeEncoder(const std::string& name, const StreamInfo& source,
         std::optional<Rational> frameRate = {}, std::stop_token stop = {});
+    [[nodiscard]] static EncoderCapability probeEncoderWithSettings(const std::string& name, const StreamInfo& source,
+        const EncoderProbeSettings& settings, std::stop_token stop = {});
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
         const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1, std::stop_token stop = {});
@@ -170,7 +181,7 @@ public:
     // into a new output without replacing existing files.
     [[nodiscard]] static VideoSegmentAssemblyResult assembleVideoSegments(const std::string& source,
         const std::string& destination, int videoStreamIndex, const std::vector<VideoSegmentInput>& segments,
-        std::stop_token stop = {});
+        std::stop_token stop = {}, const std::function<void(const std::string&)>& validate = {});
     // Copies compressed streams, metadata and chapters; never replaces an existing output.
     [[nodiscard]] static RemuxResult remux(const std::string& input, const std::string& output,
         std::stop_token stop = {});

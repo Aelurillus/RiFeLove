@@ -121,7 +121,8 @@ bool readVideoPacket(AVFormatContext* input, AVPacket* packet, std::stop_token s
 } // namespace
 
 VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string& source, const std::string& destination,
-    int videoStreamIndex, const std::vector<VideoSegmentInput>& segments, std::stop_token stop) {
+    int videoStreamIndex, const std::vector<VideoSegmentInput>& segments, std::stop_token stop,
+    const std::function<void(const std::string&)>& validate) {
     detail::checkStopped(stop);
     if (segments.empty()) throw std::invalid_argument("at least one verified video segment is required");
     const auto sourceInfo = probe(source,stop);
@@ -293,6 +294,7 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
         throw std::runtime_error("assembled output final frame boundary differs from its checkpoint timeline");
     if (!finalFrameEnd && (!outputVideoInfo.declaredEnd || absolute(*outputVideoInfo.declaredEnd - expectedEnd) > outputVideoInfo.timeBase))
         throw std::runtime_error("assembled output final frame boundary cannot be verified");
+    if (validate) validate(temporaryPath);
     temporary.publish();
     return {segments.size(),videoPackets,auxiliary.written(),firstTimestamp,expectedEnd};
 }

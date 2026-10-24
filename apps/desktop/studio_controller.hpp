@@ -41,6 +41,7 @@ private:
     bool busy_ = false;
     QString source_, output_, status_ = "ready", detail_;
     std::optional<rifelove::Rational> sourceDurationEstimate_;
+    std::optional<rifelove::media::MediaInfo> inspectedMedia_;
     QVariantMap deviceInfo_, media_, progress_;
     rifelove::application::ProcessingService service_;
 };
