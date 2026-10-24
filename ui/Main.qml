@@ -35,12 +35,16 @@ ApplicationWindow {
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
+    readonly property bool canStart: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor &&
+        !!window.info.gpuAvailable && window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
 
     function applyLocalDefaults() {
         if (!processingAvailable) return
         const values = taskQueue.defaults || ({})
         if (!modelFolder.toString() && values.model && values.model.toString()) modelFolder = values.model
         if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
+        if (values.rate) rate.editText = values.rate
+        if (values.encoder) encoder.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1"].indexOf(values.encoder)
     }
     function persistLocalDefaults() {
         if (!processingAvailable) return
@@ -55,12 +59,23 @@ ApplicationWindow {
     }
 
     function stateText(value) {
+        if (value === "inspected" && window.info.width) {
+            if (!window.info.supportedColor) return qsTr("色彩格式暂不支持")
+            if (!window.info.gpuAvailable) return qsTr("NVIDIA GPU 不可用")
+            if (!window.modelFolder.toString() || !window.runtimeFolder.toString()) return qsTr("请配置模型与运行库")
+            return qsTr("可以开始")
+        }
         const labels = {ready: qsTr("等待导入"), inspecting: qsTr("读取视频信息"), inspected: qsTr("可以开始"),
             checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
             loading_model: qsTr("加载本地模型"), processing: qsTr("正在补帧"), encoding: qsTr("正在编码"),
             validating: qsTr("验证输出视频"), encoder_fallback: qsTr("切换编码器"), completed: qsTr("处理完成"),
             failed: qsTr("处理失败"), cancelling: qsTr("正在安全取消"), cancelled: qsTr("已取消"), unavailable: qsTr("处理组件未启用")}
         return labels[value] || qsTr("正在处理")
+    }
+    function stateColor(value) {
+        if (value === "failed" || (value === "inspected" && window.info.width && !window.info.supportedColor)) return "#ffb3ad"
+        if (value === "inspected" && !window.canStart) return "#f0c98a"
+        return "#9ee6c8"
     }
     FileDialog {
         id: sourceDialog
@@ -216,7 +231,7 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: qsTr("编码器"); font.bold: true }
-                            ComboBox { id: encoder; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: window.persistLocalDefaults() }
+                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: window.persistLocalDefaults() }
                         }
                     }
                     RowLayout {
@@ -249,18 +264,18 @@ ApplicationWindow {
                                 TextField { Layout.fillWidth: true; readOnly: true; text: window.runtimeFolder.toString(); placeholderText: qsTr("包含 ONNX Runtime / CUDA DLL 的目录"); selectByMouse: true }
                                 ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: runtimeDialog.open() }
                             }
-                            Label { text: qsTr("当前已验证：RIFE 4.25、BT.709 8-bit SDR。HDR、10-bit 和未标记色彩的视频暂不支持。模型和运行库仅从所选本地目录加载。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
+                            Label { text: qsTr("当前已验证：RIFE 4.25、BT.709 及 BT.470BG/SMPTE 170M 8-bit SDR。HDR、10-bit 和未标记色彩的视频暂不支持。模型和运行库仅从所选本地目录加载。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                         }
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: window.stateText(window.state); color: window.state === "failed" ? "#ffb3ad" : "#9ee6c8"; font.bold: true; Layout.fillWidth: true }
+                        Label { objectName: "studioStatusLabel"; text: window.stateText(window.state); color: window.stateColor(window.state); font.bold: true; Layout.fillWidth: true }
                         Label { text: (window.progress.frames || 0) + qsTr(" 帧  ·  ") + Number(window.progress.fps || 0).toFixed(1) + qsTr(" 处理 FPS"); color: "#9aaac0" }
                         ActionButton { text: qsTr("取消"); visible: processingAvailable && studio.busy; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
                         ActionButton {
                             objectName: "startButton"
                             text: qsTr("开始补帧")
-                            enabled: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor && !!window.info.gpuAvailable && window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
+                            enabled: window.canStart
                             highlighted: true
                             primary: true
                             onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder, ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex])

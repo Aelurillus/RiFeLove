@@ -72,7 +72,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                 media_["width"] = stream.width; media_["height"] = stream.height;
                 media_["codec"] = text(stream.codec);
                 media_["rate"] = stream.averageRate ? text(stream.averageRate->toString()) : tr("未知");
-                media_["color"] = text(stream.color.primaries) + " / " + text(stream.color.transfer) + " / " + text(stream.color.matrix);
+                media_["color"] = text(stream.color.primaries) + " / " + text(stream.color.transfer) + " / " + text(stream.color.matrix) + " / " + text(stream.color.range);
                 media_["depth"] = stream.color.bitDepth;
                 media_["hdr"] = stream.color.hdrTransfer;
                 media_["supportedColor"] = event.sourceColorSupported;
@@ -85,7 +85,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             media_["gpuAvailable"] = event.device.has_value();
             media_["streams"] = static_cast<int>(event.media->streams.size());
             detail_ = text(event.detail);
-            if (hasVideo && !media_.value("supportedColor").toBool()) detail_ += tr("当前模型路径仅支持明确标记的 BT.709 8-bit SDR；此视频需要后续色彩处理支持。");
+            if (hasVideo && !media_.value("supportedColor").toBool()) detail_ += tr("当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8-bit SDR；HDR、10-bit 和未标记色彩需要后续色彩处理支持。");
             if (!hasVideo) { media_.clear(); status_ = "failed"; detail_ = tr("文件中没有可处理的视频轨。 "); }
         } else if (event.kind == Kind::completed && event.result) {
             status_ = "completed";

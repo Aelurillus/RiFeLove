@@ -45,6 +45,20 @@ TEST(RifeColor, Explicit709MatrixProducesRedFromItsLimitedRangeCodeValues) {
     const auto prepared = prepareRifeSdr(frame);
     EXPECT_GT(prepared.pixels[0],0.99F); EXPECT_LT(prepared.pixels[4096],0.015F); EXPECT_LT(prepared.pixels[8192],0.015F);
 }
+TEST(RifeColor, Bt470BgSmpte170mUses601CoefficientsAndPreservesSourceColorTags) {
+    auto bytes = std::make_shared<std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{81,81,81,81,90,240});
+    DecodedFrame frame{}; frame.width = 2; frame.height = 2;
+    frame.color = rgbFixture().color; frame.color.pixelFormat = "yuv420p"; frame.color.primaries = "bt470bg";
+    frame.color.transfer = "bt709"; frame.color.matrix = "smpte170m"; frame.color.range = "tv";
+    frame.storage = bytes; frame.planes[0] = {bytes->data(),2}; frame.planes[1] = {bytes->data() + 4,1}; frame.planes[2] = {bytes->data() + 5,1};
+    EXPECT_NO_THROW(validateRifeSdrColor(frame.color));
+    const auto prepared = prepareRifeSdr(frame);
+    EXPECT_GT(prepared.pixels[0],0.97F); EXPECT_LT(prepared.pixels[4096],0.03F); EXPECT_LT(prepared.pixels[8192],0.03F);
+    const auto restored = restoreRifeSdr(prepared);
+    EXPECT_EQ(restored.color.primaries,"bt470bg"); EXPECT_EQ(restored.color.transfer,"bt709");
+    EXPECT_EQ(restored.color.matrix,"smpte170m"); EXPECT_EQ(restored.color.range,"tv");
+    EXPECT_NEAR(restored.planes[0].data[0],81,1); EXPECT_NEAR(restored.planes[1].data[0],90,1); EXPECT_NEAR(restored.planes[2].data[0],240,1);
+}
 TEST(RifeColor, UnknownHdrPrecisionInvalidPixelsAndCancellationFailExplicitly) {
     auto source = rgbFixture(); source.color.primaries = "unknown";
     EXPECT_THROW((void)prepareRifeSdr(source),std::invalid_argument);

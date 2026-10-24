@@ -12,8 +12,8 @@ struct RifeSdrFrame {
     // the last row/column; neither transfer function nor primaries are changed.
     std::vector<float> pixels;
 };
-// First explicit color path: tagged 8-bit BT.709 SDR, or tagged full-range RGB.
-// Unknown metadata, HDR and higher bit depths are rejected, not guessed/tonemapped.
+// Explicit SDR path: tagged 8-bit BT.709 or legacy BT.470BG/SMPTE 170M YUV,
+// plus tagged full-range RGB. Unknown metadata, HDR and high bit depths fail closed.
 void validateRifeSdrColor(const ColorInfo& color);
 [[nodiscard]] RifeSdrFrame prepareRifeSdr(const DecodedFrame& frame,
     std::size_t floatBufferLimit = 512ULL * 1024 * 1024, std::stop_token stop = {});

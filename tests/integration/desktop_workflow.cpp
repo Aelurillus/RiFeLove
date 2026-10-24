@@ -57,9 +57,17 @@ int main(int argc, char** argv) {
         StudioController studio;
         const auto queueFolder = QDir(QFileInfo(arguments[2]).absolutePath()).filePath("queue-output");
         require(QDir().mkpath(queueFolder), "Could not create isolated queue output folder");
-        QueueController taskQueue(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("desktop-queue.sqlite"));
+        const auto queueDatabase = QDir(QFileInfo(arguments[2]).absolutePath()).filePath("desktop-queue.sqlite");
+        QSettings initialSettings(QFileInfo(queueDatabase).dir().filePath("preferences.ini"),QSettings::IniFormat);
+        initialSettings.setFallbacksEnabled(false);
+        initialSettings.setValue("rate","240"); initialSettings.setValue("encoder","libopenh264"); initialSettings.setValue("container","mp4");
+        initialSettings.setValue("model",QUrl::fromLocalFile(arguments[3])); initialSettings.setValue("runtime",QUrl::fromLocalFile(arguments[4]));
+        initialSettings.setValue("modelCatalog/paths",QStringList{QFileInfo(arguments[3]).absoluteFilePath()});
+        initialSettings.sync(); require(initialSettings.status() == QSettings::NoError, "Could not prepare saved first-run preferences");
+        QueueController taskQueue(queueDatabase);
         waitUntil([&] { return taskQueue.available() || taskQueue.state() == "error"; }, "Local desktop queue did not initialize");
         require(taskQueue.available(), qPrintable(taskQueue.detail()));
+        waitUntil([&] { return taskQueue.defaults().value("rate").toString() == "240"; }, "Saved local defaults did not load");
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("studio", &studio);
         engine.rootContext()->setContextProperty("taskQueue", &taskQueue);
@@ -68,7 +76,16 @@ int main(int argc, char** argv) {
         require(!engine.rootObjects().isEmpty(), "QML application did not load");
         auto* root = engine.rootObjects().front();
         auto* button = root->findChild<QObject*>("startButton");
+        auto* statusLabel = root->findChild<QObject*>("studioStatusLabel");
+        auto* targetRate = root->findChild<QObject*>("targetRate");
+        auto* studioEncoder = root->findChild<QObject*>("studioEncoder");
         require(button && !button->property("enabled").toBool(), "Start should be disabled without input/model");
+        require(statusLabel, "Studio status label is unavailable");
+        require(targetRate && targetRate->property("editText").toString() == QStringLiteral("240") &&
+                studioEncoder && studioEncoder->property("currentIndex").toInt() == 1,
+                "Studio did not restore the saved target FPS and encoder");
+        // Confirm restoration above, then keep the synthetic workflow short.
+        require(targetRate->setProperty("editText","60"), "Could not set the synthetic workflow FPS");
         root->setProperty("modelFolder", QUrl::fromLocalFile(arguments[3]));
         root->setProperty("runtimeFolder", QUrl::fromLocalFile(arguments[4]));
         studio.openSource(QUrl::fromLocalFile(arguments[1]));
@@ -78,6 +95,14 @@ int main(int argc, char** argv) {
         wait(studio);
         require(studio.status() == "inspected", "Source inspection failed");
         require(studio.media().value("width").toInt() == 96 && studio.media().value("height").toInt() == 64, "Wrong imported dimensions");
+        require(studio.media().value("color").toString().contains("bt470bg") && studio.media().value("color").toString().contains("smpte170m"), "Legacy SDR color tags were not detected");
+        require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Supported BT.601 source readiness disagrees with the start control");
+        const auto unsupportedHdr = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("queue-input/unsupported-hdr.mkv");
+        studio.openSource(QUrl::fromLocalFile(unsupportedHdr)); wait(studio);
+        require(!studio.media().value("supportedColor").toBool() && !button->property("enabled").toBool() &&
+                statusLabel->property("text").toString() == QStringLiteral("色彩格式暂不支持"), "Unsupported HDR status disagrees with the start control");
+        studio.openSource(QUrl::fromLocalFile(arguments[1])); wait(studio);
+        require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Studio did not recover readiness after selecting a supported source");
         studio.setOutput(QUrl::fromLocalFile(arguments[2]));
         int responsiveTicks = 0;
         QTimer heartbeat; heartbeat.setInterval(5);

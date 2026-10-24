@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix="rifelove-desktop-") as folder:
     output = root / "补帧输出.mkv"
     subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=5:duration=0.6",
                     "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.6",
-                    "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited",
+                    "-vf", "setparams=color_primaries=bt470bg:color_trc=bt709:colorspace=smpte170m:range=limited",
                     "-c:v", "ffv1", "-pix_fmt", "yuv420p", "-c:a", "flac", str(source)], check=True)
     batch = root / "queue-input"
     nested = batch / "nested"
@@ -36,6 +36,10 @@ with tempfile.TemporaryDirectory(prefix="rifelove-desktop-") as folder:
     result = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-count_frames", "-show_streams", "-of", "json", str(output)]))
     video = next(stream for stream in result["streams"] if stream["codec_type"] == "video")
     assert int(video["nb_read_frames"]) == 36
+    assert video["color_primaries"] == "bt470bg"
+    assert video["color_transfer"] == "bt709"
+    assert video["color_space"] == "smpte170m"
+    assert video["color_range"] == "tv"
     audio = next(stream for stream in result["streams"] if stream["codec_type"] == "audio")
     assert audio["codec_name"] == "flac"
     def pcm(path):

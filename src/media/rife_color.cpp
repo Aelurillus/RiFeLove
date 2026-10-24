@@ -15,24 +15,34 @@ struct FrameDeleter { void operator()(AVFrame* value) const { av_frame_free(&val
 AVPixelFormat checkColor(const ColorInfo& color) {
     const auto format = av_get_pix_fmt(color.pixelFormat.c_str());
     const auto* descriptor = av_pix_fmt_desc_get(format);
+    const bool supportedPrimaries = color.primaries == "bt709" || color.primaries == "bt470bg" || color.primaries == "smpte170m";
+    const bool supportedTransfer = color.transfer == "bt709" || color.transfer == "iec61966-2-1";
     if (!descriptor || color.bitDepth != 8 || descriptor->comp[0].depth != 8 || color.hdrTransfer || color.masteringDisplay || color.contentLight ||
-        color.primaries != "bt709" || (color.transfer != "bt709" && color.transfer != "iec61966-2-1"))
-        throw std::invalid_argument("RIFE SDR path requires explicit 8-bit BT.709 primaries and SDR transfer; HDR/unknown color needs a separately validated path");
+        !supportedPrimaries || !supportedTransfer)
+        throw std::invalid_argument("RIFE SDR path requires tagged 8-bit BT.709 or BT.470BG/SMPTE 170M primaries and SDR transfer; HDR/unknown color needs a separately validated path");
     if (descriptor->flags & (AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_ALPHA | AV_PIX_FMT_FLAG_FLOAT))
         throw std::invalid_argument("RIFE SDR path does not accept hardware, palette, alpha or floating source pixels");
     const bool rgb = (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
-    if ((rgb && (color.matrix != "gbr" || color.range != "pc")) || (!rgb && color.matrix != "bt709") || (color.range != "tv" && color.range != "pc"))
-        throw std::invalid_argument("RIFE SDR path requires explicit matching RGB/YUV matrix and range");
+    const bool bt709Yuv = color.matrix == "bt709" && color.primaries == "bt709";
+    const bool bt601Yuv = (color.matrix == "smpte170m" || color.matrix == "bt470bg") &&
+        (color.primaries == "bt470bg" || color.primaries == "smpte170m");
+    if ((rgb && (color.matrix != "gbr" || color.range != "pc")) || (!rgb && !bt709Yuv && !bt601Yuv) ||
+        (color.range != "tv" && color.range != "pc"))
+        throw std::invalid_argument("RIFE SDR path requires explicit matching RGB, BT.709 YUV or BT.601-family YUV matrix and range");
     return format;
+}
+int swscaleMatrix(const ColorInfo& color) {
+    return color.matrix == "smpte170m" || color.matrix == "bt470bg" ? SWS_CS_ITU601 : SWS_CS_ITU709;
 }
 void dimensions(int width, int height) {
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192) throw std::invalid_argument("Invalid RIFE SDR dimensions");
 }
-std::unique_ptr<SwsContext, ScaleDeleter> converter(int width, int height, AVPixelFormat input, AVPixelFormat output, int sourceRange, int outputRange) {
+std::unique_ptr<SwsContext, ScaleDeleter> converter(int width, int height, AVPixelFormat input, AVPixelFormat output,
+                                                    const ColorInfo& color, int sourceRange, int outputRange) {
     std::unique_ptr<SwsContext, ScaleDeleter> context(sws_getContext(width,height,input,width,height,output,SWS_BILINEAR | SWS_ACCURATE_RND,nullptr,nullptr,nullptr));
     if (!context) throw std::runtime_error("Could not create explicit SDR pixel converter");
-    const int* coefficients = sws_getCoefficients(SWS_CS_ITU709);
-    detail::check(sws_setColorspaceDetails(context.get(),coefficients,sourceRange,coefficients,outputRange,0,1 << 16,1 << 16), "configure BT.709 SDR matrix/range");
+    const int* coefficients = sws_getCoefficients(swscaleMatrix(color));
+    detail::check(sws_setColorspaceDetails(context.get(),coefficients,sourceRange,coefficients,outputRange,0,1 << 16,1 << 16), "configure tagged SDR matrix/range");
     return context;
 }
 }
@@ -52,7 +62,7 @@ RifeSdrFrame prepareRifeSdr(const DecodedFrame& frame, std::size_t floatBufferLi
     if (planeSize * 3 * sizeof(float) > floatBufferLimit) throw std::invalid_argument("RIFE host float buffer exceeds its configured limit");
     RifeSdrFrame output{frame.width,frame.height,paddedWidth,paddedHeight,frame.color,std::vector<float>(planeSize * 3)};
     std::vector<std::uint16_t> rgb(static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height) * 3);
-    auto context = converter(frame.width,frame.height,inputFormat,AV_PIX_FMT_RGB48LE,frame.color.range == "pc",1);
+    auto context = converter(frame.width,frame.height,inputFormat,AV_PIX_FMT_RGB48LE,frame.color,frame.color.range == "pc",1);
     const std::uint8_t* source[4]{}; int strides[4]{};
     for (int plane = 0; plane < 4; ++plane) { source[plane] = frame.planes[plane].data; strides[plane] = frame.planes[plane].stride; }
     std::uint8_t* destination[4] = {reinterpret_cast<std::uint8_t*>(rgb.data())}; const int destinationStride[4] = {frame.width * 6};
@@ -92,11 +102,11 @@ DecodedFrame restoreRifeSdr(const RifeSdrFrame& frame, std::stop_token stop) {
     if (!native) throw std::bad_alloc();
     native->width = frame.width; native->height = frame.height; native->format = format;
     detail::check(av_frame_get_buffer(native.get(),32), "allocate restored RIFE video planes");
-    native->color_primaries = AVCOL_PRI_BT709;
-    native->color_trc = frame.sourceColor.transfer == "bt709" ? AVCOL_TRC_BT709 : AVCOL_TRC_IEC61966_2_1;
-    native->colorspace = frame.sourceColor.matrix == "gbr" ? AVCOL_SPC_RGB : AVCOL_SPC_BT709;
+    native->color_primaries = static_cast<AVColorPrimaries>(av_color_primaries_from_name(frame.sourceColor.primaries.c_str()));
+    native->color_trc = static_cast<AVColorTransferCharacteristic>(av_color_transfer_from_name(frame.sourceColor.transfer.c_str()));
+    native->colorspace = static_cast<AVColorSpace>(av_color_space_from_name(frame.sourceColor.matrix.c_str()));
     native->color_range = frame.sourceColor.range == "pc" ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
-    auto context = converter(frame.width,frame.height,AV_PIX_FMT_RGB48LE,format,1,frame.sourceColor.range == "pc");
+    auto context = converter(frame.width,frame.height,AV_PIX_FMT_RGB48LE,format,frame.sourceColor,1,frame.sourceColor.range == "pc");
     const std::uint8_t* source[4] = {reinterpret_cast<const std::uint8_t*>(rgb.data())}; const int stride[4] = {frame.width * 6};
     if (sws_scale(context.get(),source,stride,0,frame.height,native->data,native->linesize) != frame.height) throw std::runtime_error("Incomplete RIFE SDR postprocessing");
     DecodedFrame output{};

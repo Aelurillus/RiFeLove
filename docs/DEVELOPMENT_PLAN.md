@@ -64,6 +64,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add first conservative duplicate/abnormal-pair hold policies.
 - [ ] Tune and qualify protection on real content, occlusion/fast motion and abnormal model output.
 - [ ] Implement color-managed SDR/HDR and 10-bit conversions.
+  - Tagged BT.470BG/SMPTE 170M 8-bit SDR now uses explicit BT.601-family YUV coefficients and preserves source primaries/transfer/matrix/range through an actual RIFE encode/decode check; HDR/10-bit and gamut conversion remain open.
 - [ ] Add animation/text/HUD temporal QA and seam/flicker regression fixtures.
 - [ ] Publish objective and blind-review benchmark protocol.
 
