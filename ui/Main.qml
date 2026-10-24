@@ -24,7 +24,9 @@ ApplicationWindow {
     palette.highlightedText: "#10241f"
     property url modelFolder: ""
     property url runtimeFolder: ""
-    readonly property bool active: processingAvailable && studio.busy
+    property int currentPage: 0
+    readonly property bool queueActive: processingAvailable && (taskQueue.busy || taskQueue.importing)
+    readonly property bool active: processingAvailable && (studio.busy || queueActive)
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
@@ -61,8 +63,11 @@ ApplicationWindow {
         modal: true
         title: qsTr("正在处理视频")
         standardButtons: Dialog.Cancel | Dialog.Ok
-        Label { text: qsTr("取消当前任务并等待资源清理后，可关闭窗口。"); wrapMode: Text.WordWrap }
-        onAccepted: studio.cancel()
+        Label { text: qsTr("取消导入或当前任务，并等待资源清理后，可关闭窗口。"); wrapMode: Text.WordWrap }
+        onAccepted: {
+            if (processingAvailable && studio.busy) studio.cancel()
+            if (processingAvailable && (taskQueue.busy || taskQueue.importing)) taskQueue.stop()
+        }
     }
     RowLayout {
         anchors.fill: parent
@@ -78,21 +83,26 @@ ApplicationWindow {
                 Label { text: "RifeLove"; font.pixelSize: 26; font.bold: true }
                 Label { text: qsTr("离线 AI 视频补帧"); color: "#9aaac0" }
                 Rectangle { Layout.fillWidth: true; height: 1; color: "#2b394e"; Layout.topMargin: 16; Layout.bottomMargin: 10 }
-                Label { text: qsTr("插帧工作室"); color: "#79d6ba"; font.bold: true }
-                Label { text: qsTr("本地开发版"); color: "#9aaac0" }
+                Button { text: qsTr("插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
+                Button { text: qsTr("任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
                 Item { Layout.fillHeight: true }
                 Label { text: qsTr("NVIDIA GPU"); color: "#9aaac0"; font.pixelSize: 12 }
                 Label { text: window.info.gpu || qsTr("导入后检测"); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Label { text: qsTr("源文件保留\n输出保存为新文件"); color: "#9aaac0"; font.pixelSize: 12; lineHeight: 1.5 }
             }
         }
-        ScrollView {
+        StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            contentWidth: availableWidth
-            ColumnLayout {
-                width: parent.width
+            id: pages
+            currentIndex: window.currentPage
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: parent.width
                 spacing: 20
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -169,7 +179,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Label { text: window.stateText(window.state); color: window.state === "failed" ? "#ffb3ad" : "#79d6ba"; font.bold: true; Layout.fillWidth: true }
                         Label { text: (window.progress.frames || 0) + qsTr(" 帧  ·  ") + Number(window.progress.fps || 0).toFixed(1) + qsTr(" 处理 FPS"); color: "#9aaac0" }
-                        Button { text: qsTr("取消"); visible: window.active; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
+                        Button { text: qsTr("取消"); visible: processingAvailable && studio.busy; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
                         Button {
                             objectName: "startButton"
                             text: qsTr("开始补帧")
@@ -178,10 +188,24 @@ ApplicationWindow {
                             onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder, ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex])
                         }
                     }
-                    ProgressBar { Layout.fillWidth: true; indeterminate: window.active; visible: window.active }
+                    ProgressBar { Layout.fillWidth: true; indeterminate: studio.busy; visible: processingAvailable && studio.busy }
                     Label { text: processingAvailable ? studio.detail : qsTr("请使用启用媒体和 ONNX CUDA 的桌面构建。"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: window.state === "failed" ? "#ffb3ad" : "#b9c9dd"; font.pixelSize: 12 }
                 }
             }
+            }
+            Loader {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: processingAvailable
+                sourceComponent: queuePageComponent
+            }
+        }
+    }
+    Component {
+        id: queuePageComponent
+        QueuePage {
+            queueController: taskQueue
+            processingAvailable: true
         }
     }
 }

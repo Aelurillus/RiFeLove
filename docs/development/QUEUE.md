@@ -1,6 +1,8 @@
 # Persistent local processing queue
 
-The native application layer now has an ordered SQLite-backed processing queue. It persists the complete versioned job configuration, verified source/model/device identity, progress and terminal result. It runs real RIFE jobs sequentially, isolates individual failures, supports cooperative pause/resume/cancel through its C++ API, and supports CLI batch execution, failed retries and explicit restart from frame zero. The desktop queue page is still required; the existing Studio remains a single-job workflow.
+The application layer and Qt desktop now expose an ordered SQLite-backed processing queue. It persists the complete versioned job configuration, verified source/model/device identity, progress and terminal result. It runs real RIFE jobs sequentially, isolates individual failures, and supports cooperative pause/resume/cancel, failed retries and explicit restart from frame zero. Desktop import accepts multiple files or folders, optional recursion, duplicate-source elimination, model color screening and collision-safe new outputs. Unsupported or unreadable inputs are reported rather than relabeled. The desktop and CLI use the same application import rules; the Studio remains available for a one-off job.
+
+The desktop database defaults to `QStandardPaths::AppLocalDataLocation/queue.sqlite`; `--data-dir PATH` selects an isolated/local data directory. The adjacent `preferences.ini` stores only last-used local paths and encoding/FPS defaults. It does not store video contents or download models. Queue smoke tests use their own build-local data directory.
 
 ## Local CLI
 
@@ -50,4 +52,4 @@ Restart creates a separate task from frame zero under a new output name and pres
 
 A repeated-session regression executes 20 separate native inference sessions in one process and independently checks identical decoded pixels/timing. This was added after a recorded intermittent `cudnn_heuristic64_9.dll` access violation during repeated session/runtime creation; the shared runtime/environment lifetime policy is exercised by the regression. It is a bounded local stability result, not a multi-hour or supported-hardware claim. Queue and repeated-session evidence is written to local `queue-workflow.json` / `queue-stress.json` reports.
 
-Required next work includes the desktop queue/import page, persistent preferences, attempt-by-attempt audit/history pagination, cross-process control, safe artifact/checkpoint ownership, true segment resume/stitching, disk-full/OOM/fault injection and multi-hour/hardware/content qualification. The complete Master Plan remains the acceptance baseline.
+The actual QML desktop workflow test covers recursive folder import, duplicate selections, same-basename collision-safe outputs, visible HDR rejection, sequential native processing, UI pause/resume and preference reload. The remaining work includes audit/history pagination, cross-process live control, safe artifact/checkpoint ownership, true segment resume/stitching, disk-full/OOM/fault injection and multi-hour/hardware/content qualification. The complete Master Plan remains the acceptance baseline.

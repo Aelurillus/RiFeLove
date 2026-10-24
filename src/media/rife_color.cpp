@@ -36,6 +36,7 @@ std::unique_ptr<SwsContext, ScaleDeleter> converter(int width, int height, AVPix
     return context;
 }
 }
+void validateRifeSdrColor(const ColorInfo& color) { (void)checkColor(color); }
 RifeSdrFrame prepareRifeSdr(const DecodedFrame& frame, std::size_t floatBufferLimit, std::stop_token stop) {
     detail::checkStopped(stop);
     dimensions(frame.width, frame.height);

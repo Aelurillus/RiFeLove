@@ -156,16 +156,18 @@ void boundedPayload(const std::string& value, bool required = false) {
         throw std::invalid_argument("Invalid or oversized task payload");
 }
 }
-std::vector<std::string> TaskStore::createConfigured(const std::vector<NewConfiguredTask>& tasks) {
+std::vector<std::string> TaskStore::createConfigured(const std::vector<NewConfiguredTask>& tasks, std::stop_token stop) {
     std::lock_guard lock(mutex_); requireWritable();
     if (tasks.empty() || tasks.size() > 10000) throw std::invalid_argument("Queue batch must contain 1 to 10000 tasks");
     for (const auto& task : tasks) {
+        if (stop.stop_requested()) throw std::runtime_error("Task import cancelled");
         if (task.sourcePath.empty() || task.outputPath.empty()) throw std::invalid_argument("Task paths are required");
         boundedPayload(task.configuration, true);
     }
     Transaction transaction(db_);
     std::vector<std::string> ids;
     for (const auto& task : tasks) {
+        if (stop.stop_requested()) throw std::runtime_error("Task import cancelled");
         std::string id;
         {
             Statement insert(db_, "INSERT INTO tasks(id,source_path,output_path,state) VALUES(lower(hex(randomblob(16))),?,?,'queued') RETURNING id");
@@ -178,6 +180,7 @@ std::vector<std::string> TaskStore::createConfigured(const std::vector<NewConfig
         if (sqlite3_step(detail.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
         ids.push_back(std::move(id));
     }
+    if (stop.stop_requested()) throw std::runtime_error("Task import cancelled");
     transaction.commit(); return ids;
 }
 std::vector<ConfiguredTask> TaskStore::configured() const {

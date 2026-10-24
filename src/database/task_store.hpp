@@ -4,6 +4,7 @@
 #include <vector>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 
 struct sqlite3;
 
@@ -45,7 +46,7 @@ public:
     [[nodiscard]] std::vector<TaskRecord> list() const;
     // Payloads are versioned JSON owned/validated by application services.
     // Batch creation and terminal state/result publication are transactional.
-    [[nodiscard]] std::vector<std::string> createConfigured(const std::vector<NewConfiguredTask>& tasks);
+    [[nodiscard]] std::vector<std::string> createConfigured(const std::vector<NewConfiguredTask>& tasks, std::stop_token stop = {});
     [[nodiscard]] std::vector<ConfiguredTask> configured() const;
     void saveIdentity(const std::string& id, const std::string& json);
     void saveProgress(const std::string& id, const std::string& json);

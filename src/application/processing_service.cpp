@@ -1,5 +1,7 @@
 #include "application/processing_service.hpp"
 #include "inference/onnx_cuda_backend.hpp"
+#include "media/rife_color.hpp"
+#include <algorithm>
 #include <chrono>
 
 namespace rifelove::application {
@@ -111,6 +113,9 @@ bool ProcessingService::inspect(std::string source, Callback callback) {
         ProcessingEvent event;
         event.kind = ProcessingEvent::Kind::inspected;
         event.media = media::MediaEngine::probe(source, stop);
+        for (const auto& stream : event.media->streams) if (stream.index == event.media->preferredVideoStream) {
+            try { media::validateRifeSdrColor(stream.color); event.sourceColorSupported = true; } catch (const std::exception&) {}
+        }
         if (stop.stop_requested()) throw std::runtime_error("Inspection cancelled");
         try { event.device = gpu::CudaDevice().info(); }
         catch (const gpu::GpuError& error) { event.detail = error.what(); }

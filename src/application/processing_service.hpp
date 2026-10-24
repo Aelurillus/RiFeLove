@@ -32,6 +32,7 @@ struct ProcessingEvent {
     std::optional<gpu::DeviceInfo> device;
     std::optional<PipelineResult> result;
     std::optional<ProcessingIdentity> identity;
+    bool sourceColorSupported = false;
 };
 [[nodiscard]] PipelineResult executeProcessingJob(const ProcessingJob& job, const std::function<void(ProcessingEvent)>& progress,
     std::stop_token stop, PauseGate& pause);

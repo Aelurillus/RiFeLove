@@ -75,11 +75,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                 media_["color"] = text(stream.color.primaries) + " / " + text(stream.color.transfer) + " / " + text(stream.color.matrix);
                 media_["depth"] = stream.color.bitDepth;
                 media_["hdr"] = stream.color.hdrTransfer;
-                media_["supportedColor"] = stream.color.bitDepth == 8 && !stream.color.hdrTransfer &&
-                    !stream.color.masteringDisplay && !stream.color.contentLight && stream.color.primaries == "bt709" &&
-                    (stream.color.transfer == "bt709" || stream.color.transfer == "iec61966-2-1") &&
-                    (stream.color.matrix == "bt709" || stream.color.matrix == "gbr") &&
-                    (stream.color.range == "tv" || stream.color.range == "pc");
+                media_["supportedColor"] = event.sourceColorSupported;
                 if (stream.duration) media_["duration"] = seconds(*stream.duration);
                 else if (event.media->duration) media_["duration"] = seconds(*event.media->duration);
                 if (stream.start) media_["start"] = seconds(*stream.start);

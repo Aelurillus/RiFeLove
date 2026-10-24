@@ -17,7 +17,7 @@ public:
     using Callback = std::function<void(QueueEvent)>;
     explicit TaskQueue(const std::filesystem::path& database);
     ~TaskQueue();
-    [[nodiscard]] std::vector<std::string> enqueue(std::vector<ProcessingJob> jobs);
+    [[nodiscard]] std::vector<std::string> enqueue(std::vector<ProcessingJob> jobs, std::stop_token stop = {});
     [[nodiscard]] std::vector<ConfiguredTask> list() const { return store_.configured(); }
     [[nodiscard]] bool start(Callback callback);
     void pause() { pause_.pause(); }

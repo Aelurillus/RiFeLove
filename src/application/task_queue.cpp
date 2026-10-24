@@ -32,13 +32,14 @@ TaskQueue::TaskQueue(const std::filesystem::path& database)
 TaskQueue::~TaskQueue() { stop(); if (worker_.joinable()) worker_.join(); }
 void TaskQueue::stop() { std::stop_source source; { std::lock_guard lock(activity_); source = runCancel_; } source.request_stop(); }
 void TaskQueue::wait() { if (worker_.joinable()) worker_.join(); }
-std::vector<std::string> TaskQueue::enqueue(std::vector<ProcessingJob> jobs) {
+std::vector<std::string> TaskQueue::enqueue(std::vector<ProcessingJob> jobs, std::stop_token stop) {
     std::lock_guard lock(activity_);
     const auto current = store_.configured();
     std::set<std::wstring,PathLess> outputs;
     for (const auto& row : current) if (ownsOutput(row.task.state)) outputs.insert(std::filesystem::weakly_canonical(std::filesystem::absolute(path(row.task.outputPath))).wstring());
     std::vector<NewConfiguredTask> batch;
     for (auto& job : jobs) {
+        if (stop.stop_requested()) throw std::runtime_error("Task import cancelled");
         if (job.source.empty() || job.output.empty() || job.modelDirectory.empty() || job.runtimeDirectory.empty())
             throw std::invalid_argument("Source, output, model and runtime paths are required");
         job.source = utf8(std::filesystem::weakly_canonical(std::filesystem::absolute(path(job.source))));
@@ -51,7 +52,7 @@ std::vector<std::string> TaskQueue::enqueue(std::vector<ProcessingJob> jobs) {
         pinModelDescriptor(job);
         batch.push_back({job.source,job.output,serializeJob(job)});
     }
-    return store_.createConfigured(batch);
+    return store_.createConfigured(batch,stop);
 }
 bool TaskQueue::start(Callback callback) {
     if (!callback) throw std::invalid_argument("Queue callback is required");

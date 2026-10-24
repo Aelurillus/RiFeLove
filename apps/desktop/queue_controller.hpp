@@ -1,0 +1,59 @@
+#pragma once
+#include "task_list_model.hpp"
+#include <QThread>
+#include <QUrl>
+#include <QVariantMap>
+#include <stop_token>
+
+class QueueWorker;
+class QueueController final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QAbstractItemModel* tasks READ tasks CONSTANT)
+    Q_PROPERTY(bool available READ available NOTIFY changed)
+    Q_PROPERTY(bool busy READ busy NOTIFY changed)
+    Q_PROPERTY(bool importing READ importing NOTIFY changed)
+    Q_PROPERTY(QString state READ state NOTIFY changed)
+    Q_PROPERTY(QString detail READ detail NOTIFY changed)
+    Q_PROPERTY(QVariantMap counts READ counts NOTIFY changed)
+    Q_PROPERTY(QVariantMap defaults READ defaults NOTIFY defaultsChanged)
+public:
+    explicit QueueController(QString database, QObject* parent = nullptr);
+    ~QueueController() override;
+    QAbstractItemModel* tasks() { return &model_; }
+    bool available() const { return available_; }
+    bool busy() const { return busy_; }
+    bool importing() const { return importing_; }
+    QString state() const { return state_; }
+    QString detail() const { return detail_; }
+    QVariantMap counts() const { return counts_; }
+    QVariantMap defaults() const { return defaults_; }
+    Q_INVOKABLE void addItems(const QList<QUrl>& sources, const QUrl& outputFolder, const QString& rate,
+        const QUrl& model, const QUrl& runtime, const QString& encoder, const QString& container, bool recursive);
+    Q_INVOKABLE void start();
+    Q_INVOKABLE void pause();
+    Q_INVOKABLE void resume();
+    Q_INVOKABLE void stop();
+    Q_INVOKABLE void cancelTask(const QString& id);
+    Q_INVOKABLE void retryTask(const QString& id);
+    Q_INVOKABLE void restartTask(const QString& id);
+    Q_INVOKABLE void reconnect();
+    Q_INVOKABLE void openOutputFolder(const QString& id);
+    Q_INVOKABLE void saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
+        const QString& encoder, const QString& container);
+signals:
+    void changed();
+    void defaultsChanged();
+    void operationFinished(const QString& state);
+private:
+    friend class QueueWorker;
+    void setError(const QString& text);
+    void snapshot(std::vector<UiTaskRow> rows);
+    QString database_;
+    TaskListModel model_;
+    QThread thread_;
+    QueueWorker* worker_ = nullptr;
+    bool available_ = false, busy_ = false, importing_ = false;
+    QString state_ = "loading", detail_;
+    QVariantMap counts_, defaults_;
+    std::stop_source importCancel_;
+};

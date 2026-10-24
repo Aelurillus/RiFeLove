@@ -1,6 +1,6 @@
 # Executable development plan
 
-Status as of 2026-10-24. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
+Status as of 2026-10-25. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
 
 Current execution mode: local project, local Git, local builds/tests and local reports. Hosted CI, remote repository setup and publishing are deferred until requested. The final product scope remains the Master Plan baseline.
 
@@ -70,10 +70,11 @@ Current execution mode: local project, local Git, local builds/tests and local r
 ## Phase 6 — desktop
 
 - [x] Build first single-file picker/drop, media/GPU inspection and interpolation settings workflow over an application service.
-- [ ] Complete Home, folder/batch import, persistent preferences and qualified quality profiles.
+- [ ] Complete Home, qualified quality profiles and remaining desktop preferences/workspace behavior.
+  - Recursive folder/multi-file import, duplicate elimination, unsupported-color reporting, collision-safe output naming, persistent local defaults and isolated data-directory selection now run through the desktop workflow; profiles remain open.
 - [x] Validate real QML start-to-output, GUI event-loop responsiveness, no-overwrite handling and cooperative cancellation with native RIFE.
-- [ ] Implement persistent queue, progress, retry, pause and cancellation.
-  - Native service/SQLite/CLI queue now persists complete configuration and identity, supports pause/resume/cancel/retry, and passes actual GPU/crash tests; desktop queue page and complete history remain open.
+- [ ] Complete acceptance for the persistent desktop queue, progress, retry, pause and cancellation.
+  - The Qt page is connected to the SQLite service with virtualized task rows, sequential execution, pause/resume, stop, per-task cancel/retry and interrupted restart-from-zero controls. Actual GPU workflow checks recursive batch import, same-name output collision handling, HDR rejection, pause/resume, successful queue output/audio and preference reload. UI retry/cancel failure-path coverage, full history and safe segment recovery remain open.
 - [ ] Add comparison player, split mode and frame stepping.
 - [ ] Add model center, profiles and expert controls.
 - [ ] Localize zh-CN, zh-TW, en and ja; verify accessibility and keyboard use.
