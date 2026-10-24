@@ -40,13 +40,26 @@ int main(int argc, char* argv[]) {
     preferences.sync();
     if (preferences.status() == QSettings::NoError) {
         const auto modelSetting = preferences.value("model").toUrl();
-        if (modelSetting.isEmpty() && QFileInfo(QDir(bundledModel).filePath("model.json")).isFile()) {
-            preferences.setValue("model",QUrl::fromLocalFile(bundledModel));
+        const auto selectedModel = modelSetting.isLocalFile() ? modelSetting.toLocalFile() : QString();
+        const bool selectedModelAvailable = QFileInfo(QDir(selectedModel).filePath("model.json")).isFile() &&
+            QFileInfo(QDir(selectedModel).filePath("model.onnx")).isFile();
+        const bool bundledModelAvailable = QFileInfo(QDir(bundledModel).filePath("model.json")).isFile() &&
+            QFileInfo(QDir(bundledModel).filePath("model.onnx")).isFile();
+        if (!selectedModelAvailable && bundledModelAvailable) {
+            const auto bundledModelUrl = QUrl::fromLocalFile(bundledModel);
+            preferences.setValue("model",bundledModelUrl);
             auto models = preferences.value("modelCatalog/paths").toStringList();
-            models.push_back(QDir::toNativeSeparators(QFileInfo(bundledModel).absoluteFilePath()));
+            const auto bundledModelPath = QDir::toNativeSeparators(QFileInfo(bundledModel).absoluteFilePath());
+            if (!models.contains(bundledModelPath)) models.push_back(bundledModelPath);
             preferences.setValue("modelCatalog/paths",models);
         }
-        if (preferences.value("runtime").toUrl().isEmpty() && QFileInfo(QDir(bundledRuntime).filePath("onnxruntime.dll")).isFile())
+        const auto runtimeSetting = preferences.value("runtime").toUrl();
+        const auto selectedRuntime = runtimeSetting.isLocalFile() ? runtimeSetting.toLocalFile() : QString();
+        const bool selectedRuntimeAvailable = QFileInfo(QDir(selectedRuntime).filePath("onnxruntime.dll")).isFile() &&
+            QFileInfo(QDir(selectedRuntime).filePath("onnxruntime_providers_cuda.dll")).isFile();
+        const bool bundledRuntimeAvailable = QFileInfo(QDir(bundledRuntime).filePath("onnxruntime.dll")).isFile() &&
+            QFileInfo(QDir(bundledRuntime).filePath("onnxruntime_providers_cuda.dll")).isFile();
+        if (!selectedRuntimeAvailable && bundledRuntimeAvailable)
             preferences.setValue("runtime",QUrl::fromLocalFile(bundledRuntime));
         if (preferences.value("rate").toString().isEmpty()) preferences.setValue("rate","60");
         if (preferences.value("encoder").toString().isEmpty()) preferences.setValue("encoder","auto");

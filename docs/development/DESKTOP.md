@@ -14,6 +14,8 @@ On this workstation, build and launch the self-contained app folder with:
 
 The script writes `out/RifeLove-local/`, deploys Qt and FFmpeg runtime files, copies the verified RIFE model and notices, creates first-run local preferences, then launches a startup smoke check and captures `first-run.png`. Open `out/RifeLove-local/RifeLove.exe` to use it. The folder is ignored by Git because it contains build outputs and model weights.
 
+At startup, a missing or invalid saved model/runtime path falls back to the verified model and CUDA runtime bundled beside the app. This repairs stale local settings without resetting saved FPS, encoder, output or task history.
+
 This is a local runnable folder rather than a portable release: its `runtime` directory links to the CUDA/ONNX runtime SDK already installed on this machine. It includes one validated model, not a multi-model catalog. App settings and task history are stored under the bundle's `data` folder; no network access is needed for normal use.
 
 ## SDK
