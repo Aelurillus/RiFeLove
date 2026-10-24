@@ -1,5 +1,6 @@
 #include "studio_controller.hpp"
 #include "encoding_settings.hpp"
+#include "gpu/cuda_device.hpp"
 #include "timeline/timeline.hpp"
 #include <QFileInfo>
 #include <QDir>
@@ -12,7 +13,22 @@ QString text(const std::string& value) { return QString::fromUtf8(value.data(), 
 std::filesystem::path path(const QUrl& url) { return std::filesystem::path(url.toLocalFile().toStdWString()); }
 double seconds(rifelove::Rational value) { return static_cast<double>(value.toLongDouble()); }
 }
-StudioController::StudioController(QObject* parent) : QObject(parent) {}
+StudioController::StudioController(QObject* parent) : QObject(parent) {
+    try {
+        rifelove::gpu::CudaDevice device;
+        const auto& info = device.info();
+        const auto memory = device.memory();
+        deviceInfo_["available"] = true;
+        deviceInfo_["name"] = text(info.name);
+        deviceInfo_["computeCapability"] = QStringLiteral("%1.%2").arg(info.computeMajor).arg(info.computeMinor);
+        deviceInfo_["driverCudaApiVersion"] = info.driverCudaApiVersion;
+        deviceInfo_["totalBytes"] = QVariant::fromValue<qulonglong>(memory.totalBytes);
+        deviceInfo_["freeBytes"] = QVariant::fromValue<qulonglong>(memory.freeBytes);
+    } catch (const std::exception& error) {
+        deviceInfo_["available"] = false;
+        deviceInfo_["error"] = text(error.what());
+    }
+}
 StudioController::~StudioController() { service_.cancel(); }
 QUrl StudioController::localUrl(const QString& value) const { return QUrl::fromLocalFile(value); }
 void StudioController::fail(const QString& detail) { busy_ = false; status_ = "failed"; detail_ = detail; emit changed(); emit operationFinished(status_); }

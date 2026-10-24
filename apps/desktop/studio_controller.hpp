@@ -11,6 +11,7 @@ class StudioController final : public QObject {
     Q_PROPERTY(QString output READ output NOTIFY changed)
     Q_PROPERTY(QString status READ status NOTIFY changed)
     Q_PROPERTY(QString detail READ detail NOTIFY changed)
+    Q_PROPERTY(QVariantMap deviceInfo READ deviceInfo CONSTANT)
     Q_PROPERTY(QVariantMap media READ media NOTIFY changed)
     Q_PROPERTY(QVariantMap progress READ progress NOTIFY changed)
 public:
@@ -21,6 +22,7 @@ public:
     QString output() const { return output_; }
     QString status() const { return status_; }
     QString detail() const { return detail_; }
+    QVariantMap deviceInfo() const { return deviceInfo_; }
     QVariantMap media() const { return media_; }
     QVariantMap progress() const { return progress_; }
     Q_INVOKABLE void openSource(const QUrl& url);
@@ -39,6 +41,6 @@ private:
     bool busy_ = false;
     QString source_, output_, status_ = "ready", detail_;
     std::optional<rifelove::Rational> sourceDurationEstimate_;
-    QVariantMap media_, progress_;
+    QVariantMap deviceInfo_, media_, progress_;
     rifelove::application::ProcessingService service_;
 };

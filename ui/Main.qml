@@ -34,6 +34,30 @@ ApplicationWindow {
     property int currentPage: 0
     readonly property bool queueActive: processingAvailable && (taskQueue.busy || taskQueue.importing)
     readonly property bool active: processingAvailable && (studio.busy || queueActive)
+    readonly property bool backendAvailable: processingAvailable
+    property string selectedModelDisplayName: ""
+    property bool selectedModelVerified: false
+    property bool startupModelValidationStarted: false
+    function resolveSelectedModelDisplayName() {
+        selectedModelVerified = false
+        if (!processingAvailable || !taskQueue || !taskQueue.defaults) return ""
+        const selected = taskQueue.defaults.model
+        const directory = selected ? taskQueue.localPath(selected) : ""
+        if (!directory) return ""
+        const models = taskQueue.models || []
+        const normalizePath = value => String(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+        const selectedPath = normalizePath(directory)
+        for (let index = 0; index < models.length; ++index) {
+            if (normalizePath(models[index].directory) === selectedPath) {
+                selectedModelVerified = !!models[index].valid
+                return models[index].valid ? models[index].displayName : qsTr("模型校验失败")
+            }
+        }
+        return taskQueue.verifyingModels ? qsTr("正在校验本地模型…") : qsTr("本地模型未校验")
+    }
+    function refreshSelectedModelDisplayName() {
+        selectedModelDisplayName = resolveSelectedModelDisplayName()
+    }
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
@@ -81,10 +105,24 @@ ApplicationWindow {
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
             codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv", encodingOptions())
     }
-    Component.onCompleted: applyLocalDefaults()
+    function encoderHint() {
+        if (!window.info.width) return qsTr("导入后会检查本机的 GPU 与视频编码能力。")
+        if (!window.info.nvencContextOpened && window.info.softwareH264ContextOpened)
+            return qsTr("NVENC 当前不可用；自动模式会用软件 H.264 编码，RIFE 仍由 CUDA 推理。")
+        if (window.info.nvencContextOpened) return qsTr("NVENC 可以初始化；最终以实际导出结果为准。")
+        return qsTr("H.264 编码器暂不可用，请检查本机视频运行环境。")
+    }
+    Component.onCompleted: { applyLocalDefaults(); refreshSelectedModelDisplayName() }
     Connections {
         target: taskQueue
-        function onDefaultsChanged() { window.applyLocalDefaults() }
+        function onDefaultsChanged() { window.applyLocalDefaults(); window.refreshSelectedModelDisplayName() }
+        function onModelsChanged() { window.refreshSelectedModelDisplayName() }
+        function onChanged() {
+            if (taskQueue.available && !window.startupModelValidationStarted) {
+                window.startupModelValidationStarted = true
+                taskQueue.refreshModels()
+            }
+        }
     }
 
     function stateText(value) {
@@ -111,7 +149,7 @@ ApplicationWindow {
         id: sourceDialog
         title: qsTr("选择视频")
         nameFilters: [qsTr("视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)"), qsTr("所有文件 (*)")]
-        onAccepted: studio.openSource(selectedFile)
+        onAccepted: { window.currentPage = 1; studio.openSource(selectedFile) }
     }
     FileDialog {
         id: outputDialog
@@ -166,10 +204,11 @@ ApplicationWindow {
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: "#253243"; Layout.topMargin: 12; Layout.bottomMargin: 8 }
                 Label { text: qsTr("工作区"); color: "#74849a"; font.pixelSize: 11; font.bold: true; Layout.leftMargin: 8 }
-                ActionButton { text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
-                ActionButton { text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
-                ActionButton { text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
-                ActionButton { objectName: "comparisonButton"; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
+                ActionButton { objectName: "homeNavigationButton"; text: qsTr("⌂     工作区"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
+                ActionButton { text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
+                ActionButton { text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
+                ActionButton { text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
+                ActionButton { objectName: "comparisonButton"; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 4; onClicked: window.currentPage = 4 }
                 Item { Layout.fillHeight: true }
                 Rectangle {
                     Layout.fillWidth: true
@@ -183,7 +222,21 @@ ApplicationWindow {
                         anchors.margins: 14
                         spacing: 7
                         Label { text: qsTr("本机加速器"); color: "#91a1b4"; font.pixelSize: 11 }
-                        Label { text: window.info.gpu || qsTr("导入视频后检测"); wrapMode: Text.WordWrap; Layout.fillWidth: true; font.bold: true }
+                        Label {
+                            text: window.info.gpu || (window.backendAvailable && studio.deviceInfo.available
+                                ? studio.deviceInfo.name : qsTr("未检测到 NVIDIA GPU"))
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                            font.bold: true
+                        }
+                        Label {
+                            visible: !window.info.width && window.backendAvailable && studio.deviceInfo.available
+                            text: qsTr("显存 %1 GB · CUDA %2").arg((Number(studio.deviceInfo.totalBytes) / 1073741824).toFixed(1)).arg(studio.deviceInfo.computeCapability)
+                            color: "#91a1b4"
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
                         Label {
                             visible: !!window.info.width
                             text: !window.info.nvencContextOpened && window.info.softwareH264ContextOpened
@@ -204,6 +257,20 @@ ApplicationWindow {
             Layout.fillHeight: true
             id: pages
             currentIndex: window.currentPage
+            HomePage {
+                queueController: window.backendAvailable ? taskQueue : null
+                processingAvailable: window.backendAvailable
+                deviceInfo: window.backendAvailable ? studio.deviceInfo : ({})
+                modelName: window.selectedModelDisplayName
+                modelVerified: window.selectedModelVerified
+                encoderHint: window.encoderHint()
+                processingStatus: window.stateText(window.state)
+                processing: window.active
+                onChooseVideo: sourceDialog.open()
+                onOpenStudio: window.currentPage = 1
+                onOpenQueue: window.currentPage = 2
+                onOpenModelCenter: window.currentPage = 3
+            }
             ScrollView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -477,7 +544,7 @@ ApplicationWindow {
                 id: comparisonPageLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                active: processingAvailable && window.currentPage === 3
+                active: processingAvailable && window.currentPage === 4
                 sourceComponent: comparisonPageComponent
             }
         }

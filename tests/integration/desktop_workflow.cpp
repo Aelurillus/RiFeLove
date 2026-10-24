@@ -99,6 +99,20 @@ int main(int argc, char** argv) {
         engine.load(QUrl::fromLocalFile(arguments[5]));
         require(!engine.rootObjects().isEmpty(), "QML application did not load");
         auto* root = engine.rootObjects().front();
+        auto* homePage = root->findChild<QObject*>("homePage");
+        auto* homeStudio = root->findChild<QObject*>("homeStudioButton");
+        auto* homeGpuValue = root->findChild<QObject*>("homeGpuNameValue");
+        auto* homeModelValue = root->findChild<QObject*>("homeModelNameValue");
+        auto* homeQueueCount = root->findChild<QObject*>("homeQueueCountValue");
+        require(homePage && homeStudio && root->property("currentPage").toInt() == 0,
+            "The desktop did not open its Home workspace first");
+        require(homeGpuValue && homeModelValue && homeQueueCount && studio.deviceInfo().value("available").toBool() &&
+                homeGpuValue->property("text").toString() == studio.deviceInfo().value("name").toString() &&
+                homePage->property("deviceInfo").toMap().value("name").toString() == studio.deviceInfo().value("name").toString(),
+            "Home did not display the detected local NVIDIA GPU");
+        click(homeStudio,"Home open Studio");
+        require(root->property("currentPage").toInt() == 1, "Home Studio shortcut did not open the interpolation workspace");
+        root->setProperty("currentPage",0);
         auto* button = root->findChild<QObject*>("startButton");
         auto* statusLabel = root->findChild<QObject*>("studioStatusLabel");
         auto* targetRate = root->findChild<QObject*>("targetRate");
@@ -254,7 +268,7 @@ int main(int argc, char** argv) {
         auto* comparisonWindow = qobject_cast<QQuickWindow*>(root);
         require(comparisonWindow && comparisonWindow->grabWindow().save(arguments[6] + QStringLiteral(".comparison.png")),
             "Comparison viewer screenshot failed");
-        root->setProperty("currentPage",0);
+        root->setProperty("currentPage",1);
         // QML is rendered with the actual successful job, not a mocked view model.
         QEventLoop paint; QTimer::singleShot(100, &paint, &QEventLoop::quit); paint.exec();
         auto* window = qobject_cast<QQuickWindow*>(root);
@@ -283,7 +297,19 @@ int main(int argc, char** argv) {
         auto* importedRows = qobject_cast<TaskListModel*>(taskQueue.tasks());
         require(importedRows && importedRows->index(0,0).data(TaskListModel::EstimatedFrames).toULongLong() == 36,
             "Persistent queue did not retain the estimated frame count for its imported task");
+        const auto recentTasks = taskQueue.recentTasks();
+        require(recentTasks.size() == 2 && recentTasks.front().toMap().value("taskId").toString() ==
+                importedRows->index(1,0).data(TaskListModel::TaskId).toString(),
+            "Home recent tasks were not ordered newest first from the persistent queue");
+        require(homeQueueCount->property("text").toString().contains(QStringLiteral("2")),
+            "Home queue summary did not reflect the persistent task count");
         require(taskQueue.detail().contains(QStringLiteral("跳过 1 个不支持的文件")), "Unsupported HDR input was not reported as skipped");
+        root->setProperty("currentPage",0);
+        QEventLoop homePaint; QTimer::singleShot(100,&homePaint,&QEventLoop::quit); homePaint.exec();
+        require(homePage->property("recentTasks").toList().size() == 2, "Home did not bind to the recent persistent queue entries");
+        auto* homeWindow = qobject_cast<QQuickWindow*>(root);
+        require(homeWindow && homeWindow->grabWindow().save(arguments[6] + QStringLiteral(".home.png")),
+            "Home workspace screenshot failed");
         auto* queuePage = root->findChild<QObject*>("queuePage");
         require(queuePage, "Queue page was not loaded into the desktop UI");
         queuePage->setProperty("modelFolder",QUrl::fromLocalFile(arguments[3]));
@@ -297,7 +323,7 @@ int main(int argc, char** argv) {
                 !runtimePathField->property("text").toString().isEmpty(), "Queue page did not display its selected local model/runtime paths");
         auto* queueList = root->findChild<QObject*>("queueTaskList");
         require(queueList, "Virtualized desktop task list was not created");
-        root->setProperty("currentPage",1);
+        root->setProperty("currentPage",2);
         auto* queueStart = root->findChild<QObject*>("queueStartButton");
         auto* queuePause = root->findChild<QObject*>("queuePauseButton");
         auto* queueResume = root->findChild<QObject*>("queueResumeButton");
@@ -363,7 +389,7 @@ int main(int argc, char** argv) {
                 "Queue settings changed after task operations");
         QEventLoop finalPaint; QTimer::singleShot(120,&finalPaint,&QEventLoop::quit); finalPaint.exec();
         require(window->grabWindow().save(arguments[6] + QStringLiteral(".queue.png")), "Final queue page screenshot failed");
-        root->setProperty("currentPage",2);
+        root->setProperty("currentPage",3);
         auto* modelCenter = root->findChild<QObject*>("modelCenterPage");
         require(modelCenter, "Offline model center page was not loaded");
         waitUntil([&] { return !taskQueue.verifyingModels() && !taskQueue.models().isEmpty(); }, "Local model center did not validate the saved default model",20000);
@@ -391,6 +417,19 @@ int main(int argc, char** argv) {
         click(setDefaultButton,"set verified default model");
         waitUntil([&] { return QFileInfo(taskQueue.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath(); },
             "Selected local model was not saved as the next-run default",10000);
+        QString copiedDisplayName;
+        for (const auto& model : taskQueue.models()) {
+            const auto entry = model.toMap();
+            if (QFileInfo(entry.value("directory").toString()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath())
+                copiedDisplayName = entry.value("displayName").toString();
+        }
+        require(!copiedDisplayName.isEmpty(), "Verified local model has no display name for the Home workspace");
+        const auto homeModelMessage = QStringLiteral("Home workspace did not update after selecting a verified local model: expected '%1', actual '%2'")
+            .arg(copiedDisplayName,homeModelValue->property("text").toString() + QStringLiteral("; root='%1'; selected='%2'; models=%3")
+                .arg(root->property("selectedModelDisplayName").toString(),taskQueue.defaults().value("model").toUrl().toLocalFile())
+                .arg(taskQueue.models().size())).toUtf8();
+        waitUntil([&] { return homeModelValue->property("text").toString() == copiedDisplayName; },
+            homeModelMessage.constData(),10000);
         require(QFileInfo(root->property("modelFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(localModelCopy).absoluteFilePath(),
                 "Studio did not receive the selected verified local model");
         QueueController catalogReload(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("model-catalog-reload.sqlite"));

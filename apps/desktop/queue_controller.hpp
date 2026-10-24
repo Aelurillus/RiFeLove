@@ -16,6 +16,7 @@ class QueueController final : public QObject {
     Q_PROPERTY(QString state READ state NOTIFY changed)
     Q_PROPERTY(QString detail READ detail NOTIFY changed)
     Q_PROPERTY(QVariantMap counts READ counts NOTIFY changed)
+    Q_PROPERTY(QVariantList recentTasks READ recentTasks NOTIFY changed)
     Q_PROPERTY(QVariantMap defaults READ defaults NOTIFY defaultsChanged)
     Q_PROPERTY(QVariantList models READ models NOTIFY modelsChanged)
     Q_PROPERTY(bool verifyingModels READ verifyingModels NOTIFY changed)
@@ -29,6 +30,7 @@ public:
     QString state() const { return state_; }
     QString detail() const { return detail_; }
     QVariantMap counts() const { return counts_; }
+    QVariantList recentTasks() const { return recentTasks_; }
     QVariantMap defaults() const { return defaults_; }
     QVariantList models() const { return models_; }
     bool verifyingModels() const { return verifyingModels_; }
@@ -68,6 +70,7 @@ private:
     bool available_ = false, busy_ = false, importing_ = false;
     QString state_ = "loading", detail_;
     QVariantMap counts_, defaults_;
+    QVariantList recentTasks_;
     QVariantList models_;
     bool verifyingModels_ = false;
     std::stop_source importCancel_;

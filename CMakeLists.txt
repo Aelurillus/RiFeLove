@@ -158,7 +158,7 @@ if(RIFELOVE_BUILD_DESKTOP)
     qt_standard_project_setup(REQUIRES 6.8)
     qt_add_executable(rifelove-desktop WIN32 apps/desktop/main.cpp)
     set_target_properties(rifelove-desktop PROPERTIES OUTPUT_NAME "RifeLove")
-    qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/ProgressEstimate.js ui/ActionButton.qml)
+    qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/ProgressEstimate.js ui/ActionButton.qml)
     target_link_libraries(rifelove-desktop PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia rifelove_core)
     if(TARGET rifelove_application)
       add_library(rifelove_studio apps/desktop/studio_controller.cpp apps/desktop/studio_controller.hpp

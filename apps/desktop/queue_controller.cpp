@@ -309,6 +309,18 @@ private:
                 c.counts_[state] = c.counts_.value(state).toInt() + 1;
             }
             c.model_.progress(id,stage,frames,ai,speed);
+            for (qsizetype index = 0; index < c.recentTasks_.size(); ++index) {
+                auto item = c.recentTasks_[index].toMap();
+                if (item.value("taskId").toString() != id) continue;
+                item["taskState"] = state;
+                item["stage"] = stage;
+                item["frames"] = QVariant::fromValue<qulonglong>(frames);
+                item["aiFrames"] = QVariant::fromValue<qulonglong>(ai);
+                item["processingFps"] = speed;
+                item["errorText"] = QString();
+                c.recentTasks_[index] = item;
+                break;
+            }
             if (stage == "paused") c.state_ = "paused";
             else if (stage == "resumed") c.state_ = "running";
             emit c.changed();
@@ -365,6 +377,17 @@ void QueueController::setError(const QString& value) { state_ = "error"; detail_
 void QueueController::snapshot(std::vector<UiTaskRow> rows) {
     QVariantMap counts{{"total",static_cast<int>(rows.size())}};
     for (const auto& row : rows) counts[row.state] = counts.value(row.state).toInt() + 1;
+    QVariantList recent;
+    const auto first = rows.size() > 4 ? rows.size() - 4 : 0;
+    for (auto index = rows.size(); index > first; --index) {
+        const auto& row = rows[index - 1];
+        recent.push_back(QVariantMap{{"taskId",row.id},{"fileName",QFileInfo(row.source).fileName()},
+            {"taskState",row.state},{"targetRate",row.targetRate},{"stage",row.stage},
+            {"frames",QVariant::fromValue<qulonglong>(row.frames)},
+            {"estimatedFrames",QVariant::fromValue<qulonglong>(row.estimatedFrames)},
+            {"processingFps",row.speed},{"errorText",row.error}});
+    }
+    recentTasks_ = std::move(recent);
     counts_ = std::move(counts); model_.apply(std::move(rows)); emit changed();
 }
 void QueueController::reconnect() { if (available_ || busy_ || importing_) return; state_ = "loading"; emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->initialize(); },Qt::QueuedConnection); }
