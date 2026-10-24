@@ -11,6 +11,21 @@ struct PipelineSettings {
     quality::SceneSettings scene;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
 };
+struct PipelineTimingBreakdown {
+    double sourceProbeSeconds = 0;
+    double encoderSetupSeconds = 0;
+    double sourceDecodeSeconds = 0;
+    double sourcePreparationSeconds = 0;
+    double sceneAnalysisSeconds = 0;
+    double inputUploadSeconds = 0;
+    double inferenceWaitSeconds = 0;
+    double outputDownloadSeconds = 0;
+    double colorRestoreSeconds = 0;
+    double frameEncodeSeconds = 0;
+    double outputFinalizeSeconds = 0;
+    double outputValidationSeconds = 0;
+    double pipelineWallSeconds = 0;
+};
 struct PipelineProgress {
     std::string stage;
     std::size_t outputFrames = 0;
@@ -19,6 +34,7 @@ struct PipelineProgress {
     double processingFps = 0;
     std::string detail;
     std::string encoder;
+    PipelineTimingBreakdown timings;
 };
 struct OutputTimingValidation {
     std::size_t decodedFrames = 0;
@@ -45,6 +61,7 @@ struct PipelineResult {
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;
+    PipelineTimingBreakdown timings;
     double elapsedSeconds;
     double processingFps;
 };

@@ -228,7 +228,8 @@ if(RIFELOVE_BUILD_TESTS)
   foreach(runtime_dir IN LISTS rifelove_test_runtime_dirs)
     list(APPEND rifelove_test_runtime_environment "PATH=path_list_prepend:${runtime_dir}")
   endforeach()
-  gtest_discover_tests(rifelove-tests PROPERTIES
+  gtest_add_tests(TARGET rifelove-tests TEST_LIST rifelove_unit_tests)
+  set_tests_properties(${rifelove_unit_tests} PROPERTIES
     TIMEOUT 60
     ENVIRONMENT_MODIFICATION "${rifelove_test_runtime_environment}")
   find_package(Python3 QUIET COMPONENTS Interpreter)

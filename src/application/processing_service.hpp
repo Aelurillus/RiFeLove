@@ -39,6 +39,7 @@ struct ProcessingEvent {
     std::size_t outputFrames = 0;
     std::size_t aiFrames = 0;
     double processingFps = 0;
+    PipelineTimingBreakdown timings;
     std::optional<Rational> timestamp;
     std::optional<media::MediaInfo> media;
     std::optional<gpu::DeviceInfo> device;

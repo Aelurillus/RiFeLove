@@ -6,6 +6,7 @@
 #include <chrono>
 #include <limits>
 #include <numeric>
+#include <utility>
 
 namespace rifelove {
 namespace {
@@ -21,6 +22,20 @@ quality::RgbView view(const media::RifeSdrFrame& frame) {
     return {frame.pixels,frame.width,frame.height,frame.paddedWidth,static_cast<std::size_t>(frame.paddedWidth) * static_cast<std::size_t>(frame.paddedHeight)};
 }
 struct CachedFrame { media::DecodedFrame source; media::RifeSdrFrame prepared; std::optional<inference::GpuFrame> gpu; };
+class ScopedTiming final {
+public:
+    explicit ScopedTiming(double& destination) : destination_(destination), started_(std::chrono::steady_clock::now()) {}
+    ~ScopedTiming() { destination_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count(); }
+    ScopedTiming(const ScopedTiming&) = delete;
+    ScopedTiming& operator=(const ScopedTiming&) = delete;
+private:
+    double& destination_;
+    std::chrono::steady_clock::time_point started_;
+};
+template<class Work> decltype(auto) measure(double& destination, Work&& work) {
+    ScopedTiming timing(destination);
+    return std::forward<Work>(work)();
+}
 OutputTimingValidation validateOutput(const std::string& path, int selected, Rational origin, Rational end, Rational rate,
     std::size_t expectedCount, const media::MediaInfo& source, const std::function<void(const PipelineProgress&)>& progress, std::stop_token stop) {
     const auto info = media::MediaEngine::probe(path,stop);
@@ -63,7 +78,7 @@ OutputTimingValidation validateOutput(const std::string& path, int selected, Rat
         result.maximumTimestampError = std::max(result.maximumTimestampError,error);
         ++result.decodedFrames;
         lastEnd = frame.duration ? std::optional<Rational>(*frame.timestamp + *frame.duration) : std::nullopt;
-        if (progress && result.decodedFrames % 120 == 0) progress({"validating",result.decodedFrames,0,frame.timestamp,0,{}, {}});
+        if (progress && result.decodedFrames % 120 == 0) progress({"validating",result.decodedFrames,0,frame.timestamp,0,{}, {},{}});
     },selected,stop);
     if (scan.missingTimestamps || scan.nonIncreasingTimestamps || result.decodedFrames != expectedCount || !lastEnd)
         throw std::runtime_error("Output frame count, ordering or final-frame duration could not be verified");
@@ -84,7 +99,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         throw std::invalid_argument("Selected backend/model does not meet the dynamic RIFE contract");
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
-    const auto info = media::MediaEngine::probe(source,stop);
+    PipelineResult result{};
+    const auto info = measure(result.timings.sourceProbeSeconds,[&] { return media::MediaEngine::probe(source,stop); });
     auto encoding = settings.encoding;
     if (encoding.videoStreamIndex < 0) encoding.videoStreamIndex = info.preferredVideoStream;
     const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const media::StreamInfo& stream) { return stream.index == encoding.videoStreamIndex && stream.type == "video"; });
@@ -104,6 +120,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     encoding.frameRate = settings.targetRate;
     std::string fallback;
     std::unique_ptr<media::VideoMuxWriter> writer;
+    const auto encoderSetupStarted = std::chrono::steady_clock::now();
     if (encoding.encoder == "auto") {
         encoding.encoder = "h264_nvenc";
         if (media::MediaEngine::hasEncoder(encoding.encoder)) {
@@ -143,13 +160,13 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             }
             if (!writer) throw std::runtime_error("Automatic encoding could not open a software encoder compatible with the source format: " + attempts);
             if (progress) {
-                PipelineProgress event{"encoder_fallback",0,0,{},0,fallback,encoding.encoder};
+                PipelineProgress event{"encoder_fallback",0,0,{},0,fallback,encoding.encoder,{}};
                 progress(event);
             }
         }
     }
     if (!writer) writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop);
-    PipelineResult result{};
+    result.timings.encoderSetupSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - encoderSetupStarted).count();
     result.modelId = capabilities.modelId; result.backend = capabilities.backend;
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
     std::optional<CachedFrame> previous;
@@ -161,20 +178,27 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     gpu::DeviceBufferPool inputBuffers(device,2);
     media::RifeSdrFrame generated{};
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
-        if (progress) { const double seconds = elapsed(); progress({stage,clock ? clock->index() : 0,result.aiFrames,time,seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail,{}}); }
+        if (progress) {
+            const double seconds = elapsed();
+            PipelineProgress event{stage,clock ? clock->index() : 0,result.aiFrames,time,
+                seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail,{},result.timings};
+            progress(event);
+        }
     };
     const auto emit = [&](media::DecodedFrame frame) {
         const auto time = clock->timestamp();
-        if (pending) writer->writeFrame(*pending,*pendingTime,time - *pendingTime);
+        if (pending) measure(result.timings.frameEncodeSeconds,[&] { writer->writeFrame(*pending,*pendingTime,time - *pendingTime); });
         pending = std::move(frame); pendingTime = time;
         clock->advance();
         notify("processing",time);
     };
     const auto upload = [&](CachedFrame& frame) -> const inference::GpuFrame& {
         if (!frame.gpu) {
-            auto storage = inputBuffers.acquire(frame.prepared.pixels.size() * sizeof(float),stop);
-            storage->upload(std::as_bytes(std::span(frame.prepared.pixels)),0,stop);
-            frame.gpu = inference::GpuFrame{std::move(storage),frame.prepared.paddedWidth,frame.prepared.paddedHeight};
+            measure(result.timings.inputUploadSeconds,[&] {
+                auto storage = inputBuffers.acquire(frame.prepared.pixels.size() * sizeof(float),stop);
+                storage->upload(std::as_bytes(std::span(frame.prepared.pixels)),0,stop);
+                frame.gpu = inference::GpuFrame{std::move(storage),frame.prepared.paddedWidth,frame.prepared.paddedHeight};
+            });
         }
         return *frame.gpu;
     };
@@ -184,7 +208,9 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             right.source.color.primaries != left.source.color.primaries || right.source.color.transfer != left.source.color.transfer ||
             right.source.color.matrix != left.source.color.matrix || right.source.color.range != left.source.color.range)
             throw std::runtime_error("Midstream resolution/format/color changes require an explicit normalization policy");
-        const auto analysis = quality::analyzePair(view(left.prepared),view(right.prepared),settings.scene);
+        const auto analysis = measure(result.timings.sceneAnalysisSeconds,[&] {
+            return quality::analyzePair(view(left.prepared),view(right.prepared),settings.scene);
+        });
         if (analysis.action == quality::PairAction::sceneCutHold) ++result.sceneCuts;
         else if (analysis.action == quality::PairAction::duplicateHold) ++result.duplicatePairs;
         else if (analysis.action == quality::PairAction::abnormalMotionHold) ++result.abnormalPairs;
@@ -197,26 +223,38 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 const auto time = (clock->timestamp() - *left.source.timestamp) / (*right.source.timestamp - *left.source.timestamp);
                 const auto& first = upload(left); const auto& second = upload(right);
                 if (!reusableOutput) reusableOutput = device.allocate(first.pixels->size(),stop);
-                auto interpolated = backend.interpolate({first,second,static_cast<float>(time.toLongDouble()),std::move(reusableOutput),stop}).get();
+                auto interpolated = measure(result.timings.inferenceWaitSeconds,[&] {
+                    return backend.interpolate({first,second,static_cast<float>(time.toLongDouble()),std::move(reusableOutput),stop}).get();
+                });
                 generated.width = left.prepared.width; generated.height = left.prepared.height;
                 generated.paddedWidth = left.prepared.paddedWidth; generated.paddedHeight = left.prepared.paddedHeight;
                 generated.sourceColor = left.prepared.sourceColor;
                 generated.pixels.resize(left.prepared.pixels.size());
-                interpolated.frame.pixels->download(std::as_writable_bytes(std::span(generated.pixels)),0,stop);
+                measure(result.timings.outputDownloadSeconds,[&] {
+                    interpolated.frame.pixels->download(std::as_writable_bytes(std::span(generated.pixels)),0,stop);
+                });
                 reusableOutput = device.reclaim(std::move(interpolated.frame.pixels));
-                ++result.aiFrames; emit(media::restoreRifeSdr(generated,stop));
+                ++result.aiFrames;
+                auto restored = measure(result.timings.colorRestoreSeconds,[&] { return media::restoreRifeSdr(generated,stop); });
+                emit(std::move(restored));
             }
         }
     };
     notify("decoding",{});
+    double decodeCallbackSeconds = 0;
+    const auto decodeStarted = std::chrono::steady_clock::now();
     const auto decoded = media::MediaEngine::decodeVideo(source,[&](const media::DecodedFrame& frame) {
+        ScopedTiming callbackTiming(decodeCallbackSeconds);
         checkStop(stop);
         if (!frame.timestamp) throw std::runtime_error("Interpolation requires a known timestamp for every source frame");
-        CachedFrame current{frame,media::prepareRifeSdr(frame,settings.hostFloatBufferLimit,stop),{}};
+        auto prepared = measure(result.timings.sourcePreparationSeconds,[&] { return media::prepareRifeSdr(frame,settings.hostFloatBufferLimit,stop); });
+        CachedFrame current{frame,std::move(prepared),{}};
         if (!clock) { origin = frame.timestamp; clock.emplace(*origin,settings.targetRate); }
         if (previous) pair(*previous,current);
         previous = std::move(current);
     },encoding.videoStreamIndex,stop);
+    const auto decodeWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - decodeStarted).count();
+    result.timings.sourceDecodeSeconds = std::max(0.0,decodeWallSeconds - decodeCallbackSeconds);
     if (!previous) throw std::runtime_error("Source produced no video frames");
     std::optional<Rational> boundary;
     if (previous->source.duration && *previous->source.duration > Rational(0)) boundary = *previous->source.timestamp + *previous->source.duration;
@@ -234,15 +272,29 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         emit(previous->source);
     }
     if (!pending || !pendingTime || end <= *pendingTime) throw std::runtime_error("No valid final output frame boundary");
-    writer->writeFrame(*pending,*pendingTime,end - *pendingTime);
+    measure(result.timings.frameEncodeSeconds,[&] { writer->writeFrame(*pending,*pendingTime,end - *pendingTime); });
     notify("validating",*pendingTime);
+    const auto finishStarted = std::chrono::steady_clock::now();
     result.video = writer->finish([&](const std::string& temporary) {
-        result.validation = validateOutput(temporary,encoding.videoStreamIndex,*origin,end,settings.targetRate,clock->index(),info,progress,stop);
+        result.validation = measure(result.timings.outputValidationSeconds,[&] {
+            const auto validationStarted = std::chrono::steady_clock::now();
+            const auto validationProgress = [&](const PipelineProgress& sourceProgress) {
+                if (!progress) return;
+                auto event = sourceProgress;
+                event.timings = result.timings;
+                event.timings.outputValidationSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - validationStarted).count();
+                progress(event);
+            };
+            return validateOutput(temporary,encoding.videoStreamIndex,*origin,end,settings.targetRate,clock->index(),info,validationProgress,stop);
+        });
     });
+    const auto finishWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - finishStarted).count();
+    result.timings.outputFinalizeSeconds = std::max(0.0,finishWallSeconds - result.timings.outputValidationSeconds);
     result.sourceFrames = decoded.frameCount;
     result.recoveredTimestamps = decoded.recoveredTimestamps;
     result.elapsedSeconds = elapsed();
     result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
+    result.timings.pipelineWallSeconds = result.elapsedSeconds;
     notify("completed",end);
     return result;
 }

@@ -67,6 +67,7 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         lastUpdate = now; lastStage = value.stage;
         ProcessingEvent event; event.stage = value.stage; event.detail = value.detail; event.encoder = value.encoder;
         event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames; event.timestamp = value.timestamp;
+        event.timings = value.timings;
         const auto seconds = std::chrono::duration<double>(now - started).count();
         event.processingFps = seconds > 0 ? static_cast<double>(value.outputFrames) / seconds : 0;
         send(std::move(event));

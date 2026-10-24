@@ -61,6 +61,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
   - The sequential RIFE path now reuses up to two completed source-frame buffers and releases idle cache entries when allocation pressure requires space; buffers still referenced by an inference request are never recycled. The allocator regression passes on the local GTX 1660 SUPER; end-to-end pipeline profiling, throughput benchmarking and stage overlap remain open.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
+  - Studio now reports cumulative RIFE wait, frame encoding, source decode, preparation/transfers/color restoration and final validation time; JSON result/report includes the same stage breakdown. Repeatable hardware/resolution performance baselines and attribution under the full test matrix remain open.
 - [ ] Evaluate CUDA Graph, FP16, profiles and optional overlapped tiling.
 
 ## Phase 5 — quality/color
@@ -98,7 +99,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete CLI JSON progress, profiles, batch jobs and diagnostics reports.
   - Persistent queue add/import/export/list/run/retry/cancel/restart and JSON results are implemented; direct interpolation now has an opt-in atomic JSON report for model/GPU identity, encoder fallback, throughput, protection counters and timing validation. Profiles, queue report export and cross-process live control remain open.
 - [ ] Add advanced encoding controls and quality/performance reports.
-  - Studio and Queue now expose bitrate/GOP, HEVC constant QP, AV1 CRF and explicit H.264 NVENC VBR + CQ (0–51); encoder-specific controls are validated, persisted in local preferences and included in queue task JSON. Explicit source/encoder choices are preflighted before queueing. This workstation's driver cannot initialize NVENC, so actual CQ output remains unverified. GUI/queue quality reports, 10-bit/HDR encoding and the supported-device codec matrix remain open.
+  - Studio and Queue now expose bitrate/GOP, HEVC constant QP, AV1 CRF and explicit H.264 NVENC VBR + CQ (0–51); encoder-specific controls are validated, persisted in local preferences and included in queue task JSON. Explicit source/encoder choices are preflighted before queueing. This workstation's driver cannot initialize NVENC, so actual CQ output remains unverified. Direct interpolation JSON and Studio now include per-stage timing data. Queue quality reports, 10-bit/HDR encoding and the supported-device codec matrix remain open.
 - [ ] Validate multi-hour jobs and resume semantics.
 
 ## Phase 8 — release

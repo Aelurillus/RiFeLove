@@ -30,6 +30,15 @@ void text(const std::string& value, std::size_t limit, bool required = true) {
 void threshold(double value) { if (!std::isfinite(value) || value < 0 || value > 1) throw std::invalid_argument("Quality thresholds must be finite values from zero to one"); }
 Json optional(const std::optional<Rational>& value) { return value ? Json(value->toString()) : Json(nullptr); }
 std::optional<Rational> rational(const Json& value) { if (value.is_null()) return {}; return Rational::parse(value.get<std::string>()); }
+Json timingBreakdown(const PipelineTimingBreakdown& value) {
+    return { {"sourceProbeSeconds",value.sourceProbeSeconds}, {"encoderSetupSeconds",value.encoderSetupSeconds},
+        {"sourceDecodeSeconds",value.sourceDecodeSeconds}, {"sourcePreparationSeconds",value.sourcePreparationSeconds},
+        {"sceneAnalysisSeconds",value.sceneAnalysisSeconds}, {"inputUploadSeconds",value.inputUploadSeconds},
+        {"inferenceWaitSeconds",value.inferenceWaitSeconds}, {"outputDownloadSeconds",value.outputDownloadSeconds},
+        {"colorRestoreSeconds",value.colorRestoreSeconds}, {"frameEncodeSeconds",value.frameEncodeSeconds},
+        {"outputFinalizeSeconds",value.outputFinalizeSeconds}, {"outputValidationSeconds",value.outputValidationSeconds},
+        {"pipelineWallSeconds",value.pipelineWallSeconds} };
+}
 template<class T> T integer(const Json& value) {
     if (!value.is_number_integer()) throw std::invalid_argument("Expected an integer task field");
     if (value.is_number_unsigned()) {
@@ -120,7 +129,8 @@ void applyStoredIdentity(ProcessingJob& job, const std::string& value) {
     job.expectedSourceSha256 = source; job.expectedModelSha256 = model;
 }
 std::string serializeProgress(const ProcessingEvent& event) {
-    return Json{{"schemaVersion",1},{"stage",event.stage},{"frames",event.outputFrames},{"aiFrames",event.aiFrames},{"processingFps",event.processingFps},{"timestamp",optional(event.timestamp)}}.dump();
+    return Json{{"schemaVersion",1},{"stage",event.stage},{"frames",event.outputFrames},{"aiFrames",event.aiFrames},
+        {"processingFps",event.processingFps},{"timestamp",optional(event.timestamp)},{"timings",timingBreakdown(event.timings)}}.dump();
 }
 std::string serializeResult(const PipelineResult& r) {
     return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},{"inferenceFallbackReason",r.inferenceFallbackReason},
@@ -128,6 +138,7 @@ std::string serializeResult(const PipelineResult& r) {
         {"aiFrames",r.aiFrames},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
         {"recoveredTimestamps",r.recoveredTimestamps},
         {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",r.processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
+        {"timings",timingBreakdown(r.timings)},
         {"validation",{{"decodedFrames",r.validation.decodedFrames},{"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},
             {"durationError",r.validation.durationError.toString()},{"declaredEndError",optional(r.validation.declaredEndError)},{"auxiliaryMaximumEndError",r.validation.auxiliaryMaximumEndError.toString()},{"quantized",r.validation.quantized}}}}.dump();
 }
@@ -162,7 +173,8 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
         {"performance",{{"elapsedSeconds",context.endToEndElapsedSeconds},
             {"endToEndOutputFramesPerSecond",static_cast<double>(result.video.framesSubmitted) / context.endToEndElapsedSeconds},
             {"pipelineOutputFramesPerSecond",result.processingFps},
-            {"aiFrames",result.aiFrames},{"originalFrames",result.originalFrames},{"heldFrames",result.heldFrames}}},
+            {"aiFrames",result.aiFrames},{"originalFrames",result.originalFrames},{"heldFrames",result.heldFrames},
+            {"stageTimings",timingBreakdown(result.timings)}}},
         {"qualityDiagnostics",{{"sceneCuts",result.sceneCuts},{"duplicatePairs",result.duplicatePairs},{"abnormalMotionPairs",result.abnormalPairs},
             {"perceptualMetricsMeasured",false},
             {"note","No reference video was supplied; PSNR, SSIM and LPIPS were not measured."}}},

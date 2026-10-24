@@ -531,6 +531,26 @@ ApplicationWindow {
                         }
                     }
                     ProgressBar { Layout.fillWidth: true; indeterminate: studio.busy; visible: processingAvailable && studio.busy }
+                    Label {
+                        objectName: "studioTimingBreakdownLabel"
+                        visible: processingAvailable && (studio.busy || window.state === "completed") && !!window.progress.timings
+                        text: {
+                            const value = window.progress.timings || ({})
+                            const seconds = key => Number(value[key] || 0).toFixed(1)
+                            let summary = qsTr("累计耗时：RIFE 推理 %1 秒 · 视频编码 %2 秒 · 解码 %3 秒 · 预处理/色彩 %4 秒")
+                                .arg(seconds("inferenceWaitSeconds"))
+                                .arg(seconds("frameEncodeSeconds"))
+                                .arg(seconds("sourceDecodeSeconds"))
+                                .arg((Number(value.sourcePreparationSeconds || 0) + Number(value.inputUploadSeconds || 0) + Number(value.outputDownloadSeconds || 0) + Number(value.colorRestoreSeconds || 0)).toFixed(1))
+                            if (!studio.busy)
+                                summary += qsTr(" · 输出验证 %1 秒").arg(seconds("outputValidationSeconds"))
+                            return summary
+                        }
+                        color: "#91a1b4"
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                     Label { text: processingAvailable ? studio.detail : qsTr("请使用启用媒体和 ONNX CUDA 的桌面构建。"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: window.state === "failed" ? "#ffb3ad" : "#b9c9dd"; font.pixelSize: 12 }
                     RowLayout {
                         Layout.fillWidth: true

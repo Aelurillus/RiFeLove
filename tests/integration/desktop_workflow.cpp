@@ -181,6 +181,8 @@ int main(int argc, char** argv) {
         require(studioEncoder->setProperty("currentIndex",0), "Could not select automatic hardware-first encoding for fallback verification");
         auto* progressLabel = root->findChild<QObject*>("studioProgressLabel");
         require(progressLabel, "Studio progress estimate label is unavailable");
+        auto* timingLabel = root->findChild<QObject*>("studioTimingBreakdownLabel");
+        require(timingLabel, "Studio stage timing label is unavailable");
         int responsiveTicks = 0;
         bool sawFallbackNotice = false;
         bool sawRawFallbackError = false;
@@ -211,6 +213,12 @@ int main(int argc, char** argv) {
         require(QFileInfo(arguments[2]).isFile(), "Completed output was not published");
         require(studio.progress().value("frames").toULongLong() == 36, "Wrong output frame count");
         require(studio.progress().value("aiFrames").toULongLong() > 0, "Desktop did not generate AI frames");
+        const auto timingBreakdown = studio.progress().value("timings").toMap();
+        require(timingBreakdown.contains("inferenceWaitSeconds") && timingBreakdown.contains("frameEncodeSeconds") &&
+                timingBreakdown.contains("outputValidationSeconds") && timingBreakdown.value("inferenceWaitSeconds").toDouble() > 0.0,
+            "Desktop did not publish per-stage processing timings");
+        require(timingLabel->property("visible").toBool() && timingLabel->property("text").toString().contains(QStringLiteral("累计耗时")),
+            "Studio did not display the measured stage timings");
         if (!studio.progress().value("encoderFallbackReason").toString().isEmpty())
             require(sawFallbackNotice && !sawRawFallbackError && studio.progress().value("encoder").toString() == QStringLiteral("libopenh264"),
                 "Recoverable NVENC fallback was presented as a processing error or did not use software H.264");

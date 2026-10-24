@@ -75,6 +75,8 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     result.modelId = "rife-4.25-fp32-sdr8"; result.backend = "onnxruntime_tensorrt_cuda";
     result.inferenceFallbackReason.clear(); result.encoderFallbackReason = "NVENC API unavailable"; result.sourceEndEvidence = "declared_stream_end";
     result.elapsedSeconds = 10.0; result.processingFps = 12.0;
+    result.timings.sourceDecodeSeconds = 1.25; result.timings.inferenceWaitSeconds = 4.5;
+    result.timings.frameEncodeSeconds = 0.75; result.timings.outputValidationSeconds = 0.5; result.timings.pipelineWallSeconds = 9.0;
     result.validation.decodedFrames = 120; result.validation.timeBase = Rational(1,120);
     result.validation.maximumTimestampError = Rational(1,240); result.validation.durationError = Rational(0);
     result.validation.declaredEndError = Rational(0); result.validation.auxiliaryMaximumEndError = Rational(0); result.validation.quantized = true;
@@ -97,11 +99,14 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     EXPECT_EQ(report.at("encoding").at("fallbackReason"),"NVENC API unavailable");
     EXPECT_EQ(report.at("performance").at("endToEndOutputFramesPerSecond"),10.0);
     EXPECT_EQ(report.at("performance").at("pipelineOutputFramesPerSecond"),12.0);
+    EXPECT_EQ(report.at("performance").at("stageTimings").at("inferenceWaitSeconds"),4.5);
+    EXPECT_EQ(report.at("performance").at("stageTimings").at("frameEncodeSeconds"),0.75);
     EXPECT_EQ(report.at("qualityDiagnostics").at("sceneCuts"),1);
     EXPECT_EQ(report.at("qualityDiagnostics").at("perceptualMetricsMeasured"),false);
     EXPECT_EQ(report.at("source").at("recoveredTimestamps"),4);
     EXPECT_EQ(report.at("timingValidation").at("timeBase"),"1/120");
     EXPECT_EQ(report.at("pipelineResult").at("abnormalPairs"),3);
+    EXPECT_EQ(report.at("pipelineResult").at("timings").at("sourceDecodeSeconds"),1.25);
     EXPECT_EQ(report.at("pipelineResult").at("recoveredTimestamps"),4);
 }
 TEST(ProcessingReport, PublishesUnicodeJsonWithoutReplacingExistingFiles) {

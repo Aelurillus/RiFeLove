@@ -24,6 +24,21 @@ QString softwareEncoderLabel(const QString& encoder) {
     if (encoder == QStringLiteral("libaom-av1")) return QCoreApplication::translate("StudioController","软件 AV1");
     return QCoreApplication::translate("StudioController","兼容的软件编码器");
 }
+QVariantMap timingMap(const rifelove::PipelineTimingBreakdown& value) {
+    return {{QStringLiteral("sourceProbeSeconds"),value.sourceProbeSeconds},
+        {QStringLiteral("encoderSetupSeconds"),value.encoderSetupSeconds},
+        {QStringLiteral("sourceDecodeSeconds"),value.sourceDecodeSeconds},
+        {QStringLiteral("sourcePreparationSeconds"),value.sourcePreparationSeconds},
+        {QStringLiteral("sceneAnalysisSeconds"),value.sceneAnalysisSeconds},
+        {QStringLiteral("inputUploadSeconds"),value.inputUploadSeconds},
+        {QStringLiteral("inferenceWaitSeconds"),value.inferenceWaitSeconds},
+        {QStringLiteral("outputDownloadSeconds"),value.outputDownloadSeconds},
+        {QStringLiteral("colorRestoreSeconds"),value.colorRestoreSeconds},
+        {QStringLiteral("frameEncodeSeconds"),value.frameEncodeSeconds},
+        {QStringLiteral("outputFinalizeSeconds"),value.outputFinalizeSeconds},
+        {QStringLiteral("outputValidationSeconds"),value.outputValidationSeconds},
+        {QStringLiteral("pipelineWallSeconds"),value.pipelineWallSeconds}};
+}
 }
 StudioController::StudioController(QObject* parent) : QObject(parent) {
     try {
@@ -119,6 +134,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         progress_["frames"] = QVariant::fromValue<qulonglong>(event.outputFrames);
         progress_["aiFrames"] = QVariant::fromValue<qulonglong>(event.aiFrames);
         progress_["fps"] = event.processingFps;
+        progress_["timings"] = timingMap(event.timings);
         if (event.timestamp) progress_["timestamp"] = seconds(*event.timestamp);
         if (event.stage == "encoder_fallback") {
             progress_["encoderFallbackReason"] = text(event.detail);
@@ -215,6 +231,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             progress_["frames"] = QVariant::fromValue<qulonglong>(result.video.framesSubmitted);
             progress_["aiFrames"] = QVariant::fromValue<qulonglong>(result.aiFrames);
             progress_["fps"] = result.processingFps;
+            progress_["timings"] = timingMap(result.timings);
             progress_["encoder"] = text(result.video.encoder);
             detail_ = tr("已生成 %1 帧，其中 %2 帧由 RIFE 生成。输出已通过解码和时间轴检查。")
                 .arg(result.video.framesSubmitted).arg(result.aiFrames);
