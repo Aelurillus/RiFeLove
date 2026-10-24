@@ -34,7 +34,7 @@ The last output duration preserves the source's exclusive end. Full output re-de
 - Expand the integrated native CUDA numerical/operator and video-reference tests to the full resolution/content/color matrix, plus TensorRT and qualified model presets.
 - Extend the checksum-bound RIFE v2 pack schema into a trusted multi-family model registry, with separately reviewed weight rights, qualified quality profiles and model/update versioning.
 - A bounded scheduler with explicit buffer ownership and backpressure across decode, preprocessing, quality, inference, postprocessing and encode stages.
-- Persistent task configuration/progress and safe output-segment checkpoints bound to source/model/build identity. The manifest/journal, video-only segment writer, media-level verifier and stream-copy assembler are implemented; queue integration, file hashing/reverification and resume must satisfy [the checkpoint contract](SEGMENT_CHECKPOINTS.md). Restart recovery must establish worker ownership before marking tasks interrupted.
+- Persistent task configuration/progress and safe output-segment checkpoints bound to source/model/build identity. The manifest/journal, video-only segment writer, media-level verifier, stream-copy assembler and task-scoped hash/verification service are implemented; queue/pipeline integration and resume must satisfy [the checkpoint contract](SEGMENT_CHECKPOINTS.md). Restart recovery must establish worker ownership before marking tasks interrupted.
 - A color contract defining transfer/primaries/range/matrix, precision, HDR side data and conversion policy at every stage. Do not equate retained tags with a validated HDR neural processing pipeline.
 
 ## Validation mapping
