@@ -59,6 +59,26 @@ TEST(RifeColor, Bt470BgSmpte170mUses601CoefficientsAndPreservesSourceColorTags) 
     EXPECT_EQ(restored.color.matrix,"smpte170m"); EXPECT_EQ(restored.color.range,"tv");
     EXPECT_NEAR(restored.planes[0].data[0],81,1); EXPECT_NEAR(restored.planes[1].data[0],90,1); EXPECT_NEAR(restored.planes[2].data[0],240,1);
 }
+TEST(RifeColor, NormalizesKnownContainerAndBitstreamBt601SdrTagConflict) {
+    auto streamColor = rgbFixture().color;
+    streamColor.pixelFormat = "yuv420p"; streamColor.bitDepth = 8; streamColor.primaries = "bt470bg";
+    streamColor.transfer = "bt709"; streamColor.matrix = "smpte170m"; streamColor.range = "tv";
+    auto decodedColor = streamColor;
+    decodedColor.transfer = "smpte170m"; decodedColor.matrix = "bt470bg";
+
+    EXPECT_NO_THROW(validateRifeSdrColor(decodedColor));
+    const auto normalized = normalizeDecodedSdrColor(decodedColor, streamColor);
+    EXPECT_EQ(normalized.primaries, "bt470bg");
+    EXPECT_EQ(normalized.transfer, "bt709");
+    EXPECT_EQ(normalized.matrix, "smpte170m");
+    EXPECT_EQ(normalized.range, "tv");
+    EXPECT_NO_THROW(validateRifeSdrColor(normalized));
+
+    auto mismatchedRange = decodedColor; mismatchedRange.range = "pc";
+    EXPECT_EQ(normalizeDecodedSdrColor(mismatchedRange, streamColor).range, "pc");
+    auto hdr = decodedColor; hdr.transfer = "smpte2084"; hdr.hdrTransfer = true;
+    EXPECT_EQ(normalizeDecodedSdrColor(hdr, streamColor).transfer, "smpte2084");
+}
 TEST(RifeColor, UnknownHdrPrecisionInvalidPixelsAndCancellationFailExplicitly) {
     auto source = rgbFixture(); source.color.primaries = "unknown";
     EXPECT_THROW((void)prepareRifeSdr(source),std::invalid_argument);

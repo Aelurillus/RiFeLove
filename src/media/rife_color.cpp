@@ -16,7 +16,7 @@ AVPixelFormat checkColor(const ColorInfo& color) {
     const auto format = av_get_pix_fmt(color.pixelFormat.c_str());
     const auto* descriptor = av_pix_fmt_desc_get(format);
     const bool supportedPrimaries = color.primaries == "bt709" || color.primaries == "bt470bg" || color.primaries == "smpte170m";
-    const bool supportedTransfer = color.transfer == "bt709" || color.transfer == "iec61966-2-1";
+    const bool supportedTransfer = color.transfer == "bt709" || color.transfer == "smpte170m" || color.transfer == "iec61966-2-1";
     if (!descriptor || color.bitDepth != 8 || descriptor->comp[0].depth != 8 || color.hdrTransfer || color.masteringDisplay || color.contentLight ||
         !supportedPrimaries || !supportedTransfer)
         throw std::invalid_argument("RIFE SDR path requires tagged 8-bit BT.709 or BT.470BG/SMPTE 170M primaries and SDR transfer; HDR/unknown color needs a separately validated path");
@@ -31,6 +31,9 @@ AVPixelFormat checkColor(const ColorInfo& color) {
         throw std::invalid_argument("RIFE SDR path requires explicit matching RGB, BT.709 YUV or BT.601-family YUV matrix and range");
     return format;
 }
+bool isBt601Matrix(const std::string& matrix) { return matrix == "smpte170m" || matrix == "bt470bg"; }
+bool isBt601Primaries(const std::string& primaries) { return primaries == "bt470bg" || primaries == "smpte170m"; }
+bool isBt601SdrTransfer(const std::string& transfer) { return transfer == "bt709" || transfer == "smpte170m"; }
 int swscaleMatrix(const ColorInfo& color) {
     return color.matrix == "smpte170m" || color.matrix == "bt470bg" ? SWS_CS_ITU601 : SWS_CS_ITU709;
 }
@@ -47,6 +50,30 @@ std::unique_ptr<SwsContext, ScaleDeleter> converter(int width, int height, AVPix
 }
 }
 void validateRifeSdrColor(const ColorInfo& color) { (void)checkColor(color); }
+ColorInfo normalizeDecodedSdrColor(const ColorInfo& decodedColor, const ColorInfo& streamColor) {
+    try {
+        (void)checkColor(decodedColor);
+        (void)checkColor(streamColor);
+    } catch (const std::invalid_argument&) {
+        return decodedColor;
+    }
+
+    const bool sameLayout = decodedColor.pixelFormat == streamColor.pixelFormat && decodedColor.bitDepth == streamColor.bitDepth;
+    const bool samePrimariesAndRange = decodedColor.primaries == streamColor.primaries && decodedColor.range == streamColor.range;
+    const bool sameBt601Family = isBt601Primaries(decodedColor.primaries) && isBt601Matrix(decodedColor.matrix) &&
+        isBt601Matrix(streamColor.matrix) && isBt601SdrTransfer(decodedColor.transfer) && isBt601SdrTransfer(streamColor.transfer);
+    if (!sameLayout || !samePrimariesAndRange || !sameBt601Family || decodedColor.hdrTransfer || streamColor.hdrTransfer ||
+        decodedColor.masteringDisplay || streamColor.masteringDisplay || decodedColor.contentLight || streamColor.contentLight)
+        return decodedColor;
+
+    // Some files carry BT.601-family VUI tags that disagree with the container tags.
+    // Keep the container stream as the single output metadata contract after verifying
+    // that both descriptions are explicit, SDR, 8-bit, and agree on primaries and range.
+    auto normalized = decodedColor;
+    normalized.transfer = streamColor.transfer;
+    normalized.matrix = streamColor.matrix;
+    return normalized;
+}
 RifeSdrFrame prepareRifeSdr(const DecodedFrame& frame, std::size_t floatBufferLimit, std::stop_token stop) {
     detail::checkStopped(stop);
     dimensions(frame.width, frame.height);

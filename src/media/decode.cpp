@@ -1,4 +1,5 @@
 #include "media/ffmpeg_helpers.hpp"
+#include "media/rife_color.hpp"
 
 namespace rifelove::media {
 
@@ -11,6 +12,7 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
         input.context->streams[streamIndex]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
         throw std::invalid_argument("selected stream is not a video stream");
     auto* stream = input.context->streams[streamIndex];
+    const auto streamColor = detail::color(stream->codecpar);
     const auto* decoder = avcodec_find_decoder(stream->codecpar->codec_id);
     if (!decoder) throw std::runtime_error("no decoder is available for this video codec");
     auto freeCodec = [](AVCodecContext* p) { avcodec_free_context(&p); };
@@ -66,7 +68,7 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
                 output.height = retained->height;
                 output.timestamp = timestamp;
                 if (retained->duration > 0) output.duration = detail::timestamp(retained->duration, stream->time_base);
-                output.color = detail::color(retained.get());
+                output.color = normalizeDecodedSdrColor(detail::color(retained.get()), streamColor);
                 for (std::size_t i = 0; i < output.planes.size(); ++i) output.planes[i] = {retained->data[i], retained->linesize[i]};
                 output.storage = std::move(retained);
                 onFrame(output);

@@ -49,6 +49,15 @@ class NativeRifePipeline(unittest.TestCase):
         invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=24:duration=0.5",
                "-f","lavfi","-i","sine=frequency=440:sample_rate=48000:duration=0.5",
                "-vf",cls.color,"-c:v","mpeg4","-bf","2","-q:v","3","-c:a","aac",cls.bframes)
+        cls.bt601TagConflict = cls.root / "bt601-container-vui-conflict.mp4"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=5:duration=0.6",
+               "-f","lavfi","-i","sine=frequency=330:sample_rate=48000:duration=0.6",
+               "-map","0:v","-map","1:a",
+               "-vf","setparams=color_primaries=bt470bg:color_trc=bt709:colorspace=smpte170m:range=limited",
+               "-c:v","libopenh264","-pix_fmt","yuv420p","-c:a","aac",
+               "-color_primaries","bt470bg","-color_trc","bt709","-colorspace","smpte170m","-color_range","tv",
+               "-bsf:v","h264_metadata=colour_primaries=5:transfer_characteristics=6:matrix_coefficients=5",
+               cls.bt601TagConflict)
         cls.vfr = cls.root / "vfr.mkv"
         invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=30:duration=0.2",
                "-vf",f"setpts='(if(lt(N,2),N,2+(N-2)*2))/(30*TB)+5/TB',{cls.color}","-fps_mode","vfr","-c:v","ffv1",cls.vfr)
@@ -123,6 +132,26 @@ class NativeRifePipeline(unittest.TestCase):
         self.assertIn(result["encoder"],encoded["tags"]["encoder"])
         if result["encoder"]=="libopenh264":
             self.assertTrue(result["encoder_fallback_reason"]); self.assertTrue(any(e.get("stage")=="encoder_fallback" for e in events))
+
+    def test_bt601_container_and_h264_vui_tag_conflict_runs_with_stream_tags_preserved(self):
+        source_tags = probe(self.bt601TagConflict,"-select_streams","v:0","-show_streams","-show_frames",
+                            "-read_intervals","%+#1","-show_entries",
+                            "stream=color_primaries,color_transfer,color_space:frame=color_primaries,color_transfer,color_space")
+        stream = source_tags["streams"][0]
+        frame = source_tags["frames"][0]
+        self.assertEqual((stream["color_primaries"],stream["color_transfer"],stream["color_space"]),
+                         ("bt470bg","bt709","smpte170m"))
+        self.assertEqual((frame["color_primaries"],frame["color_transfer"],frame["color_space"]),
+                         ("bt470bg","smpte170m","bt470bg"))
+
+        output = self.root / "bt601-tag-conflict-output.mkv"
+        result,_ = self.run_job(self.bt601TagConflict,output,"10","--encoder","ffv1")
+        self.verify_timing(output,result)
+        self.assertGreater(result["ai_frames"],0)
+        output_video = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]
+        self.assertEqual((output_video["color_primaries"],output_video["color_transfer"],output_video["color_space"]),
+                         ("bt470bg","bt709","smpte170m"))
+        self.assert_audio_samples_equal(self.bt601TagConflict,output)
 
     def test_hevc_and_av1_real_interpolation_and_audio_copy(self):
         for encoder,extension,options in (
