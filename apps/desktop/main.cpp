@@ -8,7 +8,9 @@
 #include <QQuickStyle>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSettings>
 #ifdef RIFELOVE_DESKTOP_PROCESSING
 #include "studio_controller.hpp"
@@ -30,14 +32,23 @@ int main(int argc, char* argv[]) {
     StudioController studio;
     const QDir applicationDirectory(QCoreApplication::applicationDirPath());
     const QDir bundledModels(applicationDirectory.filePath("models"));
-    QString bundledModel;
+    QStringList bundledModelPaths;
     const auto modelDirectories = bundledModels.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const auto& modelDirectory : modelDirectories) {
         if (!QFileInfo(QDir(modelDirectory.absoluteFilePath()).filePath("model.json")).isFile() ||
             !QFileInfo(QDir(modelDirectory.absoluteFilePath()).filePath("model.onnx")).isFile()) continue;
-        if (!bundledModel.isEmpty()) { bundledModel.clear(); break; }
-        bundledModel = modelDirectory.absoluteFilePath();
+        bundledModelPaths.push_back(modelDirectory.absoluteFilePath());
     }
+    QString bundledModel;
+    QFile defaultModelMarker(applicationDirectory.filePath("models/default-model.txt"));
+    if (defaultModelMarker.open(QIODevice::ReadOnly)) {
+        const auto modelId = QString::fromUtf8(defaultModelMarker.readAll()).trimmed();
+        if (QRegularExpression(QStringLiteral("^[A-Za-z0-9._-]{1,128}$")).match(modelId).hasMatch()) {
+            const auto candidate = QDir(bundledModels.filePath(modelId)).absolutePath();
+            if (bundledModelPaths.contains(candidate,Qt::CaseInsensitive)) bundledModel = candidate;
+        }
+    }
+    if (bundledModel.isEmpty() && bundledModelPaths.size() == 1) bundledModel = bundledModelPaths.front();
     const auto bundledRuntime = applicationDirectory.filePath("runtime");
     const bool portable = QFileInfo(applicationDirectory.filePath("portable.flag")).isFile();
     const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
@@ -56,11 +67,13 @@ int main(int argc, char* argv[]) {
         if (!selectedModelAvailable && bundledModelAvailable) {
             const auto bundledModelUrl = QUrl::fromLocalFile(bundledModel);
             preferences.setValue("model",bundledModelUrl);
-            auto models = preferences.value("modelCatalog/paths").toStringList();
-            const auto bundledModelPath = QDir::toNativeSeparators(QFileInfo(bundledModel).absoluteFilePath());
-            if (!models.contains(bundledModelPath)) models.push_back(bundledModelPath);
-            preferences.setValue("modelCatalog/paths",models);
         }
+        auto models = preferences.value("modelCatalog/paths").toStringList();
+        for (const auto& path : bundledModelPaths) {
+            const auto normalized = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+            if (!models.contains(normalized,Qt::CaseInsensitive)) models.push_back(normalized);
+        }
+        if (!models.isEmpty()) preferences.setValue("modelCatalog/paths",models);
         const auto runtimeSetting = preferences.value("runtime").toUrl();
         const auto selectedRuntime = runtimeSetting.isLocalFile() ? runtimeSetting.toLocalFile() : QString();
         const bool selectedRuntimeAvailable = !selectedRuntime.isEmpty() && QFileInfo(QDir(selectedRuntime).filePath("onnxruntime.dll")).isFile() &&

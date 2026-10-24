@@ -10,11 +10,17 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/model_export"))
-from acquire_rife import acquire, digest
+from acquire_rife import acquire, default_destination, digest
 from export_rife import export_pack, inference_state
 
 
 class ModelSourceIntegrity(unittest.TestCase):
+    def test_default_source_directory_tracks_pinned_model_and_rejects_path_escape(self):
+        self.assertEqual(default_destination("rife-4.25"), ROOT / "models/weights/rife4.25-reviewed")
+        self.assertEqual(default_destination("rife-4.26"), ROOT / "models/weights/rife4.26-reviewed")
+        with self.assertRaisesRegex(ValueError, "invalid modelId"):
+            default_destination("rife-../../outside")
+
     def test_only_documented_training_parameters_are_excluded(self):
         self.assertEqual(inference_state({"weight": 1, "teacher.weight": 2, "caltime.bias": 3}, {"weight"}), {"weight": 1})
         with self.assertRaisesRegex(ValueError, "unexpected non-training"):

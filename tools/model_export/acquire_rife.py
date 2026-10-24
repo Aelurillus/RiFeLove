@@ -19,6 +19,12 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def default_destination(model_id):
+    if not isinstance(model_id, str) or not re.fullmatch(r"rife-[A-Za-z0-9._-]{1,64}", model_id):
+        raise ValueError("Model manifest has an invalid modelId")
+    return ROOT / "models/weights" / (model_id.replace("rife-", "rife", 1) + "-reviewed")
+
+
 def checked_bytes(path, expected):
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ValueError("Invalid SHA-256 value in model manifest")
@@ -85,13 +91,14 @@ def acquire(destination, cache, manifest, allow_download=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--destination", type=Path, default=ROOT / "models/weights/rife4.25-reviewed")
+    parser.add_argument("--destination", type=Path)
     parser.add_argument("--cache", type=Path, default=ROOT / "work/downloads")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--allow-download", action="store_true")
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    destination = acquire(args.destination, args.cache, manifest, args.allow_download)
+    default_path = default_destination(manifest["modelId"])
+    destination = acquire((args.destination or default_path).resolve(), args.cache.resolve(), manifest, args.allow_download)
     print(json.dumps({"event": "model_sources_verified", "model_id": manifest["modelId"], "path": str(destination), "license": manifest["license"]}))
 
 

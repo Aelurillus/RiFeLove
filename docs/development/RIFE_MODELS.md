@@ -1,10 +1,12 @@
 # RIFE source acquisition and export validation
 
-RIFE 4.25 is the first candidate being prepared. This is not a claim that native GPU interpolation, the complete model manager or final visual quality acceptance is implemented.
+RIFE 4.25 and 4.26 are the first two locally selectable model packs. This is not a claim that full-resolution GPU interpolation, quality presets, subjective model ranking or final visual quality acceptance is implemented.
 
 ## Provenance
 
 The author's [Practical-RIFE README](https://github.com/hzwer/Practical-RIFE/blob/bbfd2ea90910789a860ea3e2b32a240cd577b75e/README.md#trained-model) explicitly extends the project's MIT license to the linked model content. The [MIT license](https://github.com/hzwer/Practical-RIFE/blob/bbfd2ea90910789a860ea3e2b32a240cd577b75e/LICENSE) names hzwer as the 2021 copyright holder. `models/manifests/rife-4.25.source.json` pins the author-linked Drive archive, a repository commit for the warp helper, the license file and hashes of individual approved files. The archive hash is a first-acquisition integrity pin; the README did not publish a separate authoritative weight checksum.
+
+`models/manifests/rife-4.26.source.json` records the separately linked 4.26 archive at the same pinned upstream commit, its MIT scope statement, first-acquisition archive hash, approved checkpoint/source entries and license. The exporter and source-acquisition tools accept either manifest. Both model packs are locally present, selectable offline and bound to their source manifest and license by SHA-256. These checks establish local integrity and recorded provenance; they are not author signatures. The upstream README recommends 4.25 for most scenes, so 4.25 remains the default; the additional 4.26 entry is an alternate model, not a claim of better quality.
 
 `acquire_rife.py` verifies the complete archive and each allowed entry before extracting only the network source and tensor checkpoint. Other archived files, including compiled Python bytecode and platform metadata, are not part of the reviewed package. All weights and generated engines remain under ignored directories.
 
@@ -48,3 +50,5 @@ Native ONNX CUDA now passes the same six SDR8 reference cases on GTX 1660 SUPER.
 Heuristic convolution selection initially passed, then failed a Release comparison at maximum error `0.00231170654296875`. Its gate was not loosened. The CUDA runtime now fixes the documented implicit-precomputed-GEMM baseline; faster algorithms require separate numerical qualification. TensorRT 10.9 FP32 now passes the same six numerical cases on GTX 1660 SUPER, and profiling confirms a fused TensorRT kernel executes the model. This covers only 64x64 and 128x192 fixtures; full-resolution video, FP16, multi-model presets, visual quality, HDR handling and performance acceptance remain required.
 
 Seven source-integrity/checkpoint-policy scenarios are part of normal CTest and also pass under pytest: allow-listed extraction, corrupt archive rejection, offline cache behavior, protection of modified local assets, altered-code rejection before ML import, documented training-only exclusions and missing-inference-parameter rejection. These checks do not substitute for numerical model validation.
+
+The 4.26 ONNX pack also passes six PyTorch CPU reference cases, six native ONNX Runtime CUDA comparisons and six native TensorRT FP32 comparisons on the local GTX 1660 SUPER. Its CPU maximum absolute error is `0.0011979341506958008`; the TensorRT comparison maximum is `0.001828312873840332` with minimum PSNR `85.94 dB`. TensorRT skipped tactics whose requested workspace exceeded the card's 6 GB; the selected engine still ran native TensorRT operators and passed the numerical gate. These small profiles establish an additional model/backend option, not full-resolution or perceptual quality qualification. RIFE 4.25 remains the only model with the recorded end-to-end 720p output and independent PyTorch video comparison.

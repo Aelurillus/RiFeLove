@@ -13,6 +13,8 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSettings>
 #include <iostream>
 #include <stdexcept>
@@ -365,8 +367,11 @@ int main(int argc, char** argv) {
         auto* modelCenter = root->findChild<QObject*>("modelCenterPage");
         require(modelCenter, "Offline model center page was not loaded");
         waitUntil([&] { return !taskQueue.verifyingModels() && !taskQueue.models().isEmpty(); }, "Local model center did not validate the saved default model",20000);
+        QFile activeModelDescriptor(QDir(arguments[3]).filePath(QStringLiteral("model.json")));
+        require(activeModelDescriptor.open(QIODevice::ReadOnly), "Could not read the active model descriptor in the integration fixture");
+        const auto expectedModelId = QJsonDocument::fromJson(activeModelDescriptor.readAll()).object().value(QStringLiteral("id")).toString();
         require(taskQueue.models().size() == 1 && taskQueue.models().front().toMap().value("valid").toBool() &&
-                taskQueue.models().front().toMap().value("id").toString() == "rife-4.25-fp32-sdr8",
+                !expectedModelId.isEmpty() && taskQueue.models().front().toMap().value("id").toString() == expectedModelId,
                 "Model center did not verify the active local RIFE pack");
         const auto registeredModel = taskQueue.models().front().toMap();
         require(registeredModel.value("schemaVersion").toInt() == 2 &&

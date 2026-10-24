@@ -1,10 +1,11 @@
-"""Export pinned RIFE 4.25 and validate dynamic ONNX output against upstream PyTorch."""
+"""Export pinned Practical-RIFE IFNet weights and validate dynamic ONNX against upstream PyTorch."""
 
 import argparse
 import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -32,7 +33,7 @@ def inference_state(state, inference_keys):
 def load_network(sources):
     import torch
     warp_module = types.ModuleType("rifelove_pinned_warp")
-    network_module = types.ModuleType("rifelove_pinned_ifnet_425")
+    network_module = types.ModuleType("rifelove_pinned_ifnet_hdv3")
     sys.modules[warp_module.__name__] = warp_module
     sys.modules[network_module.__name__] = network_module
     # Read and compile checksum-verified source bytes, never archived .pyc files.
@@ -80,6 +81,9 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
     torch.set_num_interop_threads(1)
     torch.manual_seed(425)
     network, source_module, warp_module = load_network(sources)
+    scale_list = manifest.get("scaleList", [16, 8, 4, 2, 1])
+    if not isinstance(scale_list, list) or not scale_list or any(not isinstance(value, (int, float)) or value <= 0 for value in scale_list):
+        raise ValueError("Model manifest needs a non-empty positive inference scale list")
 
     class ExportWrapper(torch.nn.Module):
         def __init__(self):
@@ -87,8 +91,8 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
             self.network = network
 
         def forward(self, frame0, frame1, timestep):
-            # Matches the archived RIFE_HDv3.inference scale list for version 4.25.
-            return self.network(torch.cat((frame0, frame1), 1), timestep, [16, 8, 4, 2, 1])[-1][-1]
+            # The scale list is pinned with the upstream model manifest.
+            return self.network(torch.cat((frame0, frame1), 1), timestep, scale_list)[-1][-1]
 
     def dynamic_warp(pixels, flow):
         # Same grid_sample contract as upstream; no Python grid cache can freeze spatial shapes.
@@ -136,7 +140,7 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
                               opset_version=17, dynamo=False, do_constant_folding=True,
                               dynamic_axes={name: {2: "height", 3: "width"} for name in ("frame0", "frame1", "frame")})
         graph = onnx.load(onnx_path)
-        onnx.helper.set_model_props(graph, {"model_id": manifest["modelId"], "license": "MIT",
+        onnx.helper.set_model_props(graph, {"model_id": manifest["modelId"], "license": manifest["license"],
                                           "upstream_commit": manifest["upstreamCommit"], "spatial_multiple": "64"})
         onnx.checker.check_model(graph)
         if {value.name for value in graph.graph.input} != {"frame0", "frame1", "timestep"}:
@@ -192,12 +196,16 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
             failure = parent / (destination.name + ".failed-validation.json")
             failure.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             raise ValueError(f"ONNX/PyTorch numerical gate failed ({numerical_profile}); no pack published. Report: {failure}")
-        pack_id = "rife-4.25-fp32" + ("-sdr8" if numerical_profile == "sdr8" else "")
+        model_id = manifest["modelId"]
+        model_version = manifest.get("version", model_id.removeprefix("rife-"))
+        display_name = manifest.get("displayName") or f"RIFE {model_version}"
+        pack_id = model_id + "-fp32" + ("-sdr8" if numerical_profile == "sdr8" else "")
         validation_bytes = (json.dumps(report, indent=2) + "\n").encode("utf-8")
         source_manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
         license_bytes = sources["LICENSE.txt"]
         descriptor = {"schemaVersion": 2, "id": pack_id,
-                      "displayName": f"RIFE 4.25 FP32 {numerical_profile.upper()}", "family": "rife", "version": "4.25",
+                      "displayName": f"{display_name} FP32 {numerical_profile.upper()}",
+                      "family": "rife", "version": model_version,
                       "modelFile": "model.onnx", "sha256": graph_hash,
                       "license": {"id": "MIT", "file": "LICENSE.txt", "sha256": digest(license_bytes)},
                       "provenance": {"manifestFile": "source-manifest.json", "manifestSha256": digest(source_manifest_bytes)},
@@ -224,14 +232,22 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-dir", type=Path, default=ROOT / "models/weights/rife4.25-reviewed")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "models/cache/rife-4.25-fp32")
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--source-dir", type=Path)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--numerical-profile", choices=["strict", "sdr8"], default="strict",
                         help="strict keeps the original 2e-4 gate; sdr8 separately qualifies half of one normalized 8-bit code value plus PSNR >=80 dB, not HDR")
     args = parser.parse_args()
-    manifest = json.loads(DEFAULT_MANIFEST.read_text(encoding="utf-8"))
-    descriptor, report = export_pack(args.source_dir.resolve(), args.output_dir.resolve(), manifest, args.numerical_profile)
-    print(json.dumps({"event": "rife_export_validated", "path": str(args.output_dir), "sha256": descriptor["sha256"],
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    model_id = manifest["modelId"]
+    if not isinstance(model_id, str) or not re.fullmatch(r"rife-[A-Za-z0-9._-]{1,64}", model_id):
+        raise ValueError("Model manifest has an invalid modelId")
+    default_source = ROOT / "models/weights" / (model_id.replace("rife-", "rife") + "-reviewed")
+    default_output = ROOT / "models/cache" / (f"{model_id}-fp32" + ("-sdr8" if args.numerical_profile == "sdr8" else ""))
+    source_directory = (args.source_dir or default_source).resolve()
+    output_directory = (args.output_dir or default_output).resolve()
+    descriptor, report = export_pack(source_directory, output_directory, manifest, args.numerical_profile)
+    print(json.dumps({"event": "rife_export_validated", "path": str(output_directory), "sha256": descriptor["sha256"],
                       "validation": report["status"], "cases": len(report["cases"]),
                       "max_abs_error": max(case["max_abs_error"] for case in report["cases"])}))
 

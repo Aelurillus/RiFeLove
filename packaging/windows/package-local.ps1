@@ -5,6 +5,7 @@ param(
     [string]$FfmpegRoot = "C:/itzming/dependences/ffmpeg-8.1.3/ffmpeg-n8.1.3-18-g46d899d7a0-win64-lgpl-shared-8.1",
     [string]$OnnxRuntimeRoot = "C:/itzming/dependences/onnxruntime-win-x64-gpu-1.22.0",
     [string]$ModelPackRoot = (Join-Path $PSScriptRoot "../../models/cache/rife-4.25-fp32-sdr8-v3"),
+    [string[]]$AdditionalModelPackRoots = @(),
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "../../out/RifeLove-local")
 )
 
@@ -20,14 +21,29 @@ $build = (Resolve-Path $BuildDirectory).Path
 $qt = (Resolve-Path $QtRoot).Path
 $ffmpeg = (Resolve-Path $FfmpegRoot).Path
 $onnx = (Resolve-Path (Join-Path $OnnxRuntimeRoot "lib/onnxruntime.dll")).Path | Split-Path -Parent
-$model = (Resolve-Path (Join-Path $ModelPackRoot "model.json")).Path | Split-Path -Parent
-$modelDescriptor = Get-Content -LiteralPath (Join-Path $model "model.json") -Raw | ConvertFrom-Json
-if ($modelDescriptor.id -notmatch '^[A-Za-z0-9._-]{1,128}$') { throw "Model pack id is unsafe for a package path: $($modelDescriptor.id)" }
-$modelDisplayName = if ($modelDescriptor.displayName) { [string]$modelDescriptor.displayName } else { [string]$modelDescriptor.id }
+$packRoots = @($ModelPackRoot) + @($AdditionalModelPackRoots)
+$modelPacks = @(
+    foreach ($packRoot in $packRoots) {
+        $model = (Resolve-Path (Join-Path $packRoot "model.json")).Path | Split-Path -Parent
+        $descriptor = Get-Content -LiteralPath (Join-Path $model "model.json") -Raw | ConvertFrom-Json
+        if ($descriptor.id -notmatch '^[A-Za-z0-9._-]{1,128}$') { throw "Model pack id is unsafe for a package path: $($descriptor.id)" }
+        [pscustomobject]@{root=$model;descriptor=$descriptor}
+    }
+)
+if (-not $modelPacks.Count) { throw "At least one local model pack is required." }
+$duplicateIds = $modelPacks | Group-Object { $_.descriptor.id } | Where-Object Count -gt 1
+if ($duplicateIds) { throw "Model pack ids must be unique in a local bundle: $($duplicateIds.Name -join ', ')" }
+$defaultModelPack = $modelPacks[0]
+$modelNames = ($modelPacks | ForEach-Object { if ($_.descriptor.displayName) { [string]$_.descriptor.displayName } else { [string]$_.descriptor.id } }) -join ", "
 $executable = Join-Path $build "RifeLove.exe"
 $deployTool = Join-Path $qt "bin/windeployqt.exe"
-foreach ($required in @($executable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"),(Join-Path $model "model.onnx"))) {
+foreach ($required in @($executable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"))) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required packaging input is missing: $required" }
+}
+foreach ($pack in $modelPacks) {
+    if (-not (Test-Path -LiteralPath (Join-Path $pack.root "model.onnx") -PathType Leaf)) {
+        throw "Required model graph is missing: $($pack.root)"
+    }
 }
 
 if (Test-Path -LiteralPath $target) {
@@ -57,13 +73,17 @@ foreach ($name in @("avcodec-62.dll","avformat-62.dll","avutil-60.dll","swscale-
     Copy-Item -LiteralPath $source -Destination $target
 }
 
-$modelTarget = Join-Path $target ("models/{0}" -f $modelDescriptor.id)
-New-Item -ItemType Directory -Path $modelTarget -Force | Out-Null
-foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
-    $source = Join-Path $model $name
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required model package file is missing: $source" }
-    Copy-Item -LiteralPath $source -Destination $modelTarget
+foreach ($pack in $modelPacks) {
+    $modelTarget = Join-Path $target ("models/{0}" -f $pack.descriptor.id)
+    New-Item -ItemType Directory -Path $modelTarget -Force | Out-Null
+    foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
+        $source = Join-Path $pack.root $name
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required model package file is missing: $source" }
+        Copy-Item -LiteralPath $source -Destination $modelTarget
+    }
 }
+$modelsDirectory = Join-Path $target "models"
+Set-Content -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Value ([string]$defaultModelPack.descriptor.id) -Encoding UTF8
 
 # Keep NVIDIA CUDA/cuDNN under their local SDK installation; this device-local
 # link avoids silently redistributing those separately licensed binaries.
@@ -90,16 +110,16 @@ $readme = @"
 RifeLove 本机运行包
 
 启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。
-本次附带且已校验的模型：$modelDisplayName。当前色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8-bit SDR，并保留输入色彩标签。模型许可与 SHA-256 位于 models 和 licenses 文件夹。
+本次附带并完成文件校验的模型：$modelNames。首次启动默认选择 $($defaultModelPack.descriptor.displayName)。当前色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8-bit SDR，并保留输入色彩标签。模型许可与 SHA-256 位于各自的 models 子目录。
 默认推理：优先尝试 TensorRT 10.9；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT 引擎缓存位于本机用户目录。
 默认视频编码：导入时预检查 NVIDIA NVENC；若当前驱动不兼容，会在任务开始前选择 H.264 软件编码并说明原因。RIFE 插帧仍使用 CUDA。
 导入视频时会按源视频的分辨率和像素格式预检查 NVENC、软件 H.264、HEVC 与 AV1；这项检查只打开编码器上下文，最终仍以实际导出结果为准。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。
 进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。
 
-GPU 运行库使用本机已安装的 ONNX Runtime CUDA 1.22.0 与 NVIDIA CUDA 12.8/cuDNN 9 SDK，runtime 是其本机目录联接，不是跨电脑可搬运的发行包。目标电脑仍需 NVIDIA 驱动、兼容的 CUDA/cuDNN 运行环境。此本机目录不代表完成了公开发行所需的第三方再分发审核。
+GPU 运行库使用本机依赖目录中的 ONNX Runtime CUDA 1.22.0、TensorRT 10.9、CUDA 12.8 和 cuDNN 9；runtime 是该本机目录的联接，不是跨电脑可搬运的发行包。目标电脑需要兼容的 NVIDIA 驱动。此本机目录不代表完成了公开发行所需的第三方再分发审核。
 
-当前验证边界：本地 GTX 1660 SUPER；RIFE 4.25 FP32 TensorRT 已通过小尺寸数值对比及合成 720p BT.709、30→60 FPS 端到端验证，保留音轨和 0.5 秒时长；BT.470BG/SMPTE 170M 已通过合成 8-bit SDR 色彩与音轨回归。这些不是实际素材画质验收。当前驱动的 NVENC API 低于 FFmpeg 要求，自动模式已验证切换到软件 H.264。HDR、10-bit AI 插帧和其它 RIFE 模型仍未验证。
+当前验证边界：本地 GTX 1660 SUPER；RIFE 4.25 与 4.26 FP32 均通过六组小尺寸 CPU/CUDA/TensorRT 数值对比；4.25 另通过合成 720p BT.709、30→60 FPS 端到端验证，并保留音轨和 0.5 秒时长。BT.470BG/SMPTE 170M 已通过合成 8-bit SDR 色彩与音轨回归。这些不是实际素材画质验收，也没有证明 4.26 画质更好。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用软件 H.264，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR、10-bit AI 插帧和真实素材对比仍未验证。
 任务、偏好设置和模型中心目录保存在 data/preferences.ini 与 data/queue.sqlite。
 "@
 Set-Content -LiteralPath (Join-Path $target "README-本机运行.txt") -Value $readme -Encoding UTF8
@@ -127,17 +147,25 @@ if (-not (Test-Path -LiteralPath (Join-Path $target "data/preferences.ini") -Pat
 }
 
 $preferences = Get-Content -LiteralPath (Join-Path $target "data/preferences.ini") -Raw
-if ($preferences -notmatch [regex]::Escape([string]$modelDescriptor.id) -or $preferences -notmatch "onnxruntime\.dll|runtime") {
-    throw "Packaged first-run preferences do not contain the bundled model and runtime defaults."
+if ($preferences -notmatch [regex]::Escape([string]$defaultModelPack.descriptor.id) -or $preferences -notmatch "onnxruntime\.dll|runtime") {
+    throw "Packaged first-run preferences do not contain the default bundled model and runtime."
+}
+foreach ($pack in $modelPacks) {
+    if ($preferences -notmatch [regex]::Escape([string]$pack.descriptor.id)) {
+        throw "Packaged first-run local model catalog is missing $($pack.descriptor.id)."
+    }
 }
 
 $manifest = @(
     "RifeLove local bundle SHA-256",
-    ((Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe")
+    ((Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe"),
+    ((Get-FileHash -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Algorithm SHA256).Hash.ToLowerInvariant() + "  models/default-model.txt")
 )
-foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
-    $relative = "models/$($modelDescriptor.id)/$name"
-    $manifest += (Get-FileHash -LiteralPath (Join-Path $modelTarget $name) -Algorithm SHA256).Hash.ToLowerInvariant() + "  $relative"
+foreach ($pack in $modelPacks) {
+    foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
+        $relative = "models/$($pack.descriptor.id)/$name"
+        $manifest += (Get-FileHash -LiteralPath (Join-Path $target $relative) -Algorithm SHA256).Hash.ToLowerInvariant() + "  $relative"
+    }
 }
 Set-Content -LiteralPath (Join-Path $target "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
 Write-Output "Packaged and launched local RifeLove build: $target"

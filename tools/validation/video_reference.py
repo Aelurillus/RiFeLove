@@ -1,5 +1,6 @@
 """Compare native lossless RIFE video frames with the verified upstream CPU model."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -8,7 +9,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT / "tools/model_export"))
-from export_rife import verified_sources, load_network, DEFAULT_MANIFEST
+from export_rife import verified_sources, load_network
 
 def run(executable, *arguments, data=None):
     result = subprocess.run([str(executable),*(str(a) for a in arguments)],input=data,capture_output=True,timeout=90)
@@ -21,8 +22,17 @@ def main():
     parser.add_argument("cli",type=Path); parser.add_argument("ffmpeg",type=Path)
     parser.add_argument("pack",type=Path); parser.add_argument("runtime",type=Path); parser.add_argument("report",type=Path)
     args = parser.parse_args()
-    manifest = json.loads(DEFAULT_MANIFEST.read_text(encoding="utf-8"))
-    sources = verified_sources(ROOT / "models/weights/rife4.25-reviewed",manifest)
+    descriptor = json.loads((args.pack / "model.json").read_text(encoding="utf-8"))
+    source_manifest_bytes = (args.pack / "source-manifest.json").read_bytes()
+    source_manifest = json.loads(source_manifest_bytes)
+    manifest_path = ROOT / "models/manifests" / f"{source_manifest['modelId']}.source.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if descriptor["provenance"]["manifestSha256"] != hashlib.sha256(source_manifest_bytes).hexdigest():
+        raise AssertionError("Model pack source manifest no longer matches its descriptor")
+    if source_manifest["modelId"] != manifest["modelId"]:
+        raise AssertionError("Model pack source identity differs from the pinned local manifest")
+    source_directory = ROOT / "models/weights" / (manifest["modelId"].replace("rife-", "rife") + "-reviewed")
+    sources = verified_sources(source_directory,manifest)
     import numpy as np
     import torch
     torch.set_num_threads(2); torch.set_num_interop_threads(1)
@@ -49,7 +59,7 @@ def main():
                 planar = np.pad(rgb[index].transpose(2,0,1),((0,0),(0,0),(0,32)),mode="edge")[None]
                 tensors.append(torch.from_numpy(np.ascontiguousarray(planar)))
             with torch.inference_mode():
-                expected_rgb = network(torch.cat(tensors,1),torch.full((1,1,1,1),0.5),[16,8,4,2,1])[-1][-1].numpy()[0,:,:64,:96].transpose(1,2,0)
+                expected_rgb = network(torch.cat(tensors,1),torch.full((1,1,1,1),0.5),manifest.get("scaleList",[16,8,4,2,1]))[-1][-1].numpy()[0,:,:64,:96].transpose(1,2,0)
             if not np.isfinite(expected_rgb).all(): raise AssertionError("Invalid upstream reference")
             # Match lround(float32 * 65535), including its away-from-zero ties.
             interleaved = np.floor((expected_rgb*np.float32(65535)).astype(np.float64)+0.5).clip(0,65535).astype("<u2")
