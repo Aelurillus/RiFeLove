@@ -30,9 +30,9 @@ Output uses the same exclusive temporary reservation and no-replace publication 
 
 ## Actual local NVENC incompatibility
 
-On this workstation, a real `h264_nvenc` open with the pinned FFmpeg SDK fails before producing packets: the SDK build requires NVENC API `13.0` while the installed driver exposes `12.2`; FFmpeg reports driver `570.0` as its minimum for this build. The source-profile preflight now reports the failure and confirms software H.264 context initialization. The end-to-end automatic path retries software H.264 and validates its output. This is not a successful NVENC result. AV1 hardware support cannot be inferred from an `av1_nvenc` name in the registered-encoder list.
+On this workstation, a real `h264_nvenc` open with the pinned FFmpeg SDK fails before producing packets: the SDK build requires NVENC API `13.0` while the installed driver exposes `12.2`; FFmpeg reports driver `570.0` as its minimum for this build. The source-profile preflight reports the failure and confirms software H.264 context initialization. Studio's auto mode uses that result to select software H.264 before starting; the CLI auto mode attempts NVENC and then falls back. The end-to-end software path validates its output. This is not a successful NVENC result. AV1 hardware support cannot be inferred from an `av1_nvenc` name in the registered-encoder list.
 
-The interpolation pipeline now implements an explicit `auto` policy: try actual NVENC initialization, then report a software H.264 fallback if that encoder cannot open. Explicit `transcode`/encoder choices stay strict. The final application still needs a compatible FFmpeg/NVENC build/driver matrix and runtime device capabilities. The driver has not been changed.
+The pipeline implements an explicit `auto` policy for callers without preflight: try actual NVENC initialization, then report a software H.264 fallback if that encoder cannot open. Studio resolves auto from its already completed source-profile preflight, avoiding a repeated known-failing NVENC open. Explicit encoder choices stay strict. The app still needs a compatible FFmpeg/NVENC build/driver matrix and runtime device capabilities. The driver has not been changed.
 
 ## Desktop advanced encoding settings
 

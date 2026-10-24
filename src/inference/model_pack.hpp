@@ -15,8 +15,25 @@ struct ModelPack {
     std::string id;
     std::string version;
     std::string sha256;
-    int spatialMultiple;
+    int spatialMultiple = 0;
     std::vector<std::byte> graph;
+    std::string displayName;
+    std::string family;
+    int schemaVersion = 1;
+    std::string licenseId;
+    std::string licenseSha256;
+    std::string numericalProfile;
+    std::vector<std::string> validatedBackends;
+    std::vector<std::string> supportedInputProfiles;
+    bool hdrQualified = false;
+    std::string sourceRepository;
+    std::string upstreamCommit;
+    std::string licenseScopeEvidence;
+    std::string sourceManifestSha256;
+    std::string validationSha256;
+    // True means declared sidecar hashes match their files. It does not
+    // authenticate the author or certify perceptual quality.
+    bool metadataIntegrityVerified = false;
 };
 
 [[nodiscard]] std::string sha256(std::span<const std::byte> bytes);

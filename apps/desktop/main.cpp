@@ -29,7 +29,15 @@ int main(int argc, char* argv[]) {
 #ifdef RIFELOVE_DESKTOP_PROCESSING
     StudioController studio;
     const QDir applicationDirectory(QCoreApplication::applicationDirPath());
-    const auto bundledModel = applicationDirectory.filePath("models/rife-4.25-fp32-sdr8-v2");
+    const QDir bundledModels(applicationDirectory.filePath("models"));
+    QString bundledModel;
+    const auto modelDirectories = bundledModels.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const auto& modelDirectory : modelDirectories) {
+        if (!QFileInfo(QDir(modelDirectory.absoluteFilePath()).filePath("model.json")).isFile() ||
+            !QFileInfo(QDir(modelDirectory.absoluteFilePath()).filePath("model.onnx")).isFile()) continue;
+        if (!bundledModel.isEmpty()) { bundledModel.clear(); break; }
+        bundledModel = modelDirectory.absoluteFilePath();
+    }
     const auto bundledRuntime = applicationDirectory.filePath("runtime");
     const bool portable = QFileInfo(applicationDirectory.filePath("portable.flag")).isFile();
     const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
@@ -41,9 +49,9 @@ int main(int argc, char* argv[]) {
     if (preferences.status() == QSettings::NoError) {
         const auto modelSetting = preferences.value("model").toUrl();
         const auto selectedModel = modelSetting.isLocalFile() ? modelSetting.toLocalFile() : QString();
-        const bool selectedModelAvailable = QFileInfo(QDir(selectedModel).filePath("model.json")).isFile() &&
+        const bool selectedModelAvailable = !selectedModel.isEmpty() && QFileInfo(QDir(selectedModel).filePath("model.json")).isFile() &&
             QFileInfo(QDir(selectedModel).filePath("model.onnx")).isFile();
-        const bool bundledModelAvailable = QFileInfo(QDir(bundledModel).filePath("model.json")).isFile() &&
+        const bool bundledModelAvailable = !bundledModel.isEmpty() && QFileInfo(QDir(bundledModel).filePath("model.json")).isFile() &&
             QFileInfo(QDir(bundledModel).filePath("model.onnx")).isFile();
         if (!selectedModelAvailable && bundledModelAvailable) {
             const auto bundledModelUrl = QUrl::fromLocalFile(bundledModel);
@@ -55,7 +63,7 @@ int main(int argc, char* argv[]) {
         }
         const auto runtimeSetting = preferences.value("runtime").toUrl();
         const auto selectedRuntime = runtimeSetting.isLocalFile() ? runtimeSetting.toLocalFile() : QString();
-        const bool selectedRuntimeAvailable = QFileInfo(QDir(selectedRuntime).filePath("onnxruntime.dll")).isFile() &&
+        const bool selectedRuntimeAvailable = !selectedRuntime.isEmpty() && QFileInfo(QDir(selectedRuntime).filePath("onnxruntime.dll")).isFile() &&
             QFileInfo(QDir(selectedRuntime).filePath("onnxruntime_providers_cuda.dll")).isFile();
         const bool bundledRuntimeAvailable = QFileInfo(QDir(bundledRuntime).filePath("onnxruntime.dll")).isFile() &&
             QFileInfo(QDir(bundledRuntime).filePath("onnxruntime_providers_cuda.dll")).isFile();

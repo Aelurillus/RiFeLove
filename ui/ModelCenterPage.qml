@@ -82,7 +82,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Label {
-                            text: valid ? (modelData.id || qsTr("RIFE 模型")) + "  ·  " + (modelData.version || "") : qsTr("模型校验失败")
+                            text: valid ? (modelData.displayName || modelData.id || qsTr("RIFE 模型")) + "  ·  " + (modelData.version || "") : qsTr("模型校验失败")
                             font.bold: true
                             Layout.fillWidth: true
                             textFormat: Text.PlainText
@@ -104,6 +104,56 @@ Item {
                         color: "#8493aa"
                         font.pixelSize: 11
                         wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                    }
+                    Label {
+                        visible: valid
+                        text: qsTr("许可  ") + (modelData.licenseId || qsTr("未声明")) + "     " +
+                              qsTr("数值档案  ") + (modelData.numericalProfile || qsTr("未记录")) + "     " +
+                              qsTr("HDR  ") + (modelData.hdrQualified ? qsTr("已验证") : qsTr("未验证"))
+                        color: "#c4d1e4"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                    }
+                    Label {
+                        visible: valid && (modelData.validatedBackends || []).length > 0
+                        text: qsTr("已记录的验证后端  ") + (modelData.validatedBackends || []).join("、")
+                        color: "#9aaac0"
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                    }
+                    Label {
+                        visible: valid && (modelData.sourceRepository || modelData.upstreamCommit)
+                        text: qsTr("上游来源声明  ") + (modelData.sourceRepository || qsTr("未记录")) +
+                              (modelData.upstreamCommit ? "  ·  " + modelData.upstreamCommit : "")
+                        color: "#9aaac0"
+                        font.pixelSize: 11
+                        wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                    }
+                    Label {
+                        visible: valid && modelData.licenseScopeEvidence
+                        text: qsTr("许可范围依据  ") + modelData.licenseScopeEvidence
+                        color: "#9aaac0"
+                        font.pixelSize: 11
+                        wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                    }
+                    Label {
+                        visible: valid
+                        text: modelData.metadataIntegrityVerified
+                            ? qsTr("完整性校验通过：权重、许可证、来源清单和验证报告的 SHA-256 均匹配。此校验不代表作者签名或画质保证。")
+                            : qsTr("旧版清单：权重 SHA-256 已校验；许可证、来源清单和验证报告未绑定 SHA-256。")
+                        color: modelData.metadataIntegrityVerified ? "#79d6ba" : "#e5c27b"
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                         textFormat: Text.PlainText
                     }
@@ -150,7 +200,7 @@ Item {
         }
         Label {
             Layout.fillWidth: true
-            text: qsTr("目录校验会检查模型张量契约、随包许可证和权重 SHA-256。当前插帧适配器仅接受 RIFE FP32；是否适合当前视频仍由处理流水线进一步验证。")
+            text: qsTr("目录校验会检查模型张量契约与所声明的文件哈希。后端列表和数值档案描述已有验证范围；它们不代表感知画质排名，HDR 支持只会在独立色彩与模型测试完成后标记。")
             color: "#8493aa"
             wrapMode: Text.WordWrap
             font.pixelSize: 12

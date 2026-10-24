@@ -4,7 +4,7 @@ param(
     [string]$QtRoot = "C:/itzming/dependences/qt-6.12.0-local",
     [string]$FfmpegRoot = "C:/itzming/dependences/ffmpeg-8.1.3/ffmpeg-n8.1.3-18-g46d899d7a0-win64-lgpl-shared-8.1",
     [string]$OnnxRuntimeRoot = "C:/itzming/dependences/onnxruntime-win-x64-gpu-1.22.0",
-    [string]$ModelPackRoot = (Join-Path $PSScriptRoot "../../models/cache/rife-4.25-fp32-sdr8-v2"),
+    [string]$ModelPackRoot = (Join-Path $PSScriptRoot "../../models/cache/rife-4.25-fp32-sdr8-v3"),
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "../../out/RifeLove-local")
 )
 
@@ -21,6 +21,9 @@ $qt = (Resolve-Path $QtRoot).Path
 $ffmpeg = (Resolve-Path $FfmpegRoot).Path
 $onnx = (Resolve-Path (Join-Path $OnnxRuntimeRoot "lib/onnxruntime.dll")).Path | Split-Path -Parent
 $model = (Resolve-Path (Join-Path $ModelPackRoot "model.json")).Path | Split-Path -Parent
+$modelDescriptor = Get-Content -LiteralPath (Join-Path $model "model.json") -Raw | ConvertFrom-Json
+if ($modelDescriptor.id -notmatch '^[A-Za-z0-9._-]{1,128}$') { throw "Model pack id is unsafe for a package path: $($modelDescriptor.id)" }
+$modelDisplayName = if ($modelDescriptor.displayName) { [string]$modelDescriptor.displayName } else { [string]$modelDescriptor.id }
 $executable = Join-Path $build "RifeLove.exe"
 $deployTool = Join-Path $qt "bin/windeployqt.exe"
 foreach ($required in @($executable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"),(Join-Path $model "model.onnx"))) {
@@ -54,7 +57,7 @@ foreach ($name in @("avcodec-62.dll","avformat-62.dll","avutil-60.dll","swscale-
     Copy-Item -LiteralPath $source -Destination $target
 }
 
-$modelTarget = Join-Path $target "models/rife-4.25-fp32-sdr8-v2"
+$modelTarget = Join-Path $target ("models/{0}" -f $modelDescriptor.id)
 New-Item -ItemType Directory -Path $modelTarget -Force | Out-Null
 foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
     $source = Join-Path $model $name
@@ -87,9 +90,9 @@ $readme = @"
 RifeLove 本机运行包
 
 启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。
-本次附带且已校验的模型：RIFE 4.25 FP32 SDR8。当前色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8-bit SDR，并保留输入色彩标签。模型许可与 SHA-256 位于 models 和 licenses 文件夹。
+本次附带且已校验的模型：$modelDisplayName。当前色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8-bit SDR，并保留输入色彩标签。模型许可与 SHA-256 位于 models 和 licenses 文件夹。
 默认推理：优先尝试 TensorRT 10.9；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT 引擎缓存位于本机用户目录。
-默认视频编码：自动尝试 NVIDIA NVENC；编码器无法启动时会显示说明并切换到 H.264 软件编码。
+默认视频编码：导入时预检查 NVIDIA NVENC；若当前驱动不兼容，会在任务开始前选择 H.264 软件编码并说明原因。RIFE 插帧仍使用 CUDA。
 导入视频时会按源视频的分辨率和像素格式预检查 NVENC、软件 H.264、HEVC 与 AV1；这项检查只打开编码器上下文，最终仍以实际导出结果为准。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。
 进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。
@@ -124,14 +127,17 @@ if (-not (Test-Path -LiteralPath (Join-Path $target "data/preferences.ini") -Pat
 }
 
 $preferences = Get-Content -LiteralPath (Join-Path $target "data/preferences.ini") -Raw
-if ($preferences -notmatch "model\.json|rife-4\.25" -or $preferences -notmatch "onnxruntime\.dll|runtime") {
+if ($preferences -notmatch [regex]::Escape([string]$modelDescriptor.id) -or $preferences -notmatch "onnxruntime\.dll|runtime") {
     throw "Packaged first-run preferences do not contain the bundled model and runtime defaults."
 }
 
 $manifest = @(
     "RifeLove local bundle SHA-256",
-    ((Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe"),
-    ((Get-FileHash -LiteralPath (Join-Path $modelTarget "model.onnx") -Algorithm SHA256).Hash.ToLowerInvariant() + "  models/rife-4.25-fp32-sdr8-v2/model.onnx")
+    ((Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe")
 )
+foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
+    $relative = "models/$($modelDescriptor.id)/$name"
+    $manifest += (Get-FileHash -LiteralPath (Join-Path $modelTarget $name) -Algorithm SHA256).Hash.ToLowerInvariant() + "  $relative"
+}
 Set-Content -LiteralPath (Join-Path $target "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
 Write-Output "Packaged and launched local RifeLove build: $target"

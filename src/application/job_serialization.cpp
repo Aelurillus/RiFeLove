@@ -88,7 +88,9 @@ void pinModelDescriptor(ProcessingJob& job) {
     const auto bytes = inference::readLocalFile(job.modelDirectory / "model.json",256 * 1024);
     if (bytes.empty()) throw std::invalid_argument("Model descriptor is empty");
     const auto json = Json::parse(reinterpret_cast<const char*>(bytes.data()),reinterpret_cast<const char*>(bytes.data() + bytes.size()));
-    if (json.at("schemaVersion") != 1 || json.at("family") != "rife") throw std::invalid_argument("Unsupported model descriptor");
+    const auto descriptorVersion = json.at("schemaVersion").get<int>();
+    if ((descriptorVersion != 1 && descriptorVersion != 2) || json.at("family") != "rife")
+        throw std::invalid_argument("Unsupported model descriptor");
     const auto digest = json.at("sha256").get<std::string>(); hash(digest,true);
     const auto id = json.at("id").get<std::string>(), version = json.at("version").get<std::string>(); text(id,256); text(version,256);
     if ((!job.expectedModelSha256.empty() && job.expectedModelSha256 != digest) || (!job.expectedModelId.empty() && job.expectedModelId != id) ||

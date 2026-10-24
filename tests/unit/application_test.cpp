@@ -49,6 +49,23 @@ TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThreshold
     bad = job; bad.settings.scene.cutMeanDifference = -0.1; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.encoding.frameRate = Rational(24); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
 }
+TEST(ProcessingConfiguration, PinsVersionTwoModelDescriptorForPersistentJobs) {
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("rifelove-model-descriptor-v2-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directory(directory));
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::filesystem::remove_all(path); } } cleanup{directory};
+    const std::string digest(64,'c');
+    const nlohmann::json descriptor{{"schemaVersion",2},{"id","fixture-v2"},{"family","rife"},
+        {"version","4.25"},{"sha256",digest},{"capabilities",nlohmann::json::object()},
+        {"license",nlohmann::json::object()},{"provenance",nlohmann::json::object()},{"validation",nlohmann::json::object()}};
+    { std::ofstream file(directory / "model.json",std::ios::binary); file << descriptor.dump(); }
+    auto job = configuredJob(); job.modelDirectory = directory;
+    job.expectedModelSha256.clear(); job.expectedModelId.clear(); job.expectedModelVersion.clear();
+    ASSERT_NO_THROW(pinModelDescriptor(job));
+    EXPECT_EQ(job.expectedModelId,"fixture-v2");
+    EXPECT_EQ(job.expectedModelVersion,"4.25");
+    EXPECT_EQ(job.expectedModelSha256,digest);
+}
 TEST(SourceLease, HashesWithBoundedReadsAndPreventsConcurrentWrites) {
     const auto file = std::filesystem::temp_directory_path() / ("rifelove-lease-" + std::to_string(std::random_device{}()) + ".bin");
     const auto created = CreateFileW(file.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);

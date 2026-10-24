@@ -180,9 +180,11 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
                                "passed": maximum <= limits["maximum"] and psnr >= limits["psnr"], "fixtures": fixtures})
         graph_hash = digest(onnx_path.read_bytes())
         passed = all(case["passed"] for case in validation)
+        validated_backends = ["pytorch_cpu", "onnxruntime_cpu"]
         report = {"status": "passed_cpu_reference" if passed else "failed_cpu_reference", "providers": session.get_providers(),
                   "torch": torch.__version__, "onnx": onnx.__version__, "onnxruntime": ort.__version__,
                   "model_sha256": graph_hash, "numerical_profile": numerical_profile,
+                  "validated_backends": validated_backends,
                   "warp_adapter_max_abs_error": adapter_error, "ort_max_abs_error_limit": limits["maximum"], "minimum_psnr_db": limits["psnr"],
                   "cases": validation, "elapsed_seconds": time.perf_counter() - started,
                   "pending": ["native_onnx_cuda_parity", "tensorrt_fp32_fp16", "visual_quality", "performance_matrix"]}
@@ -191,17 +193,24 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
             failure.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             raise ValueError(f"ONNX/PyTorch numerical gate failed ({numerical_profile}); no pack published. Report: {failure}")
         pack_id = "rife-4.25-fp32" + ("-sdr8" if numerical_profile == "sdr8" else "")
-        descriptor = {"schemaVersion": 1, "id": pack_id, "family": "rife", "version": "4.25",
-                      "modelFile": "model.onnx", "sha256": graph_hash, "license": "MIT", "licenseFile": "LICENSE.txt",
-                      "inputLayout": "NCHW", "dtype": "float32", "channels": 3, "batch": 1,
-                      "inputRange": [0.0, 1.0], "spatialMultiple": 64,
-                      "timestepShape": [1, 1, 1, 1], "dynamicTimestep": True, "dynamicSpatial": True,
-                      "validatedBackends": ["pytorch_cpu", "onnxruntime_cpu"],
-                      "numericalProfile": numerical_profile, "hdrQualified": False,
-                      "validationFile": "validation.json", "sourceManifestFile": "source-manifest.json"}
-        for filename, value in (("validation.json", report), ("model.json", descriptor), ("source-manifest.json", manifest)):
-            (temporary / filename).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-        (temporary / "LICENSE.txt").write_bytes(sources["LICENSE.txt"])
+        validation_bytes = (json.dumps(report, indent=2) + "\n").encode("utf-8")
+        source_manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
+        license_bytes = sources["LICENSE.txt"]
+        descriptor = {"schemaVersion": 2, "id": pack_id,
+                      "displayName": f"RIFE 4.25 FP32 {numerical_profile.upper()}", "family": "rife", "version": "4.25",
+                      "modelFile": "model.onnx", "sha256": graph_hash,
+                      "license": {"id": "MIT", "file": "LICENSE.txt", "sha256": digest(license_bytes)},
+                      "provenance": {"manifestFile": "source-manifest.json", "manifestSha256": digest(source_manifest_bytes)},
+                      "capabilities": {"inputLayout": "NCHW", "dtype": "float32", "channels": 3, "batch": 1,
+                                       "inputRange": [0.0, 1.0], "spatialMultiple": 64,
+                                       "timestepShape": [1, 1, 1, 1], "dynamicTimestep": True, "dynamicSpatial": True,
+                                       "supportedInputProfiles": ["bt709-sdr8", "bt470bg-sdr8"], "hdrQualified": False},
+                      "validation": {"reportFile": "validation.json", "reportSha256": digest(validation_bytes),
+                                     "numericalProfile": numerical_profile, "validatedBackends": validated_backends}}
+        (temporary / "validation.json").write_bytes(validation_bytes)
+        (temporary / "source-manifest.json").write_bytes(source_manifest_bytes)
+        (temporary / "LICENSE.txt").write_bytes(license_bytes)
+        (temporary / "model.json").write_text(json.dumps(descriptor, indent=2) + "\n", encoding="utf-8")
         if temporary.resolve().parent != parent or not temporary.name.startswith(".rifelove-export-"):
             raise ValueError("Unexpected export staging path")
         if destination.exists():

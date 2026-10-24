@@ -265,7 +265,19 @@ private:
         QVariantMap entry{{"directory",directory},{"valid",false}};
         try {
             const auto model = inference::loadModelPack(path(directory));
-            entry["valid"] = true; entry["id"] = text(model.id); entry["version"] = text(model.version); entry["sha256"] = text(model.sha256);
+            QStringList validatedBackends;
+            for (const auto& backend : model.validatedBackends) validatedBackends.push_back(text(backend));
+            QStringList supportedProfiles;
+            for (const auto& profile : model.supportedInputProfiles) supportedProfiles.push_back(text(profile));
+            entry["valid"] = true; entry["id"] = text(model.id); entry["displayName"] = text(model.displayName);
+            entry["family"] = text(model.family); entry["version"] = text(model.version); entry["sha256"] = text(model.sha256);
+            entry["schemaVersion"] = model.schemaVersion; entry["licenseId"] = text(model.licenseId);
+            entry["licenseSha256"] = text(model.licenseSha256); entry["numericalProfile"] = text(model.numericalProfile);
+            entry["validatedBackends"] = validatedBackends; entry["supportedInputProfiles"] = supportedProfiles;
+            entry["hdrQualified"] = model.hdrQualified; entry["metadataIntegrityVerified"] = model.metadataIntegrityVerified;
+            entry["sourceRepository"] = text(model.sourceRepository); entry["upstreamCommit"] = text(model.upstreamCommit);
+            entry["licenseScopeEvidence"] = text(model.licenseScopeEvidence);
+            entry["sourceManifestSha256"] = text(model.sourceManifestSha256); entry["validationSha256"] = text(model.validationSha256);
             entry["directory"] = QString::fromStdWString(model.directory.wstring());
             entry["error"] = QString();
         } catch (const std::exception& error) { entry["error"] = text(error.what()); }

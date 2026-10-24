@@ -14,9 +14,118 @@
 
 namespace rifelove::inference {
 namespace {
+using Json = nlohmann::json;
+
 bool isHash(const std::string& text) {
     return text.size() == 64 && std::all_of(text.begin(), text.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
+
+std::string requireString(const Json& object, const char* key, std::size_t maximum = 256) {
+    const auto found = object.find(key);
+    if (found == object.end() || !found->is_string()) throw std::invalid_argument(std::string("Missing or invalid model metadata: ") + key);
+    auto value = found->get<std::string>();
+    if (value.empty() || value.size() > maximum) throw std::invalid_argument(std::string("Missing or oversized model metadata: ") + key);
+    return value;
+}
+
+std::vector<std::string> requireStringArray(const Json& object, const char* key, std::size_t maximumCount = 64) {
+    const auto found = object.find(key);
+    if (found == object.end() || !found->is_array() || found->empty() || found->size() > maximumCount)
+        throw std::invalid_argument(std::string("Missing or invalid model metadata list: ") + key);
+    std::vector<std::string> values;
+    values.reserve(found->size());
+    for (const auto& item : *found) {
+        if (!item.is_string()) throw std::invalid_argument(std::string("Invalid model metadata list item: ") + key);
+        auto value = item.get<std::string>();
+        if (value.empty() || value.size() > 128 || std::find(values.begin(), values.end(), value) != values.end())
+            throw std::invalid_argument(std::string("Invalid or duplicate model metadata list item: ") + key);
+        values.push_back(std::move(value));
+    }
+    return values;
+}
+
+Json parseJson(std::span<const std::byte> bytes, const char* label) {
+    if (bytes.empty()) throw std::invalid_argument(std::string("Empty model ") + label);
+    auto value = Json::parse(reinterpret_cast<const char*>(bytes.data()), reinterpret_cast<const char*>(bytes.data() + bytes.size()));
+    if (!value.is_object()) throw std::invalid_argument(std::string("Model ") + label + " must be a JSON object");
+    return value;
+}
+
+std::vector<std::byte> readVerifiedPackFile(const std::filesystem::path& directory, const Json& metadata,
+    const char* fileKey, const char* hashKey, std::size_t limit) {
+    const auto relative = requireString(metadata, fileKey);
+    const auto expected = requireString(metadata, hashKey, 64);
+    if (!isHash(expected)) throw std::invalid_argument(std::string("Invalid SHA-256 in model metadata: ") + hashKey);
+    return readVerifiedFile(packFile(directory, relative), expected, limit);
+}
+
+void validateTensorContract(const Json& capabilities) {
+    if (!capabilities.is_object() || capabilities.at("inputLayout") != "NCHW" ||
+        capabilities.at("dtype") != "float32" || capabilities.at("batch") != 1 || capabilities.at("channels") != 3 ||
+        capabilities.at("inputRange") != Json::array({0.0, 1.0}) ||
+        capabilities.at("timestepShape") != Json::array({1,1,1,1}) ||
+        capabilities.at("dynamicTimestep") != true || capabilities.at("dynamicSpatial") != true)
+        throw std::invalid_argument("Unsupported RIFE model tensor contract");
+}
+
+std::vector<std::byte> readLegacyLicense(const std::filesystem::path& directory, const Json& descriptor, std::string& licenseId) {
+    licenseId = requireString(descriptor, "license", 128);
+    return readLocalFile(packFile(directory, requireString(descriptor, "licenseFile")), 1024 * 1024);
+}
+
+void readV2Metadata(const std::filesystem::path& directory, const Json& descriptor, ModelPack& model) {
+    const auto& license = descriptor.at("license");
+    if (!license.is_object()) throw std::invalid_argument("Model license metadata must be an object");
+    model.licenseId = requireString(license, "id", 128);
+    const auto licenseBytes = readVerifiedPackFile(directory, license, "file", "sha256", 1024 * 1024);
+    if (licenseBytes.empty()) throw std::invalid_argument("Model license file is empty");
+    model.licenseSha256 = requireString(license, "sha256", 64);
+
+    const auto& provenance = descriptor.at("provenance");
+    if (!provenance.is_object()) throw std::invalid_argument("Model provenance metadata must be an object");
+    const auto sourceBytes = readVerifiedPackFile(directory, provenance, "manifestFile", "manifestSha256", 256 * 1024);
+    model.sourceManifestSha256 = requireString(provenance, "manifestSha256", 64);
+    const auto source = parseJson(sourceBytes, "source manifest");
+    if (requireString(source, "license", 128) != model.licenseId)
+        throw std::invalid_argument("Model license does not match its source manifest declaration");
+    model.sourceRepository = requireString(source, "upstreamRepository", 2048);
+    model.upstreamCommit = requireString(source, "upstreamCommit", 128);
+    if (const auto evidence = source.find("licenseScopeEvidence"); evidence != source.end() && evidence->is_string())
+        model.licenseScopeEvidence = evidence->get<std::string>();
+
+    const auto& validation = descriptor.at("validation");
+    if (!validation.is_object()) throw std::invalid_argument("Model validation metadata must be an object");
+    model.numericalProfile = requireString(validation, "numericalProfile", 128);
+    model.validatedBackends = requireStringArray(validation, "validatedBackends");
+    const auto reportBytes = readVerifiedPackFile(directory, validation, "reportFile", "reportSha256", 1024 * 1024);
+    model.validationSha256 = requireString(validation, "reportSha256", 64);
+    const auto report = parseJson(reportBytes, "validation report");
+    const auto status = requireString(report, "status", 128);
+    if (status.rfind("passed_", 0) != 0 || requireString(report, "model_sha256", 64) != model.sha256 ||
+        requireString(report, "numerical_profile", 128) != model.numericalProfile ||
+        requireStringArray(report, "validated_backends") != model.validatedBackends)
+        throw std::invalid_argument("Model validation report does not match the declared model profile");
+    const auto cases = report.find("cases");
+    if (cases == report.end() || !cases->is_array() || cases->empty())
+        throw std::invalid_argument("Model validation report contains no cases");
+    for (const auto& item : *cases) {
+        if (!item.is_object() || !item.contains("passed") || item.at("passed") != true)
+            throw std::invalid_argument("Model validation report contains a failed or malformed case");
+    }
+
+    const auto& capabilities = descriptor.at("capabilities");
+    validateTensorContract(capabilities);
+    model.spatialMultiple = capabilities.at("spatialMultiple").get<int>();
+    if (model.spatialMultiple != 64) throw std::invalid_argument("Unsupported RIFE spatial multiple");
+    model.supportedInputProfiles = requireStringArray(capabilities, "supportedInputProfiles");
+    if (!capabilities.contains("hdrQualified") || !capabilities.at("hdrQualified").is_boolean())
+        throw std::invalid_argument("Model HDR qualification metadata is missing");
+    model.hdrQualified = capabilities.at("hdrQualified").get<bool>();
+    if (!model.hdrQualified && std::find(model.supportedInputProfiles.begin(), model.supportedInputProfiles.end(), "hdr") != model.supportedInputProfiles.end())
+        throw std::invalid_argument("Model cannot claim an HDR profile without HDR qualification");
+    model.metadataIntegrityVerified = true;
+}
+
 void cryptoCheck(NTSTATUS status) { if (status < 0) throw std::runtime_error("Windows SHA-256 operation failed"); }
 }
 
@@ -72,20 +181,38 @@ std::filesystem::path packFile(const std::filesystem::path& directory, const std
 }
 ModelPack loadModelPack(const std::filesystem::path& directory) {
     const auto bytes = readLocalFile(directory / "model.json", 256 * 1024);
-    if (bytes.empty()) throw std::invalid_argument("Empty model descriptor");
-    const auto json = nlohmann::json::parse(reinterpret_cast<const char*>(bytes.data()), reinterpret_cast<const char*>(bytes.data() + bytes.size()));
-    if (json.at("schemaVersion") != 1 || json.at("family") != "rife" || json.at("inputLayout") != "NCHW" ||
-        json.at("dtype") != "float32" || json.at("batch") != 1 || json.at("channels") != 3 ||
-        json.at("inputRange") != nlohmann::json::array({0.0, 1.0}) || json.at("timestepShape") != nlohmann::json::array({1,1,1,1}) ||
-        json.at("dynamicTimestep") != true || json.at("dynamicSpatial") != true)
-        throw std::invalid_argument("Unsupported RIFE model tensor contract");
-    const int multiple = json.at("spatialMultiple").get<int>();
-    if (multiple != 64) throw std::invalid_argument("Unsupported RIFE spatial multiple");
-    const auto license = readLocalFile(packFile(directory, json.at("licenseFile").get<std::string>()), 1024 * 1024);
-    if (license.empty() || json.at("license").get<std::string>().empty()) throw std::invalid_argument("Model license metadata is missing");
-    const auto hash = json.at("sha256").get<std::string>();
-    auto graph = readVerifiedFile(packFile(directory, json.at("modelFile").get<std::string>()), hash, 512ULL * 1024 * 1024);
-    if (graph.empty()) throw std::invalid_argument("Empty ONNX model");
-    return {std::filesystem::canonical(directory), json.at("id").get<std::string>(), json.at("version").get<std::string>(), hash, multiple, std::move(graph)};
+    const auto json = parseJson(bytes, "descriptor");
+    ModelPack model;
+    model.directory = std::filesystem::canonical(directory);
+    model.schemaVersion = json.at("schemaVersion").get<int>();
+    if (model.schemaVersion != 1 && model.schemaVersion != 2) throw std::invalid_argument("Unsupported model descriptor schema version");
+    model.id = requireString(json, "id", 128);
+    model.displayName = json.value("displayName", model.id);
+    if (model.displayName.empty() || model.displayName.size() > 256) throw std::invalid_argument("Invalid model display name");
+    model.family = requireString(json, "family", 64);
+    if (model.family != "rife") throw std::invalid_argument("Unsupported model family");
+    model.version = requireString(json, "version", 128);
+    model.sha256 = requireString(json, "sha256", 64);
+    if (!isHash(model.sha256)) throw std::invalid_argument("Invalid model graph SHA-256");
+
+    const auto graphPath = packFile(directory, requireString(json, "modelFile"));
+    model.graph = readVerifiedFile(graphPath, model.sha256, 512ULL * 1024 * 1024);
+    if (model.graph.empty()) throw std::invalid_argument("Empty ONNX model");
+
+    if (model.schemaVersion == 1) {
+        validateTensorContract(json);
+        model.spatialMultiple = json.at("spatialMultiple").get<int>();
+        if (model.spatialMultiple != 64) throw std::invalid_argument("Unsupported RIFE spatial multiple");
+        const auto license = readLegacyLicense(directory, json, model.licenseId);
+        if (license.empty()) throw std::invalid_argument("Model license file is empty");
+        if (const auto found = json.find("numericalProfile"); found != json.end() && found->is_string()) model.numericalProfile = found->get<std::string>();
+        if (const auto found = json.find("validatedBackends"); found != json.end() && found->is_array())
+            for (const auto& item : *found) if (item.is_string()) model.validatedBackends.push_back(item.get<std::string>());
+        if (const auto found = json.find("hdrQualified"); found != json.end() && found->is_boolean()) model.hdrQualified = found->get<bool>();
+        model.supportedInputProfiles = {"legacy-unverified"};
+    } else {
+        readV2Metadata(directory, json, model);
+    }
+    return model;
 }
 } // namespace rifelove::inference

@@ -126,6 +126,8 @@ int main(int argc, char** argv) {
         require(studio.media().value("width").toInt() == 96 && studio.media().value("height").toInt() == 64, "Wrong imported dimensions");
         require(studio.media().value("color").toString().contains("bt470bg") && studio.media().value("color").toString().contains("smpte170m"), "Legacy SDR color tags were not detected");
         const auto encoderCapabilities = studio.media().value("encoders").toMap();
+        const bool preflightSoftwareFallback = !studio.media().value("nvencContextOpened").toBool() &&
+            studio.media().value("softwareH264ContextOpened").toBool();
         require(encoderCapabilities.contains("h264_nvenc") && encoderCapabilities.contains("libopenh264") &&
                 encoderCapabilities.contains("libkvazaar") && encoderCapabilities.contains("libaom-av1") &&
                 studio.media().contains("nvencContextOpened") && studio.media().contains("softwareH264ContextOpened"),
@@ -169,6 +171,10 @@ int main(int argc, char** argv) {
         heartbeat.start();
         click(button,"studio start");
         require(studio.busy(), "QML start did not submit asynchronous work");
+        if (preflightSoftwareFallback)
+            require(studio.progress().value("encoderFallbackReason").toString().size() > 0 &&
+                    studio.detail().contains(QStringLiteral("软件 H.264")),
+                "Studio did not carry the preflight NVENC fallback into the running job");
         require(studio.progress().value("estimatedFrames").toULongLong() == 36,
             "Studio did not estimate the 60 FPS output frame count from the probed source duration");
         require(progressLabel && progressLabel->property("text").toString().contains(QStringLiteral("约 36 帧")),
@@ -179,7 +185,8 @@ int main(int argc, char** argv) {
         require(studio.progress().value("frames").toULongLong() == 36, "Wrong output frame count");
         require(studio.progress().value("aiFrames").toULongLong() > 0, "Desktop did not generate AI frames");
         if (!studio.progress().value("encoderFallbackReason").toString().isEmpty())
-            require(sawFallbackNotice && !sawRawFallbackError, "Recoverable NVENC fallback was presented as a processing error");
+            require(sawFallbackNotice && !sawRawFallbackError && studio.progress().value("encoder").toString() == QStringLiteral("libopenh264"),
+                "Recoverable NVENC fallback was presented as a processing error or did not use software H.264");
         require(sawEta, "Studio did not show a remaining-time estimate while generating frames");
         require(responsiveTicks > 5, "UI event loop did not stay responsive during processing");
         const auto aiFrames = studio.progress().value("aiFrames").toULongLong();
@@ -361,6 +368,15 @@ int main(int argc, char** argv) {
         require(taskQueue.models().size() == 1 && taskQueue.models().front().toMap().value("valid").toBool() &&
                 taskQueue.models().front().toMap().value("id").toString() == "rife-4.25-fp32-sdr8",
                 "Model center did not verify the active local RIFE pack");
+        const auto registeredModel = taskQueue.models().front().toMap();
+        require(registeredModel.value("schemaVersion").toInt() == 2 &&
+                registeredModel.value("metadataIntegrityVerified").toBool() &&
+                registeredModel.value("licenseId").toString() == "MIT" &&
+                registeredModel.value("sourceRepository").toString() == "https://github.com/hzwer/Practical-RIFE" &&
+                registeredModel.value("numericalProfile").toString() == "sdr8" &&
+                registeredModel.value("validatedBackends").toStringList().contains("onnxruntime_cpu") &&
+                !registeredModel.value("hdrQualified").toBool(),
+            "Model center did not expose verified v2 provenance, license and capability metadata");
         const auto localModelCopy = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-model-copy");
         taskQueue.addLocalModel(QUrl::fromLocalFile(localModelCopy));
         waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 2; }, "Local model import or integrity verification failed",20000);

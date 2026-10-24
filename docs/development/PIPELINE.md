@@ -26,7 +26,7 @@ The pipeline cross-checks decoded final-frame duration and the declared stream e
 
 Audio/subtitle payloads are copied. Matroska `DURATION` is parsed with integer rational arithmetic. CodecDelay/initial padding and the first compressed packet's skip-samples information are retained for AAC-to-Matroska conversion. A container-rounded final audio packet duration is normalized to its declared presentation boundary without changing payload, PTS/DTS or discard side data. A separate streaming probe currently reads to the first audio packet; late-start tracks need indexed probing optimization.
 
-`auto` encoding tries an actual `h264_nvenc` open, then records a `libopenh264` fallback for a hardware encoder-open failure. Other errors and explicit encoder choices fail visibly. This machine's current SDK/driver combination cannot encode with NVENC; all current successful video encodes use software codecs.
+Desktop Studio's `auto` mode uses the source-profile check from video import: if NVENC could not open, it selects `libopenh264` before the job starts and keeps that fallback visible while RIFE runs. If preflight succeeds, the writer still attempts a real encoder open and can fall back on an encoder-open failure. The CLI's `auto` mode performs that runtime attempt directly. Other errors and explicit encoder choices fail visibly. This machine's current SDK/driver combination cannot encode with NVENC; all current successful video encodes use software codecs.
 
 ## Evidence
 

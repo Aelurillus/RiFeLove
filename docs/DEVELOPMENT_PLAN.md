@@ -45,7 +45,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
   - RIFE 4.25 native execution passes six small-profile SDR8 comparisons with CUDA Conv/ConvTranspose/GridSample placement; larger profiles/visual validation remain open.
 - [x] Integrate TensorRT backend and version/GPU/model/options keyed engine cache.
   - ONNX Runtime 1.22 + TensorRT 10.9.0.34 + CUDA 12.8 passed six FP32 SDR8 reference cases on GTX 1660 SUPER; profiling confirms a fused TensorRT kernel ran. A tagged synthetic 720p BT.709 RIFE run completed 30 to 60 FPS with 24 AI frames, preserved FLAC audio and 0.5 s duration. Real-content quality, cache/performance matrix and FP16 remain open.
-- [ ] Register checksum-verifiable model manifests with capability and license metadata.
+- [x] Register checksum-verifiable model manifests with capability and license metadata.
+  - RIFE pack schema v2 binds the ONNX graph, license, upstream source manifest and validation report by SHA-256. Loading cross-checks tensor capabilities, the numerical profile, declared backends and all passed report cases; the offline Model Center shows the license, provenance declaration and qualification. Legacy v1 packs remain readable with an explicit sidecar-verification warning. The hashes establish pack consistency, not author authenticity; a trusted catalog and multiple qualified model profiles remain open.
 - [x] Pass first real end-to-end SDR8 video interpolation and independent original-PyTorch video numerical tests.
 - [ ] Complete full-resolution, real-content and perceptual/temporal quality acceptance.
 
