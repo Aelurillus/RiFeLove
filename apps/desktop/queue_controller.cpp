@@ -1,4 +1,5 @@
 #include "queue_controller.hpp"
+#include "encoding_settings.hpp"
 #include "application/task_queue.hpp"
 #include "application/job_serialization.hpp"
 #include "application/import_service.hpp"
@@ -111,9 +112,9 @@ public:
             post([folder](QueueController&) { QDesktopServices::openUrl(folder); }); return;
         }
     }); }
-    void saveDefaults(QString rate, QUrl model, QUrl runtime, QUrl output, QString encoder, QString container) {
+    void saveDefaults(QString rate, QUrl model, QUrl runtime, QUrl output, QString encoder, QString container, QVariantMap encodingOptions) {
         if (!settings_) return;
-        const auto warning = writeDefaults(rate,model,runtime,output,encoder,container);
+        const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions);
         if (!warning.isEmpty()) post([warning](QueueController& c) { c.detail_ = warning; emit c.changed(); });
     }
     void refreshModels() {
@@ -189,7 +190,8 @@ public:
             post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
         }
     }
-    void importItems(QList<QUrl> inputs, QUrl output, QString rate, QUrl model, QUrl runtime, QString encoder, QString container, bool recursive, std::stop_token stop) {
+    void importItems(QList<QUrl> inputs, QUrl output, QString rate, QUrl model, QUrl runtime, QString encoder, QString container,
+        QVariantMap encodingOptions, bool recursive, std::stop_token stop) {
         try {
             requireQueue();
             if (!model.isLocalFile() || !runtime.isLocalFile() || (!output.isEmpty() && !output.isLocalFile()))
@@ -202,7 +204,8 @@ public:
             if (!output.isEmpty()) request.outputDirectory = path(output.toLocalFile());
             request.container = utf8(container); request.recursive = recursive;
             request.settings.modelDirectory = path(model.toLocalFile()); request.settings.runtimeDirectory = path(runtime.toLocalFile());
-            request.settings.settings.targetRate = Rational::parse(utf8(rate)); request.settings.settings.encoding.encoder = utf8(encoder);
+            request.settings.settings.targetRate = Rational::parse(utf8(rate));
+            request.settings.settings.encoding = desktop::makeVideoEncodingSettings(encoder,encodingOptions);
             auto last = std::chrono::steady_clock::now();
             const auto result = importVideos(*queue_,request,stop,[&](std::size_t done, std::size_t total) {
                 const auto now = std::chrono::steady_clock::now();
@@ -218,7 +221,7 @@ public:
             }
             if (result.taskIds.empty()) throw std::invalid_argument(utf8(tr("没有找到当前模型可处理的视频。\n") + skipped.join('\n')));
             output = QUrl::fromLocalFile(QString::fromStdWString(result.outputDirectory.wstring()));
-            const auto warning = writeDefaults(rate,model,runtime,output,encoder,container);
+            const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions);
             snapshot();
             post([count=result.taskIds.size(),rejected=result.rejected.size(),skipped,warning](QueueController& c) {
                 c.importing_ = false; c.state_ = "ready"; c.detail_ = tr("已加入 %1 个任务。输出使用新文件名。").arg(count);
@@ -308,13 +311,24 @@ private:
         const auto encoder = settings_->value("encoder","auto").toString(), container = settings_->value("container","mkv").toString();
         result["encoder"] = QStringList{"auto","libopenh264","libkvazaar","libaom-av1"}.contains(encoder) ? encoder : QString("auto");
         result["container"] = QStringList{"mkv","mp4","mov"}.contains(container) ? container : QString("mkv");
+        QVariantMap encodingOptions{{"bitrateKbps",settings_->value("encoding/bitrateKbps",8000)},
+            {"qualityMode",settings_->value("encoding/qualityMode","bitrate")},
+            {"quality",settings_->value("encoding/quality",32)}, {"gopSize",settings_->value("encoding/gopSize",120)}};
+        try { (void)desktop::makeVideoEncodingSettings(result["encoder"].toString(),encodingOptions); }
+        catch (const std::exception&) { encodingOptions = desktop::videoEncodingDefaults(); }
+        for (auto it = encodingOptions.cbegin(); it != encodingOptions.cend(); ++it) result[it.key()] = it.value();
         return result;
     }
-    QString writeDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output, const QString& encoder, const QString& container) {
+    QString writeDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
+        const QString& encoder, const QString& container, const QVariantMap& encodingOptions) {
         if (!settings_) return tr("默认设置未保存。");
+        try { (void)desktop::makeVideoEncodingSettings(encoder,encodingOptions); }
+        catch (const std::exception&) { return tr("高级编码参数超出范围或与当前编码器不兼容，默认设置未保存。"); }
         settings_->setValue("rate",rate); settings_->setValue("model",model); settings_->setValue("runtime",runtime);
         if (!output.isEmpty()) settings_->setValue("output",output);
-        settings_->setValue("encoder",encoder); settings_->setValue("container",container); settings_->sync();
+        settings_->setValue("encoder",encoder); settings_->setValue("container",container);
+        for (auto it = encodingOptions.cbegin(); it != encodingOptions.cend(); ++it) settings_->setValue(QStringLiteral("encoding/") + it.key(),it.value());
+        settings_->sync();
         if (settings_->status() != QSettings::NoError) return tr("任务可继续使用，但默认设置未能保存。");
         const auto values = readDefaults(); post([values](QueueController& c) { c.defaults_ = values; emit c.defaultsChanged(); }); return {};
     }
@@ -342,10 +356,13 @@ void QueueController::snapshot(std::vector<UiTaskRow> rows) {
     counts_ = std::move(counts); model_.apply(std::move(rows)); emit changed();
 }
 void QueueController::reconnect() { if (available_ || busy_ || importing_) return; state_ = "loading"; emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->initialize(); },Qt::QueuedConnection); }
-void QueueController::addItems(const QList<QUrl>& sources, const QUrl& output, const QString& rate, const QUrl& model, const QUrl& runtime, const QString& encoder, const QString& container, bool recursive) {
+void QueueController::addItems(const QList<QUrl>& sources, const QUrl& output, const QString& rate, const QUrl& model,
+    const QUrl& runtime, const QString& encoder, const QString& container, const QVariantMap& encodingOptions, bool recursive) {
     if (!available_ || busy_ || importing_) { setError(tr("队列忙碌或尚未连接，请等待当前操作结束。")); return; }
     importing_ = true; state_ = "importing"; detail_.clear(); importCancel_ = std::stop_source(); const auto stop = importCancel_.get_token(); emit changed();
-    QMetaObject::invokeMethod(worker_,[w=worker_,sources,output,rate,model,runtime,encoder,container,recursive,stop] { w->importItems(sources,output,rate,model,runtime,encoder,container,recursive,stop); },Qt::QueuedConnection);
+    QMetaObject::invokeMethod(worker_,[w=worker_,sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,stop] {
+        w->importItems(sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,stop);
+    },Qt::QueuedConnection);
 }
 void QueueController::start() { if (!available_ || busy_ || importing_) return; busy_ = true; state_ = "running"; detail_.clear(); emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->start(); },Qt::QueuedConnection); }
 void QueueController::pause() { if (!busy_) return; state_ = "pausing"; emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->pause(); },Qt::QueuedConnection); }
@@ -355,8 +372,11 @@ void QueueController::cancelTask(const QString& id) { if (available_) QMetaObjec
 void QueueController::retryTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->retry(id); },Qt::QueuedConnection); }
 void QueueController::restartTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->restart(id); },Qt::QueuedConnection); }
 void QueueController::openOutputFolder(const QString& id) { if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->openFolder(id); },Qt::QueuedConnection); }
-void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output, const QString& encoder, const QString& container) {
-    if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container] { w->saveDefaults(rate,model,runtime,output,encoder,container); },Qt::QueuedConnection);
+void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
+    const QString& encoder, const QString& container, const QVariantMap& encodingOptions) {
+    if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions] {
+        w->saveDefaults(rate,model,runtime,output,encoder,container,encodingOptions);
+    },Qt::QueuedConnection);
 }
 void QueueController::refreshModels() {
     if (!available_ || busy_ || importing_ || verifyingModels_) return;
@@ -383,5 +403,7 @@ void QueueController::setDefaultModel(const QUrl& directory) {
     });
     if (!verified) { setError(tr("请先校验该模型包，再将其设为默认模型。")); return; }
     saveDefaults(defaults_.value("rate","60").toString(),directory,defaults_.value("runtime").toUrl(),
-        defaults_.value("output").toUrl(),defaults_.value("encoder","auto").toString(),defaults_.value("container","mkv").toString());
+        defaults_.value("output").toUrl(),defaults_.value("encoder","auto").toString(),defaults_.value("container","mkv").toString(),
+        {{"bitrateKbps",defaults_.value("bitrateKbps",8000)}, {"qualityMode",defaults_.value("qualityMode","bitrate")},
+         {"quality",defaults_.value("quality",32)}, {"gopSize",defaults_.value("gopSize",120)}});
 }

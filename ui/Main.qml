@@ -30,6 +30,7 @@ ApplicationWindow {
     property url modelFolder: ""
     property url runtimeFolder: ""
     property bool advancedOpen: false
+    property bool encodingAdvancedOpen: false
     property int currentPage: 0
     readonly property bool queueActive: processingAvailable && (taskQueue.busy || taskQueue.importing)
     readonly property bool active: processingAvailable && (studio.busy || queueActive)
@@ -46,12 +47,27 @@ ApplicationWindow {
         if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
         if (values.rate) rate.editText = values.rate
         if (values.encoder) encoder.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1"].indexOf(values.encoder)
+        studioBitrate.value = Number(values.bitrateKbps || 8000)
+        studioQuality.value = Number(values.quality || 32)
+        studioGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
+        studioQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" ? 1 : 0
+        normalizeEncodingMode()
+    }
+    function normalizeEncodingMode() {
+        if (encoder.currentIndex < 2 && studioQualityMode.currentIndex > 0) studioQualityMode.currentIndex = 0
+        if (encoder.currentIndex === 2 && studioQuality.value > 51) studioQuality.value = 51
+        if (encoder.currentIndex !== 2 && studioQuality.value > 63) studioQuality.value = 63
+    }
+    function encodingOptions() {
+        let mode = "bitrate"
+        if (studioQualityMode.currentIndex === 1) mode = encoder.currentIndex === 2 ? "qp" : "crf"
+        return { bitrateKbps: studioBitrate.value, qualityMode: mode, quality: studioQuality.value, gopSize: studioGop.value }
     }
     function persistLocalDefaults() {
         if (!processingAvailable) return
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
-            codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv")
+            codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv", encodingOptions())
     }
     Component.onCompleted: applyLocalDefaults()
     Connections {
@@ -233,7 +249,7 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: qsTr("编码器"); font.bold: true }
-                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: window.persistLocalDefaults() }
+                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动 H.264（优先 GPU）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
                         }
                     }
                     RowLayout {
@@ -243,6 +259,88 @@ ApplicationWindow {
                         ActionButton { text: qsTr("选择位置"); enabled: processingAvailable && !window.active; onClicked: { outputDialog.selectedFile = studio.localUrl(studio.output); outputDialog.open() } }
                     }
                     TextField { Layout.fillWidth: true; readOnly: true; text: processingAvailable ? studio.output : ""; placeholderText: qsTr("导入视频后自动生成新文件名"); selectByMouse: true }
+                    ActionButton {
+                        objectName: "studioAdvancedEncodingToggle"
+                        text: window.encodingAdvancedOpen ? qsTr("收起高级编码") : qsTr("高级编码设置")
+                        flat: true
+                        Layout.alignment: Qt.AlignLeft
+                        onClicked: window.encodingAdvancedOpen = !window.encodingAdvancedOpen
+                    }
+                    GroupBox {
+                        title: qsTr("高级编码")
+                        Layout.fillWidth: true
+                        visible: window.encodingAdvancedOpen
+                        Layout.preferredHeight: visible ? implicitHeight : 0
+                        ColumnLayout {
+                            anchors.fill: parent
+                            RowLayout {
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: qsTr("码率控制") }
+                                    ComboBox {
+                                        id: studioQualityMode
+                                        objectName: "studioQualityMode"
+                                        Layout.fillWidth: true
+                                        model: encoder.currentIndex === 2 ? [qsTr("目标码率"), qsTr("恒定量化 QP")]
+                                            : encoder.currentIndex === 3 ? [qsTr("目标码率"), qsTr("恒定质量 CRF")]
+                                            : [qsTr("目标码率")]
+                                        enabled: !window.active
+                                        onActivated: window.persistLocalDefaults()
+                                    }
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: studioQualityMode.currentIndex === 1 ? (encoder.currentIndex === 2 ? qsTr("QP（0–51）") : qsTr("CRF（0–63）")) : qsTr("目标质量") }
+                                    SpinBox {
+                                        id: studioQuality
+                                        objectName: "studioQuality"
+                                        from: 0
+                                        to: encoder.currentIndex === 2 ? 51 : 63
+                                        value: 32
+                                        enabled: !window.active && studioQualityMode.currentIndex === 1
+                                        onValueModified: window.persistLocalDefaults()
+                                    }
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: qsTr("目标码率（kbit/s）") }
+                                    SpinBox {
+                                        id: studioBitrate
+                                        objectName: "studioBitrateKbps"
+                                        from: 250
+                                        to: 200000
+                                        stepSize: 250
+                                        value: 8000
+                                        enabled: !window.active && studioQualityMode.currentIndex === 0
+                                        onValueModified: window.persistLocalDefaults()
+                                    }
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: qsTr("关键帧间隔（帧）") }
+                                    SpinBox {
+                                        id: studioGop
+                                        objectName: "studioGopSize"
+                                        from: 0
+                                        to: 1000
+                                        value: 120
+                                        enabled: !window.active
+                                        onValueModified: window.persistLocalDefaults()
+                                    }
+                                }
+                            }
+                            Label {
+                                text: encoder.currentIndex === 2 ? qsTr("HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。")
+                                    : encoder.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
+                                    : qsTr("当前 H.264 编码器使用目标码率。自动模式会在 NVENC 不可用时回退到软件 H.264。")
+                                color: "#9aaac0"
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
                     ActionButton {
                         text: window.advancedOpen ? qsTr("收起模型与运行库设置") : qsTr("高级设置 · 模型与运行库")
                         flat: true
@@ -297,7 +395,8 @@ ApplicationWindow {
                             enabled: window.canStart
                             highlighted: true
                             primary: true
-                            onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder, ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex])
+                            onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder,
+                                ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex], window.encodingOptions())
                         }
                     }
                     ProgressBar { Layout.fillWidth: true; indeterminate: studio.busy; visible: processingAvailable && studio.busy }

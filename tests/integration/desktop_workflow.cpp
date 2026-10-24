@@ -1,5 +1,6 @@
 #include "studio_controller.hpp"
 #include "queue_controller.hpp"
+#include "encoding_settings.hpp"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -53,6 +54,24 @@ int main(int argc, char** argv) {
     QQuickStyle::setStyle("Material");
     QGuiApplication app(argc, argv);
     try {
+        const auto h264Settings = rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("libopenh264"),
+            {{"bitrateKbps",2500},{"qualityMode","bitrate"},{"quality",32},{"gopSize",60}});
+        require(h264Settings.bitRate == 2500000 && h264Settings.gopSize == 60 && h264Settings.encoderOptions.empty(),
+            "H.264 target bitrate/GOP did not map to the native encoder settings");
+        const auto hevcSettings = rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("libkvazaar"),
+            {{"bitrateKbps",8000},{"qualityMode","qp"},{"quality",28},{"gopSize",48}});
+        require(hevcSettings.bitRate == 0 && hevcSettings.encoderOptions.at("kvazaar-params") == "qp=28",
+            "HEVC constant-QP settings did not map to Kvazaar options");
+        const auto av1Settings = rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("libaom-av1"),
+            {{"bitrateKbps",8000},{"qualityMode","crf"},{"quality",35},{"gopSize",48}});
+        require(av1Settings.bitRate == 0 && av1Settings.encoderOptions.at("crf") == "35",
+            "AV1 constant-quality settings did not map to libaom options");
+        bool rejectedUnsupportedQualityMode = false;
+        try {
+            (void)rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("libopenh264"),
+                {{"bitrateKbps",8000},{"qualityMode","crf"},{"quality",35},{"gopSize",48}});
+        } catch (const std::invalid_argument&) { rejectedUnsupportedQualityMode = true; }
+        require(rejectedUnsupportedQualityMode, "The desktop accepted a quality mode the selected H.264 encoder does not support");
         const auto arguments = app.arguments();
         require(arguments.size() == 8, "Expected source, output, pack, runtime, QML, screenshot and report paths");
         StudioController studio;
@@ -62,6 +81,8 @@ int main(int argc, char** argv) {
         QSettings initialSettings(QFileInfo(queueDatabase).dir().filePath("preferences.ini"),QSettings::IniFormat);
         initialSettings.setFallbacksEnabled(false);
         initialSettings.setValue("rate","240"); initialSettings.setValue("encoder","libopenh264"); initialSettings.setValue("container","mp4");
+        initialSettings.setValue("encoding/bitrateKbps",4500); initialSettings.setValue("encoding/qualityMode","bitrate");
+        initialSettings.setValue("encoding/quality",32); initialSettings.setValue("encoding/gopSize",60);
         initialSettings.setValue("model",QUrl::fromLocalFile(arguments[3])); initialSettings.setValue("runtime",QUrl::fromLocalFile(arguments[4]));
         initialSettings.setValue("modelCatalog/paths",QStringList{QFileInfo(arguments[3]).absoluteFilePath()});
         initialSettings.sync(); require(initialSettings.status() == QSettings::NoError, "Could not prepare saved first-run preferences");
@@ -85,6 +106,13 @@ int main(int argc, char** argv) {
         require(targetRate && targetRate->property("editText").toString() == QStringLiteral("240") &&
                 studioEncoder && studioEncoder->property("currentIndex").toInt() == 1,
                 "Studio did not restore the saved target FPS and encoder");
+        auto* studioBitrate = root->findChild<QObject*>("studioBitrateKbps");
+        auto* studioGop = root->findChild<QObject*>("studioGopSize");
+        auto* studioQualityMode = root->findChild<QObject*>("studioQualityMode");
+        auto* studioQuality = root->findChild<QObject*>("studioQuality");
+        require(studioBitrate && studioBitrate->property("value").toInt() == 4500 && studioGop && studioGop->property("value").toInt() == 60 &&
+                studioQualityMode && studioQualityMode->property("currentIndex").toInt() == 0 && studioQuality,
+                "Studio did not restore saved advanced encoder settings");
         // Confirm restoration above, then keep the synthetic workflow short.
         require(targetRate->setProperty("editText","60"), "Could not set the synthetic workflow FPS");
         root->setProperty("modelFolder", QUrl::fromLocalFile(arguments[3]));
@@ -139,6 +167,35 @@ int main(int argc, char** argv) {
         require(sawEta, "Studio did not show a remaining-time estimate while generating frames");
         require(responsiveTicks > 5, "UI event loop did not stay responsive during processing");
         const auto aiFrames = studio.progress().value("aiFrames").toULongLong();
+        // Run a real model-backed AV1 CRF job through the newly exposed desktop controls.
+        auto* advancedToggle = root->findChild<QObject*>("studioAdvancedEncodingToggle");
+        require(advancedToggle, "Advanced encoding controls are not present in Studio");
+        click(advancedToggle,"open advanced encoding controls");
+        require(studioEncoder->setProperty("currentIndex",3) && studioQualityMode->setProperty("currentIndex",1) &&
+                studioQuality->setProperty("value",35) && studioGop->setProperty("value",48),
+            "Could not select AV1 CRF controls");
+        require(QMetaObject::invokeMethod(root,"persistLocalDefaults",Qt::DirectConnection),
+            "Studio advanced settings could not be saved through the local preferences service");
+        waitUntil([&] { return taskQueue.defaults().value("encoder").toString() == QStringLiteral("libaom-av1") &&
+                taskQueue.defaults().value("qualityMode").toString() == QStringLiteral("crf") &&
+                taskQueue.defaults().value("quality").toInt() == 35; },
+            "AV1 CRF settings were not persisted as local defaults",10000);
+        const auto av1Output = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("desktop-av1-crf.mkv");
+        studio.setOutput(QUrl::fromLocalFile(av1Output));
+        click(button,"studio AV1 CRF start"); wait(studio);
+        require(studio.status() == "completed" && QFileInfo(av1Output).isFile() &&
+                studio.progress().value("encoder").toString() == QStringLiteral("libaom-av1"),
+            "Studio did not complete its AV1 constant-quality workflow");
+        require(studioEncoder->setProperty("currentIndex",2) && studioQualityMode->setProperty("currentIndex",1) &&
+                studioQuality->setProperty("value",28) && studioGop->setProperty("value",48),
+            "Could not select HEVC constant-QP controls");
+        const auto hevcOutput = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("desktop-hevc-qp.mkv");
+        studio.setOutput(QUrl::fromLocalFile(hevcOutput));
+        click(button,"studio HEVC QP start"); wait(studio);
+        require(studio.status() == "completed" && QFileInfo(hevcOutput).isFile() &&
+                studio.progress().value("encoder").toString() == QStringLiteral("libkvazaar"),
+            "Studio did not complete its HEVC constant-QP workflow");
+        studio.setOutput(QUrl::fromLocalFile(av1Output));
         // Exercise the local comparison viewer with the actual source/output pair.
         auto* comparisonButton = root->findChild<QObject*>("comparisonButton");
         click(comparisonButton,"comparison page navigation");
@@ -193,8 +250,9 @@ int main(int argc, char** argv) {
         studio.openSource(QUrl("https://example.invalid/video.mkv"));
         require(studio.status() == "failed" && !studio.busy(), "Nonlocal import should fail immediately");
         const auto batchFolder = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("queue-input");
+        const QVariantMap queueEncoding{{"bitrateKbps",3200},{"qualityMode","bitrate"},{"quality",32},{"gopSize",48}};
         taskQueue.addItems({QUrl::fromLocalFile(batchFolder),QUrl::fromLocalFile(arguments[1]),QUrl::fromLocalFile(arguments[1])},QUrl::fromLocalFile(queueFolder),"60",
-            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",true);
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",queueEncoding,true);
         waitUntil([&] { return !taskQueue.importing(); }, "Desktop queue import timed out");
         require(taskQueue.tasks()->rowCount() == 2, qPrintable(taskQueue.detail()));
         auto* importedRows = qobject_cast<TaskListModel*>(taskQueue.tasks());
@@ -231,6 +289,7 @@ int main(int argc, char** argv) {
         QueueController reopened(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("preferences-check.sqlite"));
         waitUntil([&] { return reopened.available() || reopened.state() == "error"; }, "Saved desktop preferences did not reload");
         require(reopened.available() && reopened.defaults().value("rate").toString() == "60" &&
+                reopened.defaults().value("bitrateKbps").toInt() == 3200 && reopened.defaults().value("gopSize").toInt() == 48 &&
                 QFileInfo(reopened.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("runtime").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[4]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("output").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(queueFolder).absoluteFilePath(),
@@ -238,7 +297,7 @@ int main(int argc, char** argv) {
         const auto retrySource = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("retry-source.mkv");
         require(QFile::copy(arguments[1],retrySource), "Could not create isolated retry fixture");
         taskQueue.addItems({QUrl::fromLocalFile(retrySource)},QUrl::fromLocalFile(queueFolder),"60",
-            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",false);
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",queueEncoding,false);
         waitUntil([&] { return !taskQueue.importing(); }, "Retry fixture import timed out");
         auto* rows = qobject_cast<TaskListModel*>(taskQueue.tasks());
         require(rows && rows->rowCount() == 3, "Retry fixture was not added to the task list");
@@ -263,7 +322,7 @@ int main(int argc, char** argv) {
         const auto cancelSource = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("cancel-source.mkv");
         require(QFile::copy(arguments[1],cancelSource), "Could not create isolated queued-cancel fixture");
         taskQueue.addItems({QUrl::fromLocalFile(cancelSource)},QUrl::fromLocalFile(queueFolder),"60",
-            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",false);
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",queueEncoding,false);
         waitUntil([&] { return !taskQueue.importing(); }, "Queued-cancel fixture import timed out");
         require(taskQueue.counts().value("queued").toInt() == 1, "Queued-cancel fixture was not pending");
         QMetaObject::invokeMethod(queueList,"positionViewAtEnd",Qt::DirectConnection);

@@ -17,6 +17,7 @@ Item {
     property string container: "mkv"
     property bool recursive: false
     property bool advancedOpen: false
+    property bool encodingAdvancedOpen: false
     property var selectedSources: []
 
     function applyDefaults() {
@@ -27,18 +28,33 @@ Item {
         if (values.output && values.output.toString()) outputFolder = values.output
         if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
+        encodingBitrate.value = Number(values.bitrateKbps || 8000)
+        encodingQuality.value = Number(values.quality || 32)
+        encodingGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
+        encodingQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" ? 1 : 0
+        normalizeEncodingMode()
+    }
+    function normalizeEncodingMode() {
+        if (encoderBox.currentIndex < 2 && encodingQualityMode.currentIndex > 0) encodingQualityMode.currentIndex = 0
+        if (encoderBox.currentIndex === 2 && encodingQuality.value > 51) encodingQuality.value = 51
+        if (encoderBox.currentIndex !== 2 && encodingQuality.value > 63) encodingQuality.value = 63
+    }
+    function encodingOptions() {
+        let mode = "bitrate"
+        if (encodingQualityMode.currentIndex === 1) mode = encoderBox.currentIndex === 2 ? "qp" : "crf"
+        return { bitrateKbps: encodingBitrate.value, qualityMode: mode, quality: encodingQuality.value, gopSize: encodingGop.value }
     }
     function add(sources) {
         if (!sources || sources.length === 0) return
         selectedSources = sources
         queueController.addItems(sources, outputFolder, rateBox.editText, modelFolder, runtimeFolder,
-                                 encoder, container, recursive)
+                                 encoder, container, encodingOptions(), recursive)
         selectedSources = []
     }
     function persistDefaults() {
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
         queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
-            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv")
+            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions())
     }
     function statusText(value) {
         const labels = {queued: qsTr("等待处理"), running: qsTr("正在处理"), paused: qsTr("已暂停"),
@@ -120,7 +136,64 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("编码器"); font.bold: true }
-                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动 / H.264"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex]; page.persistDefaults() } }
+                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动 / H.264"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
+                    }
+                }
+                ActionButton { text: page.encodingAdvancedOpen ? qsTr("收起高级编码") : qsTr("高级编码设置"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.encodingAdvancedOpen = !page.encodingAdvancedOpen }
+                GroupBox {
+                    title: qsTr("高级编码")
+                    Layout.fillWidth: true
+                    visible: page.encodingAdvancedOpen
+                    Layout.preferredHeight: visible ? implicitHeight : 0
+                    ColumnLayout {
+                        anchors.fill: parent
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("码率控制") }
+                                ComboBox {
+                                    id: encodingQualityMode
+                                    Layout.fillWidth: true
+                                    model: encoderBox.currentIndex === 2 ? [qsTr("目标码率"), qsTr("恒定量化 QP")]
+                                        : encoderBox.currentIndex === 3 ? [qsTr("目标码率"), qsTr("恒定质量 CRF")]
+                                        : [qsTr("目标码率")]
+                                    onActivated: page.persistDefaults()
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Label { text: encodingQualityMode.currentIndex === 1 ? (encoderBox.currentIndex === 2 ? qsTr("QP（0–51）") : qsTr("CRF（0–63）")) : qsTr("目标质量") }
+                                SpinBox {
+                                    id: encodingQuality
+                                    objectName: "queueQuality"
+                                    from: 0
+                                    to: encoderBox.currentIndex === 2 ? 51 : 63
+                                    value: 32
+                                    enabled: encodingQualityMode.currentIndex === 1
+                                    onValueModified: page.persistDefaults()
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("目标码率（kbit/s）") }
+                                SpinBox { id: encodingBitrate; objectName: "queueBitrateKbps"; from: 250; to: 200000; stepSize: 250; value: 8000; enabled: encodingQualityMode.currentIndex === 0; onValueModified: page.persistDefaults() }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("关键帧间隔（帧）") }
+                                SpinBox { id: encodingGop; objectName: "queueGopSize"; from: 0; to: 1000; value: 120; onValueModified: page.persistDefaults() }
+                            }
+                        }
+                        Label {
+                            text: encoderBox.currentIndex === 2 ? qsTr("HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。")
+                                : encoderBox.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
+                                : qsTr("当前 H.264 编码器使用目标码率。自动模式会在 NVENC 不可用时回退到软件 H.264。")
+                            color: "#9aaac0"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
                     }
                 }
                 RowLayout {

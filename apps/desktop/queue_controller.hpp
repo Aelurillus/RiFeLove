@@ -33,7 +33,8 @@ public:
     QVariantList models() const { return models_; }
     bool verifyingModels() const { return verifyingModels_; }
     Q_INVOKABLE void addItems(const QList<QUrl>& sources, const QUrl& outputFolder, const QString& rate,
-        const QUrl& model, const QUrl& runtime, const QString& encoder, const QString& container, bool recursive);
+        const QUrl& model, const QUrl& runtime, const QString& encoder, const QString& container,
+        const QVariantMap& encodingOptions, bool recursive);
     Q_INVOKABLE void start();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void resume();
@@ -44,7 +45,7 @@ public:
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void openOutputFolder(const QString& id);
     Q_INVOKABLE void saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
-        const QString& encoder, const QString& container);
+        const QString& encoder, const QString& container, const QVariantMap& encodingOptions);
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void addLocalModel(const QUrl& directory);
     Q_INVOKABLE void removeLocalModel(const QUrl& directory);

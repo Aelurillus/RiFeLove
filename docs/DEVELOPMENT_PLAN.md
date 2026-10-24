@@ -93,6 +93,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete CLI JSON progress, profiles, batch jobs and diagnostics reports.
   - Persistent queue add/import/export/list/run/retry/cancel/restart and JSON results are implemented; profiles and cross-process live control remain open.
 - [ ] Add advanced encoding controls and quality/performance reports.
+  - Studio and Queue now expose bitrate/GOP, HEVC constant QP and AV1 CRF; controls are validated against the selected encoder, persisted in local preferences and included in queue task JSON. Reports, H.264 quality-mode controls, 10-bit/HDR encoding and full codec matrix remain open.
 - [ ] Validate multi-hour jobs and resume semantics.
 
 ## Phase 8 — release

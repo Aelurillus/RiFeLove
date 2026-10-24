@@ -31,6 +31,14 @@ On 2026-10-17, `nvidia-smi` reported GTX 1660 SUPER, driver `560.94` and 6144 Mi
 
 The interpolation pipeline now implements an explicit `auto` policy: try actual NVENC initialization, then report a software H.264 fallback if that encoder cannot open. Explicit `transcode`/encoder choices stay strict. The final application still needs a compatible FFmpeg/NVENC build/driver matrix and runtime device capabilities. The driver has not been changed.
 
+## Desktop advanced encoding settings
+
+Studio and Queue expose a target bitrate in kbit/s and a maximum GOP length. The output encoder receives those values through the same `VideoEncodingSettings` contract used by the CLI and native writer. The selected values are stored in local preferences and in each queued job, so a retry uses the original settings.
+
+HEVC software encoding adds a constant-QP mode (0–51) through FFmpeg's `libkvazaar` `kvazaar-params` option. AV1 software encoding adds libaom CRF mode (0–63); in these quality modes the target bitrate is set to zero so the codec uses constant quality. H.264 OpenH264 remains target-bitrate only. Encoder-specific choices are checked before a task is queued or started. These quality numbers are encoder controls, not a promise of equal perceptual quality across codecs.
+
+The current RIFE interpolation path is qualified only for tagged 8-bit SDR. The desktop does not offer 10-bit or HDR output controls until the model/color pipeline can preserve and validate them end to end.
+
 ## Remaining acceptance
 
 The CPU writer copies owned input planes to encoder frames and uses a separate demux handle for auxiliary streams. GPU surfaces, shared demux and buffer-pool optimization are pending. Full RGB/YUV/transfer/tone-mapping handling, dynamic HDR/Dolby Vision and ICC workflows are not validated. Static mastering/content-light construction has code but still needs real metadata fixtures. The full source time-base/audio offset/container matrix, missing-PTS recovery, disk-full injection and multi-hour tests remain required. Separate native RIFE tests now exist; these encoding tests alone do not establish neural quality or full release acceptance.

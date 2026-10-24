@@ -1,4 +1,5 @@
 #include "studio_controller.hpp"
+#include "encoding_settings.hpp"
 #include "timeline/timeline.hpp"
 #include <QFileInfo>
 #include <QDir>
@@ -35,7 +36,8 @@ void StudioController::setOutput(const QUrl& url) {
     if (!url.isLocalFile() || url.toLocalFile().isEmpty()) { fail(tr("请选择本机输出位置。")); return; }
     output_ = QDir::toNativeSeparators(QFileInfo(url.toLocalFile()).absoluteFilePath()); emit changed();
 }
-void StudioController::start(const QString& rate, const QUrl& modelDirectory, const QUrl& runtimeDirectory, const QString& encoder) {
+void StudioController::start(const QString& rate, const QUrl& modelDirectory, const QUrl& runtimeDirectory,
+    const QString& encoder, const QVariantMap& encodingOptions) {
     if (busy_) return;
     try {
         if (source_.isEmpty() || media_.isEmpty()) throw std::invalid_argument("Select and inspect a source video first");
@@ -49,7 +51,7 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         job.settings.targetRate = rifelove::Rational::parse(utf8(rate));
         if (job.settings.targetRate <= rifelove::Rational(0)) throw std::invalid_argument("Target FPS must be positive");
         job.sourceDurationEstimate = sourceDurationEstimate_;
-        job.settings.encoding.encoder = utf8(encoder);
+        job.settings.encoding = rifelove::desktop::makeVideoEncodingSettings(encoder, encodingOptions);
         busy_ = true; status_ = "loading_model"; detail_.clear(); progress_.clear();
         if (const auto count = rifelove::estimateOutputFrameCount(job.sourceDurationEstimate,job.settings.targetRate))
             progress_["estimatedFrames"] = QVariant::fromValue<qulonglong>(*count);
