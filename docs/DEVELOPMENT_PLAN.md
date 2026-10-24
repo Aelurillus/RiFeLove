@@ -57,7 +57,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Probe GPU/driver/compute and codec capabilities at runtime.
   - Studio inspects CUDA device information and opens encoder contexts using the selected source profile for NVENC, software H.264, HEVC and AV1. It warns before processing when automatic encoding will fall back and disables a selected codec that fails its preflight. `media-capabilities INPUT [--fps RATE]` reports the same initialization checks. This does not prove encoded-frame output or NVDEC support.
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
-  - Auto encoding retries software H.264 when this workstation's NVENC open returns `Function not implemented`; a synthetic 720p TensorRT-to-output run validates the H.264 output and retained audio, and the updated Studio explains that processing continues. Successful NVENC hardware encoding and NVDEC remain unqualified. Local driver 560.94 exposes NVENC API 12.2; this FFmpeg build requires API 13.0 / driver 570.0 or newer.
+  - Auto encoding uses a source-compatible software encoder when this workstation's NVENC open returns `Function not implemented`; 8-bit SDR selects software H.264, while a synthetic 10-bit SDR RIFE run selects AV1 to preserve pixel format. The 720p TensorRT-to-output run validates H.264 output and retained audio, and Studio reports the fallback while processing continues. Successful NVENC hardware encoding and NVDEC remain unqualified. Local driver 560.94 exposes NVENC API 12.2; this FFmpeg build requires API 13.0 / driver 570.0 or newer.
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
   - The sequential RIFE path now reuses up to two completed source-frame buffers and releases idle cache entries when allocation pressure requires space; buffers still referenced by an inference request are never recycled. The allocator regression passes on the local GTX 1660 SUPER; end-to-end pipeline profiling, throughput benchmarking and stage overlap remain open.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
@@ -88,7 +88,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add a local comparison player with split view, synchronized playback and output-frame-rate time stepping.
   - Desktop workflow verifies source/result loading, timestamp stepping, playback synchronization within the test tolerance and pause. Exact decoded-frame landing and artifact navigation remain open.
 - [ ] Complete model lifecycle with provenance-rich model profiles, qualified presets and expert controls.
-  - The desktop Model Center verifies locally installed packs, lists SHA-256 and selects a persistent default without network access. The local workstation bundle includes two pinned RIFE packs, starter settings and software-H.264 fallback messaging when NVENC fails preflight; model downloads, quality-ranked profiles and several expert controls remain open.
+  - The desktop Model Center verifies locally installed packs, lists SHA-256 and selects a persistent default without network access. The local workstation bundle includes two pinned RIFE packs, starter settings and source-compatible software fallback messaging when NVENC fails preflight; model downloads, quality-ranked profiles and several expert controls remain open.
 - [ ] Localize zh-CN, zh-TW, en and ja; verify accessibility and keyboard use.
 
 ## Phase 7 — reliability/pro
@@ -101,7 +101,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete CLI JSON progress, profiles, batch jobs and diagnostics reports.
   - Persistent queue add/import/export/list/run/retry/cancel/restart and JSON results are implemented; direct interpolation now has an opt-in atomic JSON report for model/GPU identity, encoder fallback, throughput, protection counters and timing validation. Profiles, queue report export and cross-process live control remain open.
 - [ ] Add advanced encoding controls and quality/performance reports.
-  - Studio and Queue now expose bitrate/GOP, HEVC constant QP, AV1 CRF and explicit H.264 NVENC VBR + CQ (0–51); encoder-specific controls are validated, persisted in local preferences and included in queue task JSON. Explicit source/encoder choices are preflighted before queueing. This workstation's driver cannot initialize NVENC, so actual CQ output remains unverified. Direct interpolation JSON and Studio now include per-stage timing data. Queue quality reports, 10-bit/HDR encoding and the supported-device codec matrix remain open.
+  - Studio and Queue now expose bitrate/GOP, HEVC constant QP, AV1 CRF and explicit H.264 NVENC VBR + CQ (0–51); encoder-specific controls are validated, persisted in local preferences and included in queue task JSON. Explicit source/encoder choices are preflighted before queueing. This workstation's driver cannot initialize NVENC, so actual CQ output remains unverified. A synthetic 10-bit SDR RIFE integration now confirms pixel-format rejection falls back to libaom AV1 and preserves output depth/color tags. Direct interpolation JSON and Studio now include per-stage timing data. Queue quality reports, HDR encoding and the supported-device codec matrix remain open.
 - [ ] Validate multi-hour jobs and resume semantics.
 
 ## Phase 8 — release

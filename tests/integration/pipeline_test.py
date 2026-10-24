@@ -178,6 +178,8 @@ class NativeRifePipeline(unittest.TestCase):
                          ("bt709","bt709","bt709","tv"))
         output = self.root / "ten-bit-rife.mkv"
         result,_ = self.run_job(self.tenBit,output,"10","--encoder","auto")
+        self.assertEqual(result["encoder"],"libaom-av1")
+        self.assertIn("encoder does not support the requested pixel format",result["encoder_fallback_reason"])
         self.verify_timing(output,result)
         self.assertGreater(result["ai_frames"],0)
         output_video = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]

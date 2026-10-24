@@ -198,6 +198,7 @@ int main(int argc, char** argv) {
         QTimer heartbeat; heartbeat.setInterval(5);
         QObject::connect(&heartbeat, &QTimer::timeout, [&] { ++responsiveTicks; });
         heartbeat.start();
+        root->setProperty("currentPage",1);
         click(button,"studio start");
         require(studio.busy(), "QML start did not submit asynchronous work");
         if (preflightSoftwareFallback)
