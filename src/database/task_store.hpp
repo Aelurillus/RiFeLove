@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <stop_token>
+#include <cstdint>
 
 struct sqlite3;
 
@@ -31,6 +32,16 @@ struct ConfiguredTask {
     std::string result;
 };
 struct NewConfiguredTask { std::string sourcePath; std::string outputPath; std::string configuration; };
+struct TaskCheckpointSegment {
+    std::uint64_t segmentIndex = 0;
+    std::uint64_t firstOutputFrame = 0;
+    std::uint64_t endOutputFrame = 0;
+    std::string artifactPath;
+    std::string sha256;
+    std::uint64_t byteCount = 0;
+    // Versioned JSON containing exact PTS boundaries and the validated stream contract.
+    std::string contract;
+};
 
 class TaskStore final {
 public:
@@ -52,6 +63,13 @@ public:
     void saveProgress(const std::string& id, const std::string& json);
     void finish(const std::string& id, TaskState state, const std::string& result, const std::string& error = {});
     [[nodiscard]] std::size_t recoverConfigured();
+
+    // A checkpoint manifest is immutable for a task. Segment records are added
+    // only after the caller has closed, validated and hashed the local artifact.
+    void setCheckpointManifest(const std::string& id, const std::string& manifest);
+    [[nodiscard]] std::string checkpointManifest(const std::string& id) const;
+    void recordCheckpointSegment(const std::string& id, const TaskCheckpointSegment& segment);
+    [[nodiscard]] std::vector<TaskCheckpointSegment> checkpointSegments(const std::string& id) const;
 
 private:
     sqlite3* db_{};

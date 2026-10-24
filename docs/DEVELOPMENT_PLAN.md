@@ -93,7 +93,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 ## Phase 7 — reliability/pro
 
-- [ ] Design segment-boundary checkpoint format and safe output stitching.
+- [x] Define the segment checkpoint manifest, contiguous CFR frame ranges, commit ordering, identity checks and safe assembly contract; add immutable manifest and contiguous segment journal storage in SQLite.
+- [ ] Integrate video-only segment encoding, on-disk integrity verification, resumable source seeking, auxiliary-stream assembly, atomic final publication and UI/CLI resume.
 - [ ] Test restart recovery, cancellation, retries, disk-full, OOM and corrupted input.
   - Actual process termination after flushed encoded output, owner/hard-link exclusion, interruption detection, new-output restart-from-zero, pause/cancel/retry and changed-source rejection pass locally. Segment resume and full fault matrix remain open.
 - [ ] Complete CLI JSON progress, profiles, batch jobs and diagnostics reports.

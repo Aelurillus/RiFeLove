@@ -147,3 +147,47 @@ TEST(TaskStore, RetryClearsAttemptProgressAndResultButRetainsIdentity) {
     const auto row = store.configured().front();
     EXPECT_EQ(row.identity,"{\"sha256\":\"bound\"}"); EXPECT_TRUE(row.progress.empty()); EXPECT_TRUE(row.result.empty()); EXPECT_TRUE(row.task.error.empty());
 }
+
+TEST(TaskStore, CheckpointJournalBindsIdentityAndStoresOnlyContiguousSegments) {
+    TemporaryDatabase database;
+    std::string id;
+    {
+        rifelove::TaskStore store(database.path.string());
+        id = store.createConfigured({{"source.mkv","output.mkv","{\"targetRate\":\"60/1\"}"}}).front();
+        store.transition(id,rifelove::TaskState::running);
+        const rifelove::TaskCheckpointSegment first{0,0,64,"segments/000000.mkv",std::string(64,'a'),4096,"{\"firstPts\":\"0/1\",\"endPts\":\"16/15\"}"};
+        EXPECT_THROW(store.recordCheckpointSegment(id,first),std::logic_error);
+        const std::string manifest = "{\"schemaVersion\":1,\"sourceSha256\":\"source\",\"modelSha256\":\"model\",\"configurationSha256\":\"settings\"}";
+        store.setCheckpointManifest(id,manifest);
+        EXPECT_EQ(store.checkpointManifest(id),manifest);
+        store.setCheckpointManifest(id,manifest);
+        EXPECT_THROW(store.setCheckpointManifest(id,manifest + " "),std::logic_error);
+
+        auto gap = first; gap.segmentIndex = 1;
+        EXPECT_THROW(store.recordCheckpointSegment(id,gap),std::logic_error);
+        auto malformedHash = first; malformedHash.sha256 = std::string(64,'A');
+        EXPECT_THROW(store.recordCheckpointSegment(id,malformedHash),std::invalid_argument);
+        auto emptyFile = first; emptyFile.byteCount = 0;
+        EXPECT_THROW(store.recordCheckpointSegment(id,emptyFile),std::invalid_argument);
+
+        store.recordCheckpointSegment(id,first);
+        auto overlap = rifelove::TaskCheckpointSegment{1,63,128,"segments/000001.mkv",std::string(64,'b'),2048,"{\"firstPts\":\"21/20\",\"endPts\":\"32/15\"}"};
+        EXPECT_THROW(store.recordCheckpointSegment(id,overlap),std::logic_error);
+        auto next = overlap; next.firstOutputFrame = 64;
+        store.recordCheckpointSegment(id,next);
+        store.transition(id,rifelove::TaskState::paused);
+        EXPECT_EQ(store.recoverConfigured(),1U);
+    }
+    rifelove::TaskStore reopened(database.path.string(),rifelove::TaskStore::OpenMode::readOnly);
+    EXPECT_NE(reopened.checkpointManifest(id).find("sourceSha256"),std::string::npos);
+    const auto segments = reopened.checkpointSegments(id);
+    ASSERT_EQ(segments.size(),2U);
+    EXPECT_EQ(segments[0].segmentIndex,0U);
+    EXPECT_EQ(segments[0].firstOutputFrame,0U);
+    EXPECT_EQ(segments[0].endOutputFrame,64U);
+    EXPECT_EQ(segments[1].segmentIndex,1U);
+    EXPECT_EQ(segments[1].firstOutputFrame,64U);
+    EXPECT_EQ(segments[1].endOutputFrame,128U);
+    EXPECT_EQ(reopened.list().front().state,rifelove::TaskState::interrupted);
+    EXPECT_THROW(reopened.setCheckpointManifest(id,"{}"),std::logic_error);
+}
