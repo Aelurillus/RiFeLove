@@ -6,7 +6,7 @@ Version 0.1. This document records implemented boundaries and the remaining arch
 
 Desktop and CLI adapters submit application-service operations. Task, profile, model, device and progress services own user-facing state and orchestration. The core pipeline schedules rational presentation times and coordinates media, quality, interpolation and GPU resources. Backend implementations own FFmpeg/CUDA/ONNX/TensorRT contexts. UI code must not own those contexts.
 
-The current CLI adapter calls the media engine and native video pipeline public C++ APIs. Task/profile/model/device orchestration services are still to be built; the current adapter is not the finished services layer. The Qt shell now builds locally but is not yet connected to video processing.
+The CLI adapter calls media and native video pipeline public C++ APIs. The desktop's `StudioController` marshals owned values between QML and the standard-C++ `application::ProcessingService`. That service owns one worker, device/backend creation and safe cleanup, throttles progress, rejects overlapping submissions and exposes cancellation. No vendor context is owned by QML or the controller. Full persistent task/profile/model orchestration is still required.
 
 ## Implemented media contract
 

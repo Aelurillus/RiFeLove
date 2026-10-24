@@ -12,7 +12,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add CLI entry points for timeline plans and persisted tasks.
 - [x] Add unit tests for arithmetic, VFR/non-integer timeline mapping and task transitions.
 - [ ] Add structured logging/configuration, service/backend interfaces and Qt app shell.
-  - Qt 6.12 / MinGW 15.1 shell now builds locally and passes a rendered startup check; complete services/configuration/logging remain open.
+  - Qt 6.12 / MinGW 15.1 Studio builds locally, with a background processing service and real QML workflow tests; complete queue/profile/model services, configuration and logging remain open.
 - [x] Add offline-by-default local build/test runner and local JSON/JUnit reports.
 - [x] Add read-only queue inspection and Windows Unicode CLI regression coverage.
 - [x] Preserve the original complete Master Plan and add SRS/ADD requirement evidence documents.
@@ -69,7 +69,9 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 ## Phase 6 — desktop
 
-- [ ] Build Home/import and interpolation settings workflows over application services.
+- [x] Build first single-file picker/drop, media/GPU inspection and interpolation settings workflow over an application service.
+- [ ] Complete Home, folder/batch import, persistent preferences and qualified quality profiles.
+- [x] Validate real QML start-to-output, GUI event-loop responsiveness, no-overwrite handling and cooperative cancellation with native RIFE.
 - [ ] Implement persistent queue, progress, retry, pause and cancellation.
 - [ ] Add comparison player, split mode and frame stepping.
 - [ ] Add model center, profiles and expert controls.

@@ -6,7 +6,7 @@ Version 0.1 implementation baseline. The authoritative complete scope is [the or
 | --- | --- | --- |
 | R01 | Windows 10/11 x64 desktop and CLI; normal import-to-output workflow tested on supported Windows/GPU matrix | Native CLI video workflow; Qt shell compiled and startup-rendered locally; full desktop/matrix pending |
 | R02 | C++20, Qt6/QML, FFmpeg libraries, CUDA, RIFE, ONNX CUDA, TensorRT, SQLite, CMake/Ninja, vcpkg, spdlog; Python only for development | Partial native core and FFmpeg integration |
-| R03 | File/drop/folder batch import; accurate video, rate/VFR/HDR, audio and subtitle inspection | Native probe and scan implemented; desktop/batch import pending |
+| R03 | File/drop/folder batch import; accurate video, rate/VFR/HDR, audio and subtitle inspection | Native probe/scan plus desktop single-file picker/drop/info implemented; folder/batch import and full media matrix pending |
 | R04 | Integer/non-integer/fractional targets, VFR input, CFR and advanced source-like output; unchanged duration with validated final-frame/audio boundary | Streaming rational CFR video processing and prepublication decode/boundary checks pass small VFR/fractional/nonzero-origin fixtures; advanced modes/full matrix pending |
 | R05 | Real multi-model RIFE at arbitrary timestep, Fast/Balanced/Quality/Custom presets | RIFE 4.25 native CUDA video processing and independent PyTorch video oracle pass small SDR8 fixtures; multiple models/full sizes/presets pending |
 | R06 | PyTorch reference, ONNX export/operator/shape/timestep checks, ONNX CUDA numerical parity, TensorRT/FP16 validation | CPU and native CUDA pass explicit SDR8 numerical profile; original strict 2e-4 profile fails and remains recorded; full sizes, visual quality and TensorRT/FP16 pending |
@@ -21,7 +21,7 @@ Version 0.1 implementation baseline. The authoritative complete scope is [the or
 | R15 | Cut detection and protection; abnormal motion, occlusion, duplicate, animation, HUD/text, flicker, border/seam policies | Conservative histogram/difference cut, duplicate and abnormal-pair holds implemented; synthetic cuts prohibit cross-cut AI; real-content/full protection pending |
 | R16 | Queue, pause/resume/cancel/retry/history, persistent configuration/model/file identity and progress | Task record state machine only |
 | R17 | Crash ownership detection and safe segment-boundary checkpoint/resume/stitching; multi-hour and fault-injection tests | Explicit interrupted-state maintenance only |
-| R18 | Home, Studio, Comparison Viewer, Queue and Model Center; simple normal controls and explained/resettable advanced settings | Placeholder shell only |
+| R18 | Home, Studio, Comparison Viewer, Queue and Model Center; simple normal controls and explained/resettable advanced settings | First connected Chinese Studio imports, configures, processes and cancels through a background application service; other pages/persistent settings/full desktop pending |
 | R19 | Preview/split comparison, synchronized playback, frame stepping and artifact navigation | Not implemented |
 | R20 | CLI batch automation and JSON progress; processing speed distinguished from output FPS | Native AI JSON progress, diagnostics and cooperative cancellation implemented; batch orchestration pending |
 | R21 | Artifact/performance reports and diagnostics; truthful telemetry and end-to-end speed measurements | Local test reports and elapsed-time/transcode throughput fields; quality reports/complete pipeline benchmarks pending |

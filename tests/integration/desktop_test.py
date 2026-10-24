@@ -1,0 +1,33 @@
+"""Generate local media and run the real QML/controller/native-GPU workflow."""
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+exe, ffmpeg, ffprobe, pack, runtime, qml, reports = sys.argv[1:]
+reports = Path(reports)
+reports.mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix="rifelove-desktop-") as folder:
+    root = Path(folder)
+    source = root / "本地源 视频.mkv"
+    output = root / "补帧输出.mkv"
+    subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=5:duration=0.6",
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.6",
+                    "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited",
+                    "-c:v", "ffv1", "-pix_fmt", "yuv420p", "-c:a", "flac", str(source)], check=True)
+    fingerprint = hashlib.sha256(source.read_bytes()).hexdigest()
+    subprocess.run([exe, str(source), str(output), pack, runtime, qml, str(reports / "desktop-workflow.png"),
+                    str(reports / "desktop-workflow.json")], check=True, timeout=180)
+    result = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-count_frames", "-show_streams", "-of", "json", str(output)]))
+    video = next(stream for stream in result["streams"] if stream["codec_type"] == "video")
+    assert int(video["nb_read_frames"]) == 36
+    audio = next(stream for stream in result["streams"] if stream["codec_type"] == "audio")
+    assert audio["codec_name"] == "flac"
+    def pcm(path):
+        return subprocess.check_output([ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "s16le", "-"])
+    assert pcm(source) == pcm(output), "Desktop output changed decoded audio samples"
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == fingerprint
+    assert json.loads((reports / "desktop-workflow.json").read_text())["success"]
+print("Independent desktop output frame count, decoded audio and source integrity passed")

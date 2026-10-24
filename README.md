@@ -12,11 +12,12 @@ RifeLove is an offline Windows video frame interpolation application in active d
 - A native CUDA driver layer, tested on the local GTX 1660 SUPER for device queries, owned memory, bounded allocations and transfers.
 - Checksum-pinned RIFE 4.25 export/reference tools and a native ONNX Runtime CUDA backend; small-profile SDR8 numerical comparisons and GPU operator-placement checks pass on the local GPU.
 - A streaming native RIFE pipeline with rational CFR scheduling, conservative cut/duplicate protection, actual encoder-open fallback and decoded-output validation before publication.
-- CMake/Ninja builds and automated tests. The Qt 6.12 desktop shell builds locally with a matching MinGW 15.1 toolchain and has a rendered startup check.
+- A connected Chinese Qt/QML Studio for single-video import, settings, local model/runtime selection, native processing, progress and cancellation; tested through the actual QML start button.
+- CMake/Ninja builds and automated tests. Qt 6.12 builds locally with a matching MinGW 15.1 toolchain; [desktop setup and checks](docs/development/DESKTOP.md).
 
 Development currently stays on the local machine: local Git commits, local builds, local test reports and local task databases. Remote repositories, hosted CI and release publishing are deferred. A future Windows CI template is kept under `docs/development/templates/` and is not active.
 
-The current AI video adapter supports explicitly tagged BT.709 8-bit SDR. Small synthetic MP4/MKV/MOV, H.264/HEVC/AV1, VFR and audio/subtitle cases pass, including an independent PyTorch video comparison. Full-resolution/content qualification, TensorRT, multi-model management, HDR/10-bit AI processing, the desktop workflow, safe checkpoint recovery and packaging remain required. See the [pipeline evidence and limits](docs/development/PIPELINE.md), [SRS](docs/SRS.md) and [architecture](docs/architecture/ADD.md).
+The current AI video adapter supports explicitly tagged BT.709 8-bit SDR. Small synthetic MP4/MKV/MOV, H.264/HEVC/AV1, VFR and audio/subtitle cases pass, including an independent PyTorch video comparison. Full-resolution/content qualification, TensorRT, multi-model management, HDR/10-bit AI processing, complete desktop pages/queue/comparison, safe checkpoint recovery and packaging remain required. See the [pipeline evidence and limits](docs/development/PIPELINE.md), [SRS](docs/SRS.md) and [architecture](docs/architecture/ADD.md).
 
 ## Build
 
@@ -51,4 +52,4 @@ With the media engine enabled, `media-probe INPUT` reports streams/metadata, `me
 
 ## Licensing
 
-The application source is licensed under MIT. SQLite is public domain, and GoogleTest is Apache-2.0; both are fetched at pinned versions and are not copied into the repository. FFmpeg, Qt, NVIDIA libraries, RIFE code and weights require separate version/build-specific redistribution review before packaging. No model weights or vendor runtime binaries are included.
+The application source is licensed under MIT. SQLite is public domain, and the pinned GoogleTest source uses BSD-3-Clause; both are fetched at pinned versions and are not copied into the repository. FFmpeg, Qt, NVIDIA libraries, RIFE code and weights require separate version/build-specific redistribution review before packaging. No model weights or vendor runtime binaries are included.
