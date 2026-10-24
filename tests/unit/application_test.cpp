@@ -66,6 +66,58 @@ TEST(ProcessingConfiguration, PinsVersionTwoModelDescriptorForPersistentJobs) {
     EXPECT_EQ(job.expectedModelVersion,"4.25");
     EXPECT_EQ(job.expectedModelSha256,digest);
 }
+TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvidence) {
+    PipelineResult result{};
+    result.video.encoder = "libopenh264"; result.video.framesSubmitted = 120; result.video.videoPackets = 120; result.video.copiedPackets = 48;
+    result.video.firstTimestamp = Rational(3,2); result.video.endExclusive = Rational(7,2);
+    result.sourceFrames = 60; result.aiFrames = 60; result.originalFrames = 60; result.heldFrames = 0;
+    result.sceneCuts = 1; result.duplicatePairs = 2; result.abnormalPairs = 3;
+    result.modelId = "rife-4.25-fp32-sdr8"; result.backend = "onnxruntime_tensorrt_cuda";
+    result.inferenceFallbackReason.clear(); result.encoderFallbackReason = "NVENC API unavailable"; result.sourceEndEvidence = "declared_stream_end";
+    result.elapsedSeconds = 10.0; result.processingFps = 12.0;
+    result.validation.decodedFrames = 120; result.validation.timeBase = Rational(1,120);
+    result.validation.maximumTimestampError = Rational(1,240); result.validation.durationError = Rational(0);
+    result.validation.declaredEndError = Rational(0); result.validation.auxiliaryMaximumEndError = Rational(0); result.validation.quantized = true;
+    ProcessingReportContext context;
+    context.sourcePath = "C:/输入/源片.mkv"; context.outputPath = "C:/输出/结果.mp4"; context.targetFrameRate = "60";
+    context.modelVersion = "4.25"; context.modelSha256 = std::string(64,'a'); context.endToEndElapsedSeconds = 12.0;
+    context.device = {0,"NVIDIA GeForce GTX 1660 SUPER","00000000:01:00.0",7,5,12020,6'442'450'944};
+    context.encoding.encoder = "auto"; context.encoding.bitRate = 8'000'000; context.encoding.gopSize = 120; context.encoding.maxBFrames = 0;
+    context.encoding.encoderOptions = {{"preset","p5"}};
+
+    const auto report = nlohmann::json::parse(serializeProcessingReport(context,result));
+    EXPECT_EQ(report.at("schemaVersion"),1);
+    EXPECT_EQ(report.at("source").at("path"),context.sourcePath);
+    EXPECT_EQ(report.at("output").at("targetFrameRate"),"60");
+    EXPECT_EQ(report.at("output").at("encoder"),"libopenh264");
+    EXPECT_EQ(report.at("model").at("version"),"4.25");
+    EXPECT_EQ(report.at("model").at("sha256"),std::string(64,'a'));
+    EXPECT_EQ(report.at("gpu").at("name"),"NVIDIA GeForce GTX 1660 SUPER");
+    EXPECT_EQ(report.at("encoding").at("requestedEncoder"),"auto");
+    EXPECT_EQ(report.at("encoding").at("fallbackReason"),"NVENC API unavailable");
+    EXPECT_EQ(report.at("performance").at("endToEndOutputFramesPerSecond"),10.0);
+    EXPECT_EQ(report.at("performance").at("pipelineOutputFramesPerSecond"),12.0);
+    EXPECT_EQ(report.at("qualityDiagnostics").at("sceneCuts"),1);
+    EXPECT_EQ(report.at("qualityDiagnostics").at("perceptualMetricsMeasured"),false);
+    EXPECT_EQ(report.at("timingValidation").at("timeBase"),"1/120");
+    EXPECT_EQ(report.at("pipelineResult").at("abnormalPairs"),3);
+}
+TEST(ProcessingReport, PublishesUnicodeJsonWithoutReplacingExistingFiles) {
+    const auto directory = std::filesystem::temp_directory_path() / ("rifelove-report-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directory(directory));
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::filesystem::remove_all(path); } } cleanup{directory};
+    const auto destination = directory / "处理报告.json";
+    {
+        ProcessingReportFile report(destination);
+        EXPECT_FALSE(std::filesystem::exists(destination));
+        EXPECT_NO_THROW(report.publish("{\"schemaVersion\":1}\n"));
+        EXPECT_THROW(report.publish("{}"),std::logic_error);
+    }
+    std::ifstream input(destination,std::ios::binary);
+    const std::string contents((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
+    EXPECT_EQ(contents,"{\"schemaVersion\":1}\n");
+    EXPECT_THROW((ProcessingReportFile(destination)),std::invalid_argument);
+}
 TEST(SourceLease, HashesWithBoundedReadsAndPreventsConcurrentWrites) {
     const auto file = std::filesystem::temp_directory_path() / ("rifelove-lease-" + std::to_string(std::random_device{}()) + ".bin");
     const auto created = CreateFileW(file.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);

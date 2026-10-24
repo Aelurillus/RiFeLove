@@ -128,8 +128,17 @@ class NativeRifePipeline(unittest.TestCase):
 
     def test_auto_h264_fallback_and_fractional_mp4_timing(self):
         output = self.root / "auto.mp4"
-        result,events = self.run_job(self.bframes,output,"60000/1001","--progress")
+        report_path = self.root / "auto-report.json"
+        result,events = self.run_job(self.bframes,output,"60000/1001","--report",report_path,"--progress")
         self.verify_timing(output,result)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["schemaVersion"],1)
+        self.assertEqual(report["source"]["path"],str(self.bframes))
+        self.assertEqual(report["output"]["path"],str(output))
+        self.assertEqual(report["output"]["targetFrameRate"],"60000/1001")
+        self.assertEqual(report["output"]["encoder"],result["encoder"])
+        self.assertEqual(report["pipelineResult"]["outputFrames"],result["output_frames"])
+        self.assertFalse(report["qualityDiagnostics"]["perceptualMetricsMeasured"])
         self.assertIn(result["encoder"],("h264_nvenc","libopenh264"))
         encoded = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]
         self.assertIn(result["encoder"],encoded["tags"]["encoder"])

@@ -116,7 +116,7 @@ RifeLove 本机运行包
 默认推理：优先尝试 TensorRT 10.9；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT 引擎缓存位于本机用户目录。
 默认视频编码：导入时预检查 NVIDIA NVENC；若当前驱动不兼容，会在任务开始前选择 H.264 软件编码并说明原因。RIFE 插帧仍使用 CUDA。
 导入视频时会按源视频的分辨率和像素格式预检查 NVENC、软件 H.264、HEVC 与 AV1；这项检查只打开编码器上下文，最终仍以实际导出结果为准。
-本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\$($defaultModelPack.descriptor.id)" --runtime-dir ".\runtime" --progress。也可以用 `rifelove-cli.exe --help` 查看全部本地命令。
+本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\$($defaultModelPack.descriptor.id)" --runtime-dir ".\runtime" --progress --report "处理报告.json"。报告记录模型/GPU、实际编码器和回退原因、端到端速度、质量保护计数及时间轴校验；不包含未实测的主观画质评分。也可以用 `rifelove-cli.exe --help` 查看全部本地命令。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。
 进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。
 
@@ -150,7 +150,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $target "data/preferences.ini") -Pat
 }
 $cliHelp = & (Join-Path $target "rifelove-cli.exe") --help 2>&1
 $cliExitCode = $LASTEXITCODE
-if ($cliExitCode -ne 0 -or (($cliHelp -join "`n") -notmatch "interpolate") -or (($cliHelp -join "`n") -notmatch "queue-run")) {
+if ($cliExitCode -ne 0 -or (($cliHelp -join "`n") -notmatch "interpolate") -or (($cliHelp -join "`n") -notmatch "queue-run") -or (($cliHelp -join "`n") -notmatch "\[--report JSON\]")) {
     throw "Packaged RifeLove CLI did not expose the local interpolation and queue commands."
 }
 

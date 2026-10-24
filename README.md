@@ -48,7 +48,7 @@ With the media engine enabled, `media-probe INPUT` reports streams/metadata, `me
 
 `transcode INPUT OUTPUT --encoder NAME --progress` re-encodes the selected video at its original presentation times while copying other compatible streams. Software H.264/HEVC/AV1 and FFV1 are covered by the local suite. The current FFmpeg SDK's NVENC path is incompatible with this machine's driver; explicit encoder requests fail visibly. See [encoding contracts and tests](docs/development/ENCODING.md).
 
-`interpolate INPUT OUTPUT --fps 60000/1001 --model-dir PACK --runtime-dir DLL_DIRECTORY --progress` generates actual RIFE frames and validates the finalized video before publishing a new file. Its `auto` encoder tries NVENC and reports software H.264 fallback when the actual encoder cannot open. Model/runtime paths are explicit local directories; no model is downloaded by this command. [Pipeline guide](docs/development/PIPELINE.md).
+`interpolate INPUT OUTPUT --fps 60000/1001 --model-dir PACK --runtime-dir DLL_DIRECTORY --progress --report report.json` generates actual RIFE frames and validates the finalized video before publishing a new file. Its `auto` encoder tries NVENC and reports software H.264 fallback when the actual encoder cannot open. The optional no-overwrite report records model/GPU identity, actual encoder and fallback, throughput, quality-protection counters and timing validation; it explicitly does not claim perceptual scores. Model/runtime paths are explicit local directories; no model is downloaded by this command. [Pipeline guide](docs/development/PIPELINE.md).
 
 `gpu-info [DEVICE_INDEX]` reports the installed CUDA driver's actual device, compute capability and memory. This command does not claim that ONNX, TensorRT, NVDEC or NVENC is available.
 

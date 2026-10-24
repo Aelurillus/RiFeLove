@@ -78,7 +78,7 @@ void usage(std::ostream& out) {
         << "  rifelove-cli tasks-recover DATABASE (maintenance: all workers must be stopped)\n";
     out << "  rifelove-cli gpu-info [DEVICE_INDEX]\n";
 #ifdef RIFELOVE_HAS_PIPELINE
-    out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--encoder auto|NAME] [--pixel-format FORMAT] [--progress]\n";
+    out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--encoder auto|NAME] [--pixel-format FORMAT] [--report JSON] [--progress]\n";
     out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [encoding options]\n"
         << "  rifelove-cli queue-run DATABASE [--progress]\n"
         << "  rifelove-cli queue-list|queue-export DATABASE\n"

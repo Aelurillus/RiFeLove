@@ -1,6 +1,7 @@
 #include "interpolation_commands.hpp"
 #include "common/json.hpp"
 #include "core/pipeline/video_pipeline.hpp"
+#include "application/job_serialization.hpp"
 #include "inference/onnx_cuda_backend.hpp"
 #include "console_cancellation.hpp"
 #include <atomic>
@@ -9,6 +10,8 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <thread>
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -33,6 +36,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
     const auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
     PipelineSettings settings;
     std::string modelDirectory, runtimeDirectory;
+    std::optional<std::string> reportPathText;
     bool hasRate = false, showProgress = false;
     int ordinal = 0;
     for (std::size_t i = 4; i < args.size(); ++i) {
@@ -41,6 +45,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         if (i + 1 >= args.size()) throw std::invalid_argument("Missing value for " + option);
         const auto& value = args[++i];
         if (option == "--fps") { settings.targetRate = Rational::parse(value); hasRate = true; }
+        else if (option == "--report") reportPathText = value;
         else if (option == "--model-dir") modelDirectory = value;
         else if (option == "--runtime-dir") runtimeDirectory = value;
         else if (option == "--encoder") settings.encoding.encoder = value;
@@ -68,6 +73,18 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
     }
     if (!hasRate || settings.targetRate <= Rational(0) || modelDirectory.empty() || runtimeDirectory.empty()) throw std::invalid_argument("A positive --fps, --model-dir and --runtime-dir are required");
     if (std::filesystem::exists(path(args[3]))) throw std::invalid_argument("Output already exists; choose a new path");
+    std::unique_ptr<application::ProcessingReportFile> reportFile;
+    if (reportPathText) {
+        if (reportPathText->empty()) throw std::invalid_argument("--report requires a non-empty JSON file path");
+        const auto reportPath = path(*reportPathText);
+        const auto absoluteReport = std::filesystem::absolute(reportPath).lexically_normal().native();
+        const auto absoluteOutput = std::filesystem::absolute(path(args[3])).lexically_normal().native();
+        const auto absoluteSource = std::filesystem::absolute(path(args[2])).lexically_normal().native();
+        if (CompareStringOrdinal(absoluteReport.c_str(),static_cast<int>(absoluteReport.size()),absoluteOutput.c_str(),static_cast<int>(absoluteOutput.size()),TRUE) == CSTR_EQUAL ||
+            CompareStringOrdinal(absoluteReport.c_str(),static_cast<int>(absoluteReport.size()),absoluteSource.c_str(),static_cast<int>(absoluteSource.size()),TRUE) == CSTR_EQUAL)
+            throw std::invalid_argument("Report path must be different from the input and video output paths");
+        reportFile = std::make_unique<application::ProcessingReportFile>(reportPath);
+    }
     ConsoleCancellation cancellation;
     const auto token = cancellation.token();
     try {
@@ -86,6 +103,13 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
                 << ",\"detail\":" << jsonString(current.detail) << "}\n" << std::flush;
         }) : std::function<void(const PipelineProgress&)>(),token);
         const auto seconds = elapsed();
+        if (reportFile) {
+            application::ProcessingReportContext report;
+            report.sourcePath = args[2]; report.outputPath = args[3]; report.targetFrameRate = settings.targetRate.toString();
+            report.modelVersion = pack.version; report.modelSha256 = pack.sha256; report.endToEndElapsedSeconds = seconds;
+            report.device = device->info(); report.encoding = settings.encoding;
+            reportFile->publish(application::serializeProcessingReport(report,result));
+        }
         std::cout << "{\"event\":\"interpolation_completed\",\"model\":" << jsonString(result.modelId) << ",\"model_sha256\":" << jsonString(pack.sha256)
             << ",\"backend\":" << jsonString(result.backend) << ",\"encoder\":" << jsonString(result.video.encoder)
             << ",\"inference_fallback_reason\":" << jsonString(result.inferenceFallbackReason)
@@ -99,7 +123,8 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             << ",\"maximum_pts_error\":" << jsonString(result.validation.maximumTimestampError.toString()) << ",\"end_error\":" << jsonString(result.validation.durationError.toString())
             << ",\"declared_end_error\":" << (result.validation.declaredEndError ? jsonString(result.validation.declaredEndError->toString()) : "null")
             << ",\"auxiliary_maximum_end_error\":" << jsonString(result.validation.auxiliaryMaximumEndError.toString())
-            << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << static_cast<double>(result.video.framesSubmitted) / seconds << "}\n";
+            << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << static_cast<double>(result.video.framesSubmitted) / seconds
+            << ",\"report_path\":" << (reportPathText ? jsonString(*reportPathText) : "null") << "}\n";
         return 0;
     } catch (const std::exception&) {
         if (token.stop_requested()) { std::cout << "{\"event\":\"interpolation_cancelled\"}\n"; return 130; }

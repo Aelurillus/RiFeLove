@@ -11,10 +11,10 @@ Enable `RIFELOVE_BUILD_MEDIA` and `RIFELOVE_BUILD_ONNX_CUDA` with the pinned loc
   --fps 60000/1001 `
   --model-dir models/cache/rife-4.25-fp32-sdr8-v2 `
   --runtime-dir C:/itzming/dependences/onnxruntime-win-x64-gpu-1.22.0/lib `
-  --encoder auto --progress
+  --encoder auto --progress --report output-report.json
 ```
 
-The application does not invoke Python or acquire models. It reads local files, keeps the source intact and refuses an existing output. JSON progress separates target FPS from measured processing FPS. Ctrl+C/Ctrl+Break requests cooperative cancellation; final and temporary outputs are absent after the tested cancellation path. Abrupt process-kill cleanup/checkpoint recovery is separate future work.
+The application does not invoke Python or acquire models. It reads local files, keeps the source intact and refuses an existing output. JSON progress separates target FPS from measured processing FPS. `--report PATH` atomically writes a no-overwrite JSON sidecar with model/GPU identity, actual encoder and fallback reason, throughput, cut/duplicate/abnormal-pair counts and output timing validation. It explicitly marks perceptual quality metrics as unmeasured because no reference video is supplied. Ctrl+C/Ctrl+Break requests cooperative cancellation; final and temporary outputs are absent after the tested cancellation path. Abrupt process-kill cleanup/checkpoint recovery is separate future work.
 
 ## Data and timing contracts
 

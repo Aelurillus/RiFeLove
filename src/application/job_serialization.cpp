@@ -1,10 +1,18 @@
 #include "application/job_serialization.hpp"
 #include "inference/model_pack.hpp"
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <random>
 #include <type_traits>
+#include <system_error>
+#include <utility>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace rifelove::application {
 namespace {
@@ -121,5 +129,77 @@ std::string serializeResult(const PipelineResult& r) {
         {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",r.processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
         {"validation",{{"decodedFrames",r.validation.decodedFrames},{"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},
             {"durationError",r.validation.durationError.toString()},{"declaredEndError",optional(r.validation.declaredEndError)},{"auxiliaryMaximumEndError",r.validation.auxiliaryMaximumEndError.toString()},{"quantized",r.validation.quantized}}}}.dump();
+}
+std::string serializeProcessingReport(const ProcessingReportContext& context, const PipelineResult& result) {
+    if (context.sourcePath.empty() || context.outputPath.empty() || context.modelVersion.empty() || context.modelSha256.size() != 64)
+        throw std::invalid_argument("Processing report is missing source, output or verified model identity");
+    if (Rational::parse(context.targetFrameRate) <= Rational(0)) throw std::invalid_argument("Processing report frame rate must be positive");
+    if (!std::all_of(context.modelSha256.begin(),context.modelSha256.end(),[](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
+        throw std::invalid_argument("Processing report model digest must be lowercase SHA-256");
+    if (!std::isfinite(context.endToEndElapsedSeconds) || context.endToEndElapsedSeconds <= 0 ||
+        !std::isfinite(result.elapsedSeconds) || result.elapsedSeconds <= 0 || !std::isfinite(result.processingFps) || result.processingFps < 0)
+        throw std::invalid_argument("Processing report contains invalid performance measurements");
+
+    const auto& device = context.device;
+    const auto& encoding = context.encoding;
+    const auto pipeline = Json::parse(serializeResult(result));
+    const Json report{
+        {"schemaVersion",1},
+        {"application",{{"name","RifeLove"},{"ffmpegRuntime",media::MediaEngine::runtimeVersion()}}},
+        {"source",{{"path",context.sourcePath},{"decodedFrames",result.sourceFrames},{"endEvidence",result.sourceEndEvidence}}},
+        {"output",{{"path",context.outputPath},{"targetFrameRate",context.targetFrameRate},{"encoder",result.video.encoder},
+            {"submittedFrames",result.video.framesSubmitted},{"videoPackets",result.video.videoPackets},{"copiedPackets",result.video.copiedPackets},
+            {"firstTimestamp",result.video.firstTimestamp.toString()},{"endExclusive",result.video.endExclusive.toString()}}},
+        {"model",{{"id",result.modelId},{"version",context.modelVersion},{"sha256",context.modelSha256},{"backend",result.backend},
+            {"fallbackReason",result.inferenceFallbackReason}}},
+        {"gpu",{{"ordinal",device.ordinal},{"name",device.name},{"pciBusId",device.pciBusId},
+            {"computeCapability",std::to_string(device.computeMajor) + "." + std::to_string(device.computeMinor)},
+            {"driverCudaApiVersion",device.driverCudaApiVersion},{"totalVramBytes",device.totalBytes}}},
+        {"encoding",{{"requestedEncoder",encoding.encoder},{"actualEncoder",result.video.encoder},{"pixelFormat",encoding.pixelFormat},
+            {"bitRate",encoding.bitRate},{"gopSize",encoding.gopSize},{"maxBFrames",encoding.maxBFrames},
+            {"options",encoding.encoderOptions},{"fallbackReason",result.encoderFallbackReason}}},
+        {"performance",{{"elapsedSeconds",context.endToEndElapsedSeconds},
+            {"endToEndOutputFramesPerSecond",static_cast<double>(result.video.framesSubmitted) / context.endToEndElapsedSeconds},
+            {"pipelineOutputFramesPerSecond",result.processingFps},
+            {"aiFrames",result.aiFrames},{"originalFrames",result.originalFrames},{"heldFrames",result.heldFrames}}},
+        {"qualityDiagnostics",{{"sceneCuts",result.sceneCuts},{"duplicatePairs",result.duplicatePairs},{"abnormalMotionPairs",result.abnormalPairs},
+            {"perceptualMetricsMeasured",false},
+            {"note","No reference video was supplied; PSNR, SSIM and LPIPS were not measured."}}},
+        {"timingValidation",pipeline.at("validation")},
+        {"pipelineResult",pipeline}
+    };
+    return report.dump(2) + "\n";
+}
+ProcessingReportFile::ProcessingReportFile(std::filesystem::path destination) : destination_(std::move(destination)) {
+    if (std::filesystem::exists(destination_)) throw std::invalid_argument("Processing report already exists; choose a new path");
+    std::random_device random;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        temporary_ = destination_;
+        temporary_ += ".rifelove-" + std::to_string(random()) + "-" + std::to_string(random()) + ".partial";
+        HANDLE file = CreateFileW(temporary_.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if (file != INVALID_HANDLE_VALUE) { CloseHandle(file); return; }
+        const auto code = GetLastError();
+        if (code != ERROR_FILE_EXISTS && code != ERROR_ALREADY_EXISTS)
+            throw std::system_error(static_cast<int>(code),std::system_category(),"reserve processing report");
+    }
+    throw std::runtime_error("Could not reserve a temporary processing report file");
+}
+void ProcessingReportFile::publish(std::string_view serializedReport) {
+    if (published_) throw std::logic_error("Processing report has already been published");
+    if (serializedReport.empty() || serializedReport.size() > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max()))
+        throw std::invalid_argument("Processing report is empty or too large");
+    {
+        std::ofstream file(temporary_,std::ios::binary | std::ios::trunc);
+        if (!file) throw std::runtime_error("Could not open temporary processing report");
+        file.write(serializedReport.data(),static_cast<std::streamsize>(serializedReport.size()));
+        file.flush();
+        if (!file) throw std::runtime_error("Could not write temporary processing report");
+    }
+    if (!MoveFileExW(temporary_.c_str(),destination_.c_str(),MOVEFILE_WRITE_THROUGH))
+        throw std::system_error(static_cast<int>(GetLastError()),std::system_category(),"publish processing report without replacement");
+    published_ = true;
+}
+ProcessingReportFile::~ProcessingReportFile() {
+    if (!published_) { std::error_code error; std::filesystem::remove(temporary_,error); }
 }
 } // namespace rifelove::application
