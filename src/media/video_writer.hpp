@@ -12,6 +12,10 @@ struct VideoEncodingSettings {
     int gopSize = 120;
     int maxBFrames = 0;
     bool allowPrecisionLoss = false;
+    // Internal segment files omit source audio/subtitles and are muxed with
+    // those original streams only once during final assembly.
+    bool copyAuxiliaryStreams = true;
+    bool requireFirstPacketKeyframe = false;
     Metadata encoderOptions;
 };
 struct VideoWriteResult {
@@ -26,7 +30,8 @@ struct VideoWriteResult {
 };
 
 // Model-independent writer for generated CPU frames at explicit presentation times.
-// Other reference-input streams are copied. Without finish, the partial output is removed.
+// Reference-input streams are copied by default; internal segment outputs may
+// opt out. Without finish, the partial output is removed.
 class VideoMuxWriter final {
 public:
     VideoMuxWriter(const std::string& referenceInput, const std::string& output,

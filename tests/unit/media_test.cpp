@@ -3,9 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <cstdlib>
 
 using rifelove::media::DecodedFrame;
 using rifelove::media::MediaEngine;
@@ -112,6 +114,44 @@ TEST(VideoMuxWriter, WritesGeneratedFramesAtExplicitTimes) {
     EXPECT_EQ(decoded.lastTimestamp, rifelove::Rational(1, 25));
     EXPECT_THROW((void)writer.finish(), std::logic_error);
     EXPECT_EQ(retained.planes[0].data[0], 255);
+}
+
+TEST(VideoMuxWriter, WritesVideoOnlyKeyframedSegmentsAtTheGlobalTimelineOrigin) {
+    ImageFixture fixture;
+    const auto source = fixture.directory / "source-with-audio.mkv";
+    const auto command = "ffmpeg.exe -y -v error -f lavfi -i \"testsrc2=size=96x64:rate=5:duration=0.6\" "
+        "-f lavfi -i \"sine=frequency=440:sample_rate=48000:duration=0.6\" -c:v ffv1 -pix_fmt yuv420p -c:a flac \"" +
+        source.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()),0) << "Could not create local segment fixture with FFmpeg";
+    const auto sourceInfo = MediaEngine::probe(source.string());
+    ASSERT_EQ(sourceInfo.streams.size(),2U);
+    ASSERT_EQ(std::count_if(sourceInfo.streams.begin(),sourceInfo.streams.end(),[](const auto& stream) { return stream.type == "audio"; }),1);
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(source.string(),[&](const DecodedFrame& frame) { if (!retained.storage) retained = frame; });
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.pixelFormat = "yuv420p";
+    settings.timeBase = rifelove::Rational(1,50);
+    settings.frameRate = rifelove::Rational(50);
+    settings.copyAuxiliaryStreams = false;
+    settings.requireFirstPacketKeyframe = true;
+    const auto output = fixture.directory / "segment-000000.mkv";
+    rifelove::media::VideoMuxWriter writer(source.string(),output.string(),settings);
+    const auto start = rifelove::Rational(3,2);
+    writer.writeFrame(retained,start,rifelove::Rational(1,50));
+    writer.writeFrame(retained,start + rifelove::Rational(1,50),rifelove::Rational(1,50));
+    const auto result = writer.finish();
+    EXPECT_EQ(result.firstTimestamp,start);
+    EXPECT_EQ(result.endExclusive,start + rifelove::Rational(2,50));
+    EXPECT_EQ(result.framesSubmitted,2U);
+    EXPECT_EQ(result.copiedPackets,0U);
+    const auto info = MediaEngine::probe(output.string());
+    ASSERT_EQ(info.streams.size(),1U);
+    EXPECT_EQ(info.streams.front().type,"video");
+    const auto decoded = MediaEngine::decodeVideo(output.string());
+    EXPECT_EQ(decoded.frameCount,2U);
+    EXPECT_EQ(decoded.firstTimestamp,start);
+    EXPECT_EQ(decoded.lastTimestamp,start + rifelove::Rational(1,50));
 }
 
 TEST(VideoMuxWriter, InvalidTimingAndCancellationRemovePartialFiles) {

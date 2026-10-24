@@ -128,9 +128,12 @@ public:
         detail::check(avcodec_open2(codec_.get(), encoder, &options.value), "open video encoder " + settings.encoder);
         if (const auto* ignored = av_dict_get(options.value, "", nullptr, AV_DICT_IGNORE_SUFFIX))
             throw std::invalid_argument("unsupported encoder option: " + std::string(ignored->key));
-        detail::check(av_dict_copy(&output_.value->metadata, input_.context->metadata, 0), "copy encoding container metadata");
-        detail::copyChapters(input_.context, output_.value);
+        if (settings_.copyAuxiliaryStreams) {
+            detail::check(av_dict_copy(&output_.value->metadata, input_.context->metadata, 0), "copy encoding container metadata");
+            detail::copyChapters(input_.context, output_.value);
+        }
         for (unsigned i = 0; i < input_.context->nb_streams; ++i) {
+            if (!settings_.copyAuxiliaryStreams && static_cast<int>(i) != selected_) continue;
             const auto* incoming = input_.context->streams[i];
             auto* outgoing = avformat_new_stream(output_.value, nullptr);
             if (!outgoing) throw std::bad_alloc();
@@ -139,6 +142,7 @@ public:
             if (avformat_query_codec(output_.value->oformat, codecId, FF_COMPLIANCE_NORMAL) == 0)
                 throw std::runtime_error("output container does not support stream " + std::to_string(i) + " (" + avcodec_get_name(codecId) + ")");
             if (replaced) {
+                outputVideoIndex_ = outgoing->index;
                 detail::check(avcodec_parameters_from_context(outgoing->codecpar, codec_.get()), "copy encoded video parameters");
                 outgoing->time_base = codec_->time_base;
                 outgoing->avg_frame_rate = codec_->framerate;
@@ -161,7 +165,7 @@ public:
             detail::check(av_dict_copy(&outgoing->metadata, incoming->metadata, 0), "copy encoding stream metadata");
             if (replaced) detail::check(av_dict_set(&outgoing->metadata,"encoder",("RifeLove / " + settings_.encoder).c_str(),0),"record selected video encoder");
         }
-        if (extension == ".mkv") {
+        if (settings_.copyAuxiliaryStreams && extension == ".mkv") {
             const auto padding = detail::initialAudioPadding(source,stop_);
             if (padding.size() != output_.value->nb_streams) throw std::runtime_error("Input stream layout changed while inspecting audio priming");
             for (unsigned i = 0; i < output_.value->nb_streams; ++i)
@@ -208,6 +212,7 @@ public:
         frame->height = codec_->height;
         frame->pts = pts;
         frame->duration = length;
+        if (settings_.requireFirstPacketKeyframe && frames_ == 0) frame->pict_type = AV_PICTURE_TYPE_I;
         frame->time_base = codec_->time_base;
         frame->color_primaries = codec_->color_primaries;
         frame->color_trc = codec_->color_trc;
@@ -258,24 +263,28 @@ public:
         detail::check(avio_closep(&output_.value->pb), "close encoded output");
         detail::checkStopped(stop_);
         const auto verified = MediaEngine::probe(detail::pathToUtf8(temporary_.path), stop_);
-        const auto video = std::find_if(verified.streams.begin(), verified.streams.end(), [&](const StreamInfo& stream) { return stream.index == selected_ && stream.type == "video"; });
+        const auto video = std::find_if(verified.streams.begin(), verified.streams.end(), [&](const StreamInfo& stream) { return stream.index == outputVideoIndex_ && stream.type == "video"; });
         if (video == verified.streams.end() || video->color.bitDepth != av_pix_fmt_desc_get(codec_->pix_fmt)->comp[0].depth)
             throw std::runtime_error("encoded output validation found changed video bit depth");
         const auto matchesKnown = [](const std::string& wanted, const std::string& actual) { return wanted.empty() || wanted == "unknown" || wanted == "unspecified" || wanted == actual; };
         if (!matchesKnown(referenceColor_.primaries, video->color.primaries) || !matchesKnown(referenceColor_.transfer, video->color.transfer) ||
             !matchesKnown(referenceColor_.matrix, video->color.matrix) || !matchesKnown(referenceColor_.range, video->color.range))
             throw std::runtime_error("encoded output validation found changed color metadata");
-        std::map<std::pair<std::string, std::string>, unsigned> counts;
-        for (const auto& stream : verified.streams) ++counts[{stream.type, stream.codec}];
-        for (unsigned i = 0; i < input_.context->nb_streams; ++i) {
-            const auto* parameters = input_.context->streams[i]->codecpar;
-            const auto codec = static_cast<int>(i) == selected_ ? codec_->codec_id : parameters->codec_id;
-            const auto* kind = av_get_media_type_string(parameters->codec_type);
-            auto& count = counts[{kind ? kind : "unknown", avcodec_get_name(codec)}];
-            if (count == 0) throw std::runtime_error("encoded output validation found a missing stream");
-            --count;
+        if (settings_.copyAuxiliaryStreams) {
+            std::map<std::pair<std::string, std::string>, unsigned> counts;
+            for (const auto& stream : verified.streams) ++counts[{stream.type, stream.codec}];
+            for (unsigned i = 0; i < input_.context->nb_streams; ++i) {
+                const auto* parameters = input_.context->streams[i]->codecpar;
+                const auto codec = static_cast<int>(i) == selected_ ? codec_->codec_id : parameters->codec_id;
+                const auto* kind = av_get_media_type_string(parameters->codec_type);
+                auto& count = counts[{kind ? kind : "unknown", avcodec_get_name(codec)}];
+                if (count == 0) throw std::runtime_error("encoded output validation found a missing stream");
+                --count;
+            }
+            if (verified.chapters.size() < input_.context->nb_chapters) throw std::runtime_error("encoded output lost chapter metadata");
+        } else if (verified.streams.size() != 1 || verified.streams.front().type != "video") {
+            throw std::runtime_error("video-only segment unexpectedly contains auxiliary streams");
         }
-        if (verified.chapters.size() < input_.context->nb_chapters) throw std::runtime_error("encoded output lost chapter metadata");
         if (validate) validate(detail::pathToUtf8(temporary_.path));
         detail::checkStopped(stop_);
         temporary_.publish();
@@ -286,6 +295,7 @@ public:
 
 private:
     void copyAuxiliary(std::optional<Rational> boundary) {
+        if (!settings_.copyAuxiliaryStreams) return;
         while (!auxiliaryEof_) {
             detail::checkStopped(stop_);
             if (!haveAuxiliary_) {
@@ -318,13 +328,15 @@ private:
             const int status = avcodec_receive_packet(codec_.get(), packet_.get());
             if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) return status;
             detail::check(status, "receive encoded video packet");
+            if (settings_.requireFirstPacketKeyframe && videoPackets_ == 0 && !(packet_->flags & AV_PKT_FLAG_KEY))
+                throw std::runtime_error("segment encoder did not produce an independently decodable first packet");
             const auto duration = durationByPts_.find(packet_->pts);
             if (duration == durationByPts_.end()) throw std::runtime_error("encoder returned an unrecognized presentation timestamp");
             packet_->duration = duration->second;
             durationByPts_.erase(duration);
             copyAuxiliary(detail::timestamp(packet_->dts != AV_NOPTS_VALUE ? packet_->dts : packet_->pts, codec_->time_base));
-            av_packet_rescale_ts(packet_.get(), codec_->time_base, output_.value->streams[selected_]->time_base);
-            packet_->stream_index = selected_;
+            av_packet_rescale_ts(packet_.get(), codec_->time_base, output_.value->streams[outputVideoIndex_]->time_base);
+            packet_->stream_index = outputVideoIndex_;
             packet_->pos = -1;
             detail::check(av_interleaved_write_frame(output_.value, packet_.get()), "mux encoded video packet");
             ++videoPackets_;
@@ -344,6 +356,7 @@ private:
     std::unique_ptr<SwsContext, ScaleDeleter> scale_;
     std::map<std::int64_t, std::int64_t> durationByPts_;
     int selected_ = -1;
+    int outputVideoIndex_ = 0;
     bool haveAuxiliary_ = false;
     bool auxiliaryEof_ = false;
     std::size_t frames_ = 0;
