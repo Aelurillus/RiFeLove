@@ -217,6 +217,7 @@ public:
                 if (skipped.size() >= 50) break;
                 const auto reason = rejected.reason == ImportRejection::unsupportedColor ? tr("视频色彩标签、像素格式或位深不在支持范围内。") :
                     rejected.reason == ImportRejection::unsupportedModelProfile ? tr("当前模型未声明支持这个视频输入配置。") :
+                    rejected.reason == ImportRejection::unsupportedEncoder ? tr("所选视频编码器无法初始化：") + text(rejected.detail) :
                     rejected.reason == ImportRejection::noVideo ? tr("文件中没有视频轨。") : tr("无法读取媒体：") + text(rejected.detail);
                 skipped.push_back(QString::fromStdWString(rejected.path.filename().wstring()) + ": " + reason);
             }
@@ -334,7 +335,7 @@ private:
         result["rate"] = rate;
         for (const auto& key : {"model","runtime","output"}) { const auto url = settings_->value(key).toUrl(); result[key] = url.isLocalFile() ? url : QUrl(); }
         const auto encoder = settings_->value("encoder","auto").toString(), container = settings_->value("container","mkv").toString();
-        result["encoder"] = QStringList{"auto","libopenh264","libkvazaar","libaom-av1"}.contains(encoder) ? encoder : QString("auto");
+        result["encoder"] = QStringList{"auto","libopenh264","libkvazaar","libaom-av1","h264_nvenc"}.contains(encoder) ? encoder : QString("auto");
         result["container"] = QStringList{"mkv","mp4","mov"}.contains(container) ? container : QString("mkv");
         QVariantMap encodingOptions{{"bitrateKbps",settings_->value("encoding/bitrateKbps",8000)},
             {"qualityMode",settings_->value("encoding/qualityMode","bitrate")},

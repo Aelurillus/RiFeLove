@@ -114,7 +114,7 @@ RifeLove 本机运行包
 启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。
 本次附带并完成文件校验的模型：$modelNames。首次启动默认选择 $($defaultModelPack.descriptor.displayName)。当前色彩路径支持模型清单声明的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR，并保留输入位深和色彩标签；HDR、其他位深和未知色彩仍被拦截。模型许可与 SHA-256 位于各自的 models 子目录。
 默认推理：优先尝试 TensorRT 10.9；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT 引擎缓存位于本机用户目录。
-默认视频编码：导入时预检查 NVIDIA NVENC；若当前驱动不兼容，会在任务开始前选择 H.264 软件编码并说明原因。RIFE 插帧仍使用 CUDA。
+默认视频编码：导入时预检查 NVIDIA NVENC；若当前驱动不兼容，会在任务开始前选择 H.264 软件编码并说明原因。RIFE 插帧仍使用 CUDA。高级编码中可以显式选择 NVENC 的恒定质量 CQ（VBR + CQ）；该设置需要本机 NVENC 可初始化，无法回退到软件 H.264。
 导入视频时会按源视频的分辨率和像素格式预检查 NVENC、软件 H.264、HEVC 与 AV1；自动模式按编码器能力选择兼容格式，尽可能保留源位深。这项检查只打开编码器上下文，最终仍以实际导出结果为准。
 本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\$($defaultModelPack.descriptor.id)" --runtime-dir ".\runtime" --progress --report "处理报告.json"。报告记录模型/GPU、实际编码器和回退原因、端到端速度、质量保护计数及时间轴校验；不包含未实测的主观画质评分。也可以用 `rifelove-cli.exe --help` 查看全部本地命令。
 桌面包含本地原片/结果分屏对比、同步播放和帧率时间步进。

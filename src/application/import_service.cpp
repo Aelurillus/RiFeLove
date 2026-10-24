@@ -94,6 +94,14 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         "Selected model does not declare support for input profile " + profile});
                     valid = false;
                 }
+                if (valid && settings.settings.encoding.encoder != "auto") {
+                    const auto capability = media::MediaEngine::probeEncoder(settings.settings.encoding.encoder,*video,
+                        settings.settings.targetRate,stop);
+                    if (!capability.contextOpened) {
+                        result.rejected.push_back({source,ImportRejection::unsupportedEncoder,capability.reason});
+                        valid = false;
+                    }
+                }
                 if (valid) {
                     auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
                     if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;

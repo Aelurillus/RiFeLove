@@ -68,7 +68,7 @@ ApplicationWindow {
             const nvenc = probes.h264_nvenc
             return (!!nvenc && !!nvenc.contextOpened) || window.automaticSoftwareEncoder() !== ""
         }
-        const names = ["libopenh264", "libkvazaar", "libaom-av1"]
+        const names = ["libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         const probe = probes[names[encoder.currentIndex - 1]]
         return !!probe && !!probe.contextOpened
     }
@@ -98,21 +98,22 @@ ApplicationWindow {
         if (!modelFolder.toString() && values.model && values.model.toString()) modelFolder = values.model
         if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
         if (values.rate) rate.editText = values.rate
-        if (values.encoder) encoder.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1"].indexOf(values.encoder)
+        if (values.encoder) encoder.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder)
         studioBitrate.value = Number(values.bitrateKbps || 8000)
         studioQuality.value = Number(values.quality || 32)
         studioGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
-        studioQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" ? 1 : 0
+        studioQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" || values.qualityMode === "cq" ? 1 : 0
         normalizeEncodingMode()
     }
     function normalizeEncodingMode() {
-        if (encoder.currentIndex < 2 && studioQualityMode.currentIndex > 0) studioQualityMode.currentIndex = 0
-        if (encoder.currentIndex === 2 && studioQuality.value > 51) studioQuality.value = 51
-        if (encoder.currentIndex !== 2 && studioQuality.value > 63) studioQuality.value = 63
+        if (![2, 3, 4].includes(encoder.currentIndex) && studioQualityMode.currentIndex > 0) studioQualityMode.currentIndex = 0
+        if ([2, 4].includes(encoder.currentIndex) && studioQuality.value > 51) studioQuality.value = 51
+        if (![2, 4].includes(encoder.currentIndex) && studioQuality.value > 63) studioQuality.value = 63
     }
     function encodingOptions() {
         let mode = "bitrate"
-        if (studioQualityMode.currentIndex === 1) mode = encoder.currentIndex === 2 ? "qp" : "crf"
+        if (studioQualityMode.currentIndex === 1)
+            mode = encoder.currentIndex === 2 ? "qp" : encoder.currentIndex === 3 ? "crf" : "cq"
         return { bitrateKbps: studioBitrate.value, qualityMode: mode, quality: studioQuality.value, gopSize: studioGop.value }
     }
     function automaticSoftwareEncoder() {
@@ -130,13 +131,19 @@ ApplicationWindow {
     }
     function persistLocalDefaults() {
         if (!processingAvailable) return
-        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
+        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
             codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv", encodingOptions())
     }
     function encoderHint() {
         if (!window.info.width) return qsTr("导入后会检查本机的 GPU 与视频编码能力。")
         if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型没有声明支持这个 10-bit SDR 输入配置。")
+        if (encoder.currentIndex === 4) {
+            const nvenc = (window.info.encoders || {}).h264_nvenc
+            return nvenc && nvenc.contextOpened
+                ? qsTr("NVENC 恒定质量 CQ 可用；画质参数由 NVIDIA 视频编码器处理。")
+                : qsTr("当前源视频无法初始化 NVENC；请切换到自动编码或软件编码。")
+        }
         if (!window.info.nvencContextOpened && window.automaticSoftwareEncoder() !== "")
             return qsTr("NVENC 当前不可用；自动模式会用%1编码，RIFE 仍由 CUDA 推理。")
                 .arg(window.automaticSoftwareEncoderLabel())
@@ -371,7 +378,7 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: qsTr("编码器"); font.bold: true }
-                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
+                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
                         }
                     }
                     RowLayout {
@@ -406,6 +413,7 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         model: encoder.currentIndex === 2 ? [qsTr("目标码率"), qsTr("恒定量化 QP")]
                                             : encoder.currentIndex === 3 ? [qsTr("目标码率"), qsTr("恒定质量 CRF")]
+                                            : encoder.currentIndex === 4 ? [qsTr("目标码率"), qsTr("恒定质量 CQ")]
                                             : [qsTr("目标码率")]
                                         enabled: !window.active
                                         onActivated: window.persistLocalDefaults()
@@ -413,12 +421,12 @@ ApplicationWindow {
                                 }
                                 ColumnLayout {
                                     Layout.fillWidth: true
-                                    Label { text: studioQualityMode.currentIndex === 1 ? (encoder.currentIndex === 2 ? qsTr("QP（0–51）") : qsTr("CRF（0–63）")) : qsTr("目标质量") }
+                                    Label { text: studioQualityMode.currentIndex === 1 ? (encoder.currentIndex === 2 ? qsTr("QP（0–51）") : encoder.currentIndex === 4 ? qsTr("CQ（0–51）") : qsTr("CRF（0–63）")) : qsTr("目标质量") }
                                     SpinBox {
                                         id: studioQuality
                                         objectName: "studioQuality"
                                         from: 0
-                                        to: encoder.currentIndex === 2 ? 51 : 63
+                                        to: [2, 4].includes(encoder.currentIndex) ? 51 : 63
                                         value: 32
                                         enabled: !window.active && studioQualityMode.currentIndex === 1
                                         onValueModified: window.persistLocalDefaults()
@@ -455,6 +463,7 @@ ApplicationWindow {
                             Label {
                                 text: encoder.currentIndex === 2 ? qsTr("HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。")
                                     : encoder.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
+                                    : encoder.currentIndex === 4 ? qsTr("NVENC 恒定质量使用 VBR + CQ（0–51），需要可用的 NVIDIA 视频编码驱动；较低 CQ 通常会生成更大的文件。")
                                     : qsTr("自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。")
                                 color: "#9aaac0"
                                 font.pixelSize: 12

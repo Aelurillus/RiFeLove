@@ -26,22 +26,23 @@ Item {
         if (values.model && values.model.toString()) modelFolder = values.model
         if (values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
         if (values.output && values.output.toString()) outputFolder = values.output
-        if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1"].indexOf(values.encoder) }
+        if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
         encodingBitrate.value = Number(values.bitrateKbps || 8000)
         encodingQuality.value = Number(values.quality || 32)
         encodingGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
-        encodingQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" ? 1 : 0
+        encodingQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" || values.qualityMode === "cq" ? 1 : 0
         normalizeEncodingMode()
     }
     function normalizeEncodingMode() {
-        if (encoderBox.currentIndex < 2 && encodingQualityMode.currentIndex > 0) encodingQualityMode.currentIndex = 0
-        if (encoderBox.currentIndex === 2 && encodingQuality.value > 51) encodingQuality.value = 51
-        if (encoderBox.currentIndex !== 2 && encodingQuality.value > 63) encodingQuality.value = 63
+        if (![2, 3, 4].includes(encoderBox.currentIndex) && encodingQualityMode.currentIndex > 0) encodingQualityMode.currentIndex = 0
+        if ([2, 4].includes(encoderBox.currentIndex) && encodingQuality.value > 51) encodingQuality.value = 51
+        if (![2, 4].includes(encoderBox.currentIndex) && encodingQuality.value > 63) encodingQuality.value = 63
     }
     function encodingOptions() {
         let mode = "bitrate"
-        if (encodingQualityMode.currentIndex === 1) mode = encoderBox.currentIndex === 2 ? "qp" : "crf"
+        if (encodingQualityMode.currentIndex === 1)
+            mode = encoderBox.currentIndex === 2 ? "qp" : encoderBox.currentIndex === 3 ? "crf" : "cq"
         return { bitrateKbps: encodingBitrate.value, qualityMode: mode, quality: encodingQuality.value, gopSize: encodingGop.value }
     }
     function add(sources) {
@@ -52,7 +53,7 @@ Item {
         selectedSources = []
     }
     function persistDefaults() {
-        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1"]
+        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
             codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions())
     }
@@ -136,7 +137,7 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("编码器"); font.bold: true }
-                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
+                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
                     }
                 }
                 ActionButton { text: page.encodingAdvancedOpen ? qsTr("收起高级编码") : qsTr("高级编码设置"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.encodingAdvancedOpen = !page.encodingAdvancedOpen }
@@ -157,18 +158,19 @@ Item {
                                     Layout.fillWidth: true
                                     model: encoderBox.currentIndex === 2 ? [qsTr("目标码率"), qsTr("恒定量化 QP")]
                                         : encoderBox.currentIndex === 3 ? [qsTr("目标码率"), qsTr("恒定质量 CRF")]
+                                        : encoderBox.currentIndex === 4 ? [qsTr("目标码率"), qsTr("恒定质量 CQ")]
                                         : [qsTr("目标码率")]
                                     onActivated: page.persistDefaults()
                                 }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Label { text: encodingQualityMode.currentIndex === 1 ? (encoderBox.currentIndex === 2 ? qsTr("QP（0–51）") : qsTr("CRF（0–63）")) : qsTr("目标质量") }
+                                Label { text: encodingQualityMode.currentIndex === 1 ? (encoderBox.currentIndex === 2 ? qsTr("QP（0–51）") : encoderBox.currentIndex === 4 ? qsTr("CQ（0–51）") : qsTr("CRF（0–63）")) : qsTr("目标质量") }
                                 SpinBox {
                                     id: encodingQuality
                                     objectName: "queueQuality"
                                     from: 0
-                                    to: encoderBox.currentIndex === 2 ? 51 : 63
+                                    to: [2, 4].includes(encoderBox.currentIndex) ? 51 : 63
                                     value: 32
                                     enabled: encodingQualityMode.currentIndex === 1
                                     onValueModified: page.persistDefaults()
@@ -188,6 +190,7 @@ Item {
                         Label {
                             text: encoderBox.currentIndex === 2 ? qsTr("HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。")
                                 : encoderBox.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
+                                : encoderBox.currentIndex === 4 ? qsTr("NVENC 恒定质量使用 VBR + CQ（0–51），需要可用的 NVIDIA 视频编码驱动；较低 CQ 通常会生成更大的文件。")
                                 : qsTr("自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。")
                             color: "#9aaac0"
                             font.pixelSize: 12

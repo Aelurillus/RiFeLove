@@ -16,7 +16,7 @@ inline int integerSetting(const QVariantMap& values, const char* key, int fallba
 
 inline media::VideoEncodingSettings makeVideoEncodingSettings(const QString& selectedEncoder, const QVariantMap& values) {
     const auto encoder = selectedEncoder.toLatin1().toStdString();
-    if (encoder != "auto" && encoder != "libopenh264" && encoder != "libkvazaar" && encoder != "libaom-av1")
+    if (encoder != "auto" && encoder != "h264_nvenc" && encoder != "libopenh264" && encoder != "libkvazaar" && encoder != "libaom-av1")
         throw std::invalid_argument("Unsupported desktop video encoder selection");
 
     media::VideoEncodingSettings result;
@@ -27,6 +27,11 @@ inline media::VideoEncodingSettings makeVideoEncodingSettings(const QString& sel
 
     if (mode == QStringLiteral("bitrate")) {
         result.bitRate = static_cast<std::int64_t>(bitrateKbps) * 1000;
+    } else if (mode == QStringLiteral("cq") && encoder == "h264_nvenc") {
+        const int quality = integerSetting(values, "quality", 22, 0, 51);
+        result.bitRate = 0;
+        result.encoderOptions.emplace("rc", "vbr");
+        result.encoderOptions.emplace("cq", std::to_string(quality));
     } else if (mode == QStringLiteral("qp") && encoder == "libkvazaar") {
         const int qp = integerSetting(values, "quality", 30, 0, 51);
         result.bitRate = 0;

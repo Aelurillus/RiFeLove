@@ -60,6 +60,11 @@ int main(int argc, char** argv) {
             {{"bitrateKbps",2500},{"qualityMode","bitrate"},{"quality",32},{"gopSize",60}});
         require(h264Settings.bitRate == 2500000 && h264Settings.gopSize == 60 && h264Settings.encoderOptions.empty(),
             "H.264 target bitrate/GOP did not map to the native encoder settings");
+        const auto nvencSettings = rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("h264_nvenc"),
+            {{"qualityMode","cq"},{"quality",20},{"gopSize",60}});
+        require(nvencSettings.bitRate == 0 && nvencSettings.encoderOptions.at("rc") == "vbr" &&
+                nvencSettings.encoderOptions.at("cq") == "20",
+            "NVENC constant-quality settings did not map to VBR + CQ");
         const auto hevcSettings = rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("libkvazaar"),
             {{"bitrateKbps",8000},{"qualityMode","qp"},{"quality",28},{"gopSize",48}});
         require(hevcSettings.bitRate == 0 && hevcSettings.encoderOptions.at("kvazaar-params") == "qp=28",
@@ -74,6 +79,12 @@ int main(int argc, char** argv) {
                 {{"bitrateKbps",8000},{"qualityMode","crf"},{"quality",35},{"gopSize",48}});
         } catch (const std::invalid_argument&) { rejectedUnsupportedQualityMode = true; }
         require(rejectedUnsupportedQualityMode, "The desktop accepted a quality mode the selected H.264 encoder does not support");
+        bool rejectedNvencQualityForSoftwareH264 = false;
+        try {
+            (void)rifelove::desktop::makeVideoEncodingSettings(QStringLiteral("libopenh264"),
+                {{"bitrateKbps",8000},{"qualityMode","cq"},{"quality",20},{"gopSize",48}});
+        } catch (const std::invalid_argument&) { rejectedNvencQualityForSoftwareH264 = true; }
+        require(rejectedNvencQualityForSoftwareH264, "The desktop accepted NVENC CQ for software H.264");
         const auto arguments = app.arguments();
         require(arguments.size() == 8, "Expected source, output, pack, runtime, QML, screenshot and report paths");
         StudioController studio;
