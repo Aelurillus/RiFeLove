@@ -1,6 +1,6 @@
 # Executable development plan
 
-Status as of 2026-10-17. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
+Status as of 2026-10-24. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
 
 Current execution mode: local project, local Git, local builds/tests and local reports. Hosted CI, remote repository setup and publishing are deferred until requested. The final product scope remains the Master Plan baseline.
 
@@ -12,6 +12,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add CLI entry points for timeline plans and persisted tasks.
 - [x] Add unit tests for arithmetic, VFR/non-integer timeline mapping and task transitions.
 - [ ] Add structured logging/configuration, service/backend interfaces and Qt app shell.
+  - Qt 6.12 / MinGW 15.1 shell now builds locally and passes a rendered startup check; complete services/configuration/logging remain open.
 - [x] Add offline-by-default local build/test runner and local JSON/JUnit reports.
 - [x] Add read-only queue inspection and Windows Unicode CLI regression coverage.
 - [x] Preserve the original complete Master Plan and add SRS/ADD requirement evidence documents.
@@ -30,6 +31,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add a model-independent CPU-frame encoder/mux writer and transcode path with compatible original audio/subtitle stream copy.
 - [x] Validate software H.264/HEVC/AV1, FFV1 lossless/HDR, encoder B-frame drain, VFR and exact 60000/1001 scheduling across 1000 generated frames.
 - [ ] Validate duration, frame count, PTS monotonicity, audio sync and container integrity.
+  - First real AI pipeline now performs full output decode/boundary validation before publication; synthetic container/audio cases pass. Full corpus remains open.
 - [x] Add synthetic media integration tests for 10-bit/PQ, tracks/chapters, VFR/B-frames, packet hashes/timing, Unicode paths, corrupt files and output protection.
 - [ ] Add the complete licensed fixture corpus, long-video and disk-full fault-injection suite.
 
@@ -43,22 +45,24 @@ Current execution mode: local project, local Git, local builds/tests and local r
   - RIFE 4.25 native execution passes six small-profile SDR8 comparisons with CUDA Conv/ConvTranspose/GridSample placement; larger profiles/visual validation remain open.
 - [ ] Integrate TensorRT backend and version/GPU keyed engine cache.
 - [ ] Register checksum-verifiable model manifests with capability and license metadata.
-- [ ] Pass real end-to-end video interpolation and forward quality tests.
+- [x] Pass first real end-to-end SDR8 video interpolation and independent original-PyTorch video numerical tests.
+- [ ] Complete full-resolution, real-content and perceptual/temporal quality acceptance.
 
 ## Phase 4 — GPU throughput
 
 - [x] Add native CUDA device/context/stream/buffer primitives with actual local GPU transfer, budget and lifetime tests.
 - [ ] Probe GPU/driver/compute and codec capabilities at runtime.
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
-  - Local NVENC probe currently fails: SDK requires API 13.0; installed driver exposes 12.2. This is an unresolved compatibility item, not a GPU-success result.
+  - Local NVENC probe fails: SDK requires API 13.0; installed driver exposes 12.2. Pipeline auto-selection now reports software H.264 fallback; GPU encode/decode remains unqualified.
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
 - [ ] Evaluate CUDA Graph, FP16, profiles and optional overlapped tiling.
 
 ## Phase 5 — quality/color
 
-- [ ] Implement cut detection and disable cross-cut interpolation.
-- [ ] Add conservative policies for duplicate frames, fast motion and abnormal output.
+- [x] Implement first cut detection and disable cross-cut interpolation, with synthetic hard-cut regression.
+- [x] Add first conservative duplicate/abnormal-pair hold policies.
+- [ ] Tune and qualify protection on real content, occlusion/fast motion and abnormal model output.
 - [ ] Implement color-managed SDR/HDR and 10-bit conversions.
 - [ ] Add animation/text/HUD temporal QA and seam/flicker regression fixtures.
 - [ ] Publish objective and blind-review benchmark protocol.

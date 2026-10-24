@@ -74,3 +74,17 @@ TEST_F(CudaHardware, BuffersKeepTheirContextAliveAfterDeviceWrapperCloses) {
     buffer->download(std::as_writable_bytes(std::span(output)));
     EXPECT_EQ(input, output);
 }
+TEST_F(CudaHardware, ReclaimRequiresExclusiveCompletedStorageAndPreservesItsAllocation) {
+    auto mutableBuffer = device->allocate(1024);
+    const auto address = mutableBuffer->address();
+    std::shared_ptr<const rifelove::gpu::DeviceBuffer> readOnly = mutableBuffer;
+    EXPECT_THROW((void)device->reclaim(readOnly),GpuError);
+    mutableBuffer.reset();
+    EXPECT_THROW((void)device->reclaim(readOnly),GpuError);
+    auto reclaimed = device->reclaim(std::move(readOnly));
+    EXPECT_EQ(reclaimed->address(),address); EXPECT_EQ(device->allocatedBytes(),1024U);
+    std::vector<float> input(256,0.75F), output(256);
+    reclaimed->upload(std::as_bytes(std::span(input)));
+    reclaimed->download(std::as_writable_bytes(std::span(output)));
+    EXPECT_EQ(input,output);
+}

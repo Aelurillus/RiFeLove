@@ -6,6 +6,15 @@
 
 namespace rifelove {
 
+CfrClock::CfrClock(Rational origin, Rational rate) : origin_(origin), rate_(rate) {
+    if (rate <= Rational(0)) throw std::invalid_argument("target frame rate must be positive");
+}
+Rational CfrClock::timestamp() const { return origin_ + Rational(static_cast<std::int64_t>(index_)) / rate_; }
+void CfrClock::advance() {
+    if (index_ >= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) throw std::overflow_error("output frame index exceeds exact timestamp range");
+    ++index_;
+}
+
 Timeline::Timeline(std::vector<Rational> presentationTimes, Rational endExclusive, Rational targetRate)
     : pts_(std::move(presentationTimes)), end_(endExclusive), targetRate_(targetRate), outputCount_(0) {
     if (pts_.empty()) throw std::invalid_argument("timeline needs at least one input frame");

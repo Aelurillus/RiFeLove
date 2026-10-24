@@ -254,6 +254,11 @@ void CudaDevice::synchronize(std::stop_token stop) const {
     state_->check(state_->syncStream(state_->stream), "synchronize CUDA stream");
     cancelled(stop);
 }
+std::shared_ptr<DeviceBuffer> CudaDevice::reclaim(std::shared_ptr<const DeviceBuffer> buffer) const {
+    if (!buffer || buffer.use_count() != 1 || buffer->deviceOrdinal() != info().ordinal)
+        throw GpuError(GpuErrorKind::invalidRequest, "Reclaim requires the sole reference to a completed buffer on this device");
+    return std::const_pointer_cast<DeviceBuffer>(std::move(buffer));
+}
 void CudaDevice::copy(const DeviceBuffer& source, DeviceBuffer& destination, std::size_t bytes, std::stop_token stop) const {
     cancelled(stop);
     if (source.deviceOrdinal() != info().ordinal || destination.deviceOrdinal() != info().ordinal)

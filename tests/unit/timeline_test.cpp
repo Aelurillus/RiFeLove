@@ -32,3 +32,12 @@ TEST(Timeline, RejectsAmbiguousTimeAxesAndNonPositiveRates) {
     EXPECT_THROW((Timeline({Rational(0)}, Rational(1), Rational(0))), std::invalid_argument);
     EXPECT_THROW((Timeline({Rational(0)}, Rational(0), Rational(30))), std::invalid_argument);
 }
+TEST(CfrClock, FractionalRateDoesNotDriftOverOneHundredThousandFrames) {
+    rifelove::CfrClock clock(Rational(5,2),Rational(60000,1001));
+    EXPECT_EQ(clock.timestamp(),Rational(5,2));
+    for (int i = 0; i < 100000; ++i) clock.advance();
+    EXPECT_EQ(clock.index(),100000U);
+    EXPECT_EQ(clock.timestamp(),Rational(5,2) + Rational(5005,3));
+    EXPECT_EQ(clock.period(),Rational(1001,60000));
+    EXPECT_THROW((rifelove::CfrClock({},Rational(0))),std::invalid_argument);
+}

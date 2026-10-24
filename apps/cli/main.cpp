@@ -2,6 +2,9 @@
 #include "timeline/timeline.hpp"
 #include "common/json.hpp"
 #include "gpu/cuda_device.hpp"
+#ifdef RIFELOVE_HAS_PIPELINE
+#include "interpolation_commands.hpp"
+#endif
 #ifdef RIFELOVE_HAS_MEDIA
 #include "media_commands.hpp"
 #endif
@@ -67,12 +70,15 @@ std::vector<rifelove::Rational> parsePts(const std::string& input) {
 }
 
 void usage(std::ostream& out) {
-    out << "RifeLove development CLI (timeline planning and task records; no pixel interpolation yet)\n"
+    out << "RifeLove development CLI\n"
         << "  rifelove-cli timeline --fps RATE --end SECONDS --pts PTS[,PTS...]\n"
         << "  rifelove-cli task-create DATABASE SOURCE OUTPUT\n"
         << "  rifelove-cli tasks DATABASE\n"
         << "  rifelove-cli tasks-recover DATABASE (maintenance: all workers must be stopped)\n";
     out << "  rifelove-cli gpu-info [DEVICE_INDEX]\n";
+#ifdef RIFELOVE_HAS_PIPELINE
+    out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--encoder auto|NAME] [--pixel-format FORMAT] [--progress]\n";
+#endif
 #ifdef RIFELOVE_HAS_MEDIA
     out << "  rifelove-cli media-probe INPUT\n"
         << "  rifelove-cli media-scan INPUT [--frames] [--stream INDEX]\n"
@@ -88,6 +94,13 @@ int main(int argc, char** argv) {
         const auto args = commandLineUtf8(argc, argv);
         if (args.size() < 2 || args[1] == "--help" || args[1] == "-h") { usage(std::cout); return 0; }
         const std::string& command = args[1];
+        if (command == "interpolate") {
+#ifdef RIFELOVE_HAS_PIPELINE
+            return runInterpolationCommand(args);
+#else
+            throw std::runtime_error("Interpolation requires RIFELOVE_BUILD_MEDIA=ON and RIFELOVE_BUILD_ONNX_CUDA=ON");
+#endif
+        }
         if (command == "gpu-info") {
             if (args.size() > 3) throw std::invalid_argument("gpu-info accepts one optional device index");
             int ordinal = 0;

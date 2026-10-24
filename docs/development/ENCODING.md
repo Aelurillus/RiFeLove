@@ -1,6 +1,6 @@
 # Generated-frame encoding and transcode
 
-`VideoMuxWriter` is a native C++20, model-independent writer. It takes owned pixel planes, a rational presentation timestamp and a positive rational duration for each generated frame. It replaces one selected video stream and copies all other compatible reference-input streams. It is ready to receive frames from the future interpolation pipeline; it does not generate those frames itself.
+`VideoMuxWriter` is a native C++20, model-independent writer. It takes owned pixel planes, a rational presentation timestamp and a positive rational duration for each generated frame. It replaces one selected video stream and copies all other compatible reference-input streams. The [RIFE pipeline](PIPELINE.md) now submits generated frames through this same writer.
 
 ## CLI
 
@@ -11,7 +11,7 @@
 .\build\windows-dev\rifelove-cli.exe transcode source.mkv lossless.mkv --encoder ffv1
 ```
 
-`transcode` keeps input video PTS and derives each frame duration from the following PTS, holding at most two decoded frames in its adapter. The final frame must have a reliable declared duration; otherwise it fails and asks for an explicit timeline boundary. There is no FPS-changing or AI interpolation mode yet.
+`transcode` keeps input video PTS and derives each frame duration from the following PTS, holding at most two decoded frames in its adapter. The final frame must have a reliable declared duration; otherwise it fails and asks for an explicit timeline boundary. Use the separate `interpolate` command for FPS conversion and real AI interpolation.
 
 The default encoder setting is `h264_nvenc`; the examples explicitly choose software encoders. A selected encoder must actually open successfully. Unknown options are rejected rather than ignored, and an unavailable hardware encoder does not silently choose a different backend.
 
@@ -29,8 +29,8 @@ Output uses the same exclusive temporary reservation and no-replace publication 
 
 On 2026-10-17, `nvidia-smi` reported GTX 1660 SUPER, driver `560.94` and 6144 MiB. A real `h264_nvenc` encode with the pinned FFmpeg SDK failed before producing packets: the SDK build required NVENC API `13.0` while the installed driver exposed `12.2`; FFmpeg reported driver `570.0` as its minimum for this build. This is not a successful NVENC result. AV1 hardware support cannot be inferred from an `av1_nvenc` name in the registered-encoder list.
 
-The final application still needs a compatible FFmpeg/NVENC build/driver matrix, runtime device capabilities and explicit fallback policy. The driver has not been changed. A compatible older NVENC interface can be selected in a future audited build rather than assuming that all users must update their driver.
+The interpolation pipeline now implements an explicit `auto` policy: try actual NVENC initialization, then report a software H.264 fallback if that encoder cannot open. Explicit `transcode`/encoder choices stay strict. The final application still needs a compatible FFmpeg/NVENC build/driver matrix and runtime device capabilities. The driver has not been changed.
 
 ## Remaining acceptance
 
-The CPU writer copies owned input planes to encoder frames and uses a separate demux handle for auxiliary streams. GPU surfaces, shared demux and buffer-pool optimization are pending. Full RGB/YUV/transfer/tone-mapping handling, dynamic HDR/Dolby Vision and ICC workflows are not validated. Static mastering/content-light construction has code but still needs real metadata fixtures. The full source time-base/audio offset/container matrix, missing-PTS recovery, disk-full injection and multi-hour tests remain required. No RIFE backend, CUDA inference, desktop workflow or complete release is claimed by these encoding tests.
+The CPU writer copies owned input planes to encoder frames and uses a separate demux handle for auxiliary streams. GPU surfaces, shared demux and buffer-pool optimization are pending. Full RGB/YUV/transfer/tone-mapping handling, dynamic HDR/Dolby Vision and ICC workflows are not validated. Static mastering/content-light construction has code but still needs real metadata fixtures. The full source time-base/audio offset/container matrix, missing-PTS recovery, disk-full injection and multi-hour tests remain required. Separate native RIFE tests now exist; these encoding tests alone do not establish neural quality or full release acceptance.

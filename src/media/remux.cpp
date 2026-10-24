@@ -29,6 +29,13 @@ RemuxResult MediaEngine::remux(const std::string& source, const std::string& des
         detail::check(av_dict_copy(&outgoing->metadata, incoming->metadata, 0), "copy stream metadata");
     }
     const auto temporaryPath = detail::pathToUtf8(temporary.path);
+    if (extension == ".mkv") {
+        const auto padding = detail::initialAudioPadding(source,stop);
+        if (padding.size() != output.value->nb_streams) throw std::runtime_error("Input stream layout changed while inspecting audio priming");
+        for (unsigned i = 0; i < output.value->nb_streams; ++i)
+            if (output.value->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+                output.value->streams[i]->codecpar->initial_padding = padding[i];
+    }
     detail::writeOutputHeader(output.value, temporaryPath, extension);
     auto freePacket = [](AVPacket* p) { av_packet_free(&p); };
     std::unique_ptr<AVPacket, decltype(freePacket)> packet(av_packet_alloc(), freePacket);
@@ -39,8 +46,11 @@ RemuxResult MediaEngine::remux(const std::string& source, const std::string& des
         const int read = av_read_frame(input.context, packet.get());
         if (read == AVERROR_EOF) break;
         detail::check(read, "read packet for stream copy");
+        if (packet->stream_index < 0 || static_cast<unsigned>(packet->stream_index) >= output.value->nb_streams)
+            throw std::runtime_error("Input stream layout changed during remuxing");
         const auto* incoming = input.context->streams[packet->stream_index];
         const auto* outgoing = output.value->streams[packet->stream_index];
+        detail::normalizeCopiedAudioDuration(packet.get(),incoming,detail::declaredEnd(input.context,incoming));
         av_packet_rescale_ts(packet.get(), incoming->time_base, outgoing->time_base);
         packet->pos = -1;
         detail::check(av_interleaved_write_frame(output.value, packet.get()), "write compressed packet");

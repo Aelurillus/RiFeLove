@@ -75,6 +75,9 @@ std::string outputExtension(const std::filesystem::path& path) {
     return extension;
 }
 void writeOutputHeader(AVFormatContext* output, const std::string& path, const std::string& extension) {
+    // Preserve the source presentation origin and codec-delay/preroll packets.
+    // Automatic rebasing can shift an entire B-frame output when DTS is negative.
+    output->avoid_negative_ts = AVFMT_AVOID_NEG_TS_DISABLED;
     check(avio_open2(&output->pb, path.c_str(), AVIO_FLAG_WRITE, &output->interrupt_callback, nullptr), "open temporary output");
     AVDictionary* options = nullptr;
     if (extension == ".mp4" || extension == ".mov") {

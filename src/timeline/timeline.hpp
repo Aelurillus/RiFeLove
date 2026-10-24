@@ -7,6 +7,22 @@
 
 namespace rifelove {
 
+// Streaming CFR clock: memory use is independent of clip length. Source pair
+// selection remains with the decoder; each timestamp is derived from the exact
+// origin and integer output index, never accumulated floating-point deltas.
+class CfrClock final {
+public:
+    CfrClock(Rational origin, Rational rate);
+    [[nodiscard]] Rational timestamp() const;
+    [[nodiscard]] Rational period() const { return Rational(1) / rate_; }
+    [[nodiscard]] std::size_t index() const noexcept { return index_; }
+    void advance();
+private:
+    Rational origin_;
+    Rational rate_;
+    std::size_t index_ = 0;
+};
+
 struct FrameSample {
     std::size_t outputIndex;
     Rational timestamp;

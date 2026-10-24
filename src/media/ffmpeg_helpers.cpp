@@ -1,14 +1,107 @@
 #include "media/ffmpeg_helpers.hpp"
+#include <charconv>
 
 #include <cerrno>
 
 namespace rifelove::media {
 
 MediaError::MediaError(const std::string& operation, int code)
-    : std::runtime_error([&] { char text[AV_ERROR_MAX_STRING_SIZE]{}; av_strerror(code, text, sizeof(text)); return operation + ": " + text; }()), code_(code) {}
+    : std::runtime_error([&] { char text[AV_ERROR_MAX_STRING_SIZE]{}; av_strerror(code, text, sizeof(text)); return operation + ": " + text; }()), code_(code), operation_(operation) {}
 bool MediaError::cancelled() const noexcept { return code_ == AVERROR_EXIT; }
 
 namespace detail {
+namespace {
+std::optional<Rational> durationTag(const std::string& text) {
+    const auto colon0 = text.find(':'), colon1 = text.find(':',colon0 == std::string::npos ? 0 : colon0 + 1);
+    if (colon0 == std::string::npos || colon1 == std::string::npos) return {};
+    const auto point = text.find('.',colon1 + 1);
+    auto integer = [&](std::size_t first, std::size_t last) -> std::optional<std::int64_t> {
+        if (first >= last || last > text.size()) return {};
+        std::int64_t value = 0;
+        const auto [end,status] = std::from_chars(text.data() + first,text.data() + last,value);
+        if (status != std::errc{} || end != text.data() + last || value < 0) return {};
+        return value;
+    };
+    const auto hours = integer(0,colon0), minutes = integer(colon0 + 1,colon1), seconds = integer(colon1 + 1,point == std::string::npos ? text.size() : point);
+    if (!hours || !minutes || !seconds || *minutes >= 60 || *seconds >= 60) return {};
+    Rational value;
+    try { value = Rational(*hours) * Rational(3600) + Rational(*minutes * 60 + *seconds); }
+    catch (const std::overflow_error&) { return {}; }
+    if (point != std::string::npos) {
+        const auto digits = text.size() - point - 1;
+        if (digits == 0 || digits > 9) return {};
+        const auto fraction = integer(point + 1,text.size());
+        if (!fraction) return {};
+        std::int64_t denominator = 1;
+        for (std::size_t i = 0; i < digits; ++i) denominator *= 10;
+        value = value + Rational(*fraction,denominator);
+    }
+    return value;
+}
+}
+std::optional<Rational> declaredEnd(const AVFormatContext* input, const AVStream* stream) {
+    if (stream->duration != AV_NOPTS_VALUE && stream->duration > 0) {
+        const auto start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
+        return Rational(start) * rational(stream->time_base) + Rational(stream->duration) * rational(stream->time_base);
+    }
+    if (!input->iformat || std::string_view(input->iformat->name).find("matroska") == std::string_view::npos) return {};
+    const auto* tag = av_dict_get(stream->metadata,"DURATION",nullptr,0);
+    if (!tag) return {};
+    auto end = durationTag(tag->value);
+    if (end && stream->codecpar->initial_padding > 0 && stream->codecpar->sample_rate > 0) {
+        // Matroska's track duration includes the timestamp offset for CodecDelay.
+        const auto delay = av_rescale_q(stream->codecpar->initial_padding,AVRational{1,stream->codecpar->sample_rate},stream->time_base);
+        end = *end - Rational(delay) * rational(stream->time_base);
+    }
+    return end;
+}
+void normalizeCopiedAudioDuration(AVPacket* packet, const AVStream* source, std::optional<Rational> end) {
+    if (!end || source->codecpar->codec_type != AVMEDIA_TYPE_AUDIO || packet->pts == AV_NOPTS_VALUE || packet->duration <= 0) return;
+    const auto base = rational(source->time_base), start = Rational(packet->pts) * base;
+    if (start >= *end || start + Rational(packet->duration) * base <= *end) return;
+    const auto ticks = (*end - start) / base;
+    auto rounded = ticks.numerator() / ticks.denominator();
+    const auto remainder = ticks.numerator() % ticks.denominator();
+    if (remainder >= ticks.denominator() / 2 + ticks.denominator() % 2) ++rounded;
+    if (rounded > 0 && rounded < packet->duration) packet->duration = rounded;
+}
+std::vector<int> initialAudioPadding(const std::string& path, std::stop_token stop) {
+    Input probe(path,stop);
+    std::vector<int> padding(probe.context->nb_streams,0);
+    std::vector<bool> pending(probe.context->nb_streams,false);
+    std::size_t remaining = 0;
+    for (unsigned i = 0; i < probe.context->nb_streams; ++i) {
+        const auto* parameters = probe.context->streams[i]->codecpar;
+        padding[i] = parameters->initial_padding;
+        if (parameters->codec_type == AVMEDIA_TYPE_AUDIO && parameters->initial_padding == 0) { pending[i] = true; ++remaining; }
+    }
+    const auto freePacket = [](AVPacket* pointer) { av_packet_free(&pointer); };
+    std::unique_ptr<AVPacket,decltype(freePacket)> packet(av_packet_alloc(),freePacket);
+    if (!packet) throw std::bad_alloc();
+    // Streaming scan retains no packet payload. Indexed probing for unusually
+    // late-starting audio is a separate performance improvement.
+    while (remaining) {
+        checkStopped(stop);
+        const int status = av_read_frame(probe.context,packet.get());
+        if (status == AVERROR_EOF) break;
+        check(status,"inspect initial audio padding");
+        const auto index = static_cast<unsigned>(packet->stream_index);
+        if (index >= pending.size()) throw std::runtime_error("Input stream layout changed while inspecting audio priming");
+        if (pending[index]) {
+            std::size_t size = 0;
+            const auto* data = av_packet_get_side_data(packet.get(),AV_PKT_DATA_SKIP_SAMPLES,&size);
+            if (data && size >= 10) {
+                const auto samples = static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8) |
+                    (static_cast<std::uint32_t>(data[2]) << 16) | (static_cast<std::uint32_t>(data[3]) << 24);
+                if (samples > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Audio priming exceeds the supported sample-count range");
+                padding[index] = static_cast<int>(samples);
+            }
+            pending[index] = false; --remaining;
+        }
+        av_packet_unref(packet.get());
+    }
+    return padding;
+}
 namespace {
 std::string name(const char* text) { return text ? text : "unknown"; }
 

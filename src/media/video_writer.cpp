@@ -159,6 +159,14 @@ public:
             outgoing->sample_aspect_ratio = incoming->sample_aspect_ratio;
             outgoing->disposition = incoming->disposition;
             detail::check(av_dict_copy(&outgoing->metadata, incoming->metadata, 0), "copy encoding stream metadata");
+            if (replaced) detail::check(av_dict_set(&outgoing->metadata,"encoder",("RifeLove / " + settings_.encoder).c_str(),0),"record selected video encoder");
+        }
+        if (extension == ".mkv") {
+            const auto padding = detail::initialAudioPadding(source,stop_);
+            if (padding.size() != output_.value->nb_streams) throw std::runtime_error("Input stream layout changed while inspecting audio priming");
+            for (unsigned i = 0; i < output_.value->nb_streams; ++i)
+                if (output_.value->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+                    output_.value->streams[i]->codecpar->initial_padding = padding[i];
         }
         detail::writeOutputHeader(output_.value, detail::pathToUtf8(temporary_.path), extension);
     }
@@ -239,7 +247,7 @@ public:
         receive();
     }
 
-    VideoWriteResult finish() {
+    VideoWriteResult finish(const std::function<void(const std::string&)>& validate) {
         detail::checkStopped(stop_);
         if (frames_ == 0) throw std::logic_error("cannot finalize a video with no frames");
         detail::check(avcodec_send_frame(codec_.get(), nullptr), "flush video encoder");
@@ -268,6 +276,8 @@ public:
             --count;
         }
         if (verified.chapters.size() < input_.context->nb_chapters) throw std::runtime_error("encoded output lost chapter metadata");
+        if (validate) validate(detail::pathToUtf8(temporary_.path));
+        detail::checkStopped(stop_);
         temporary_.publish();
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count();
         return {settings_.encoder, frames_, videoPackets_, copiedPackets_, *first_, *end_, seconds,
@@ -282,6 +292,8 @@ private:
                 const int read = av_read_frame(input_.context, auxiliary_.get());
                 if (read == AVERROR_EOF) { auxiliaryEof_ = true; break; }
                 detail::check(read, "read auxiliary input packet");
+                if (auxiliary_->stream_index < 0 || static_cast<unsigned>(auxiliary_->stream_index) >= output_.value->nb_streams)
+                    throw std::runtime_error("Input stream layout changed during processing");
                 haveAuxiliary_ = true;
             }
             const auto* incoming = input_.context->streams[auxiliary_->stream_index];
@@ -290,6 +302,7 @@ private:
                 if (boundary && time && *time >= *boundary) return;
             } else {
                 const auto* outgoing = output_.value->streams[auxiliary_->stream_index];
+                detail::normalizeCopiedAudioDuration(auxiliary_.get(),incoming,detail::declaredEnd(input_.context,incoming));
                 av_packet_rescale_ts(auxiliary_.get(), incoming->time_base, outgoing->time_base);
                 auxiliary_->pos = -1;
                 detail::check(av_interleaved_write_frame(output_.value, auxiliary_.get()), "copy auxiliary compressed packet");
@@ -348,9 +361,9 @@ void VideoMuxWriter::writeFrame(const DecodedFrame& frame, Rational timestamp, R
     try { impl_->write(frame, timestamp, duration); }
     catch (...) { impl_.reset(); throw; }
 }
-VideoWriteResult VideoMuxWriter::finish() {
+VideoWriteResult VideoMuxWriter::finish(const std::function<void(const std::string&)>& validate) {
     if (!impl_) throw std::logic_error("video writer is closed");
-    try { auto result = impl_->finish(); impl_.reset(); return result; }
+    try { auto result = impl_->finish(validate); impl_.reset(); return result; }
     catch (...) { impl_.reset(); throw; }
 }
 

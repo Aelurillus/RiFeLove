@@ -74,6 +74,22 @@ TEST(MediaEngine, CancellationIsExplicitAndRetainedFramesStayValid) {
 TEST(MediaEngine, RejectsNetworkInputsBeforeOpeningDemuxer) {
     EXPECT_THROW((void)MediaEngine::probe("https://example.invalid/video.mp4"), std::invalid_argument);
 }
+TEST(VideoMuxWriter, StrongerValidationRunsBeforePublicationAndFailureRemovesOutput) {
+    ImageFixture fixture;
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(),[&](const DecodedFrame& frame) { retained = frame; });
+    rifelove::media::VideoEncodingSettings settings; settings.encoder = "ffv1"; settings.pixelFormat = "bgr0";
+    settings.timeBase = rifelove::Rational(1,50); settings.frameRate = rifelove::Rational(50);
+    const auto path = fixture.directory / "failed-validation.mkv";
+    rifelove::media::VideoMuxWriter writer(fixture.path.string(),path.string(),settings);
+    writer.writeFrame(retained,{},rifelove::Rational(1,50));
+    bool checked = false;
+    EXPECT_THROW((void)writer.finish([&](const std::string& temporary) {
+        checked = true; EXPECT_FALSE(std::filesystem::exists(path)); EXPECT_EQ(MediaEngine::probe(temporary).streams.size(),1U);
+        throw std::runtime_error("injected validation failure");
+    }),std::runtime_error);
+    EXPECT_TRUE(checked); EXPECT_FALSE(std::filesystem::exists(path));
+}
 
 TEST(VideoMuxWriter, WritesGeneratedFramesAtExplicitTimes) {
     ImageFixture fixture;

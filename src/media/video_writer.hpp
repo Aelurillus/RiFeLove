@@ -35,7 +35,9 @@ public:
     VideoMuxWriter(const VideoMuxWriter&) = delete;
     VideoMuxWriter& operator=(const VideoMuxWriter&) = delete;
     void writeFrame(const DecodedFrame& frame, Rational timestamp, Rational duration);
-    [[nodiscard]] VideoWriteResult finish();
+    // Optional stronger validation sees the finalized temporary file before
+    // no-replace publication. Throwing/cancellation removes the temporary file.
+    [[nodiscard]] VideoWriteResult finish(const std::function<void(const std::string&)>& validate = {});
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

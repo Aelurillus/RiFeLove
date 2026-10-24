@@ -6,7 +6,7 @@ Version 0.1. This document records implemented boundaries and the remaining arch
 
 Desktop and CLI adapters submit application-service operations. Task, profile, model, device and progress services own user-facing state and orchestration. The core pipeline schedules rational presentation times and coordinates media, quality, interpolation and GPU resources. Backend implementations own FFmpeg/CUDA/ONNX/TensorRT contexts. UI code must not own those contexts.
 
-The current CLI adapter calls the media engine's C++ public API. Task/profile/model/device orchestration services are still to be built; the current adapter is not the finished services layer. The Qt shell is not connected to video processing.
+The current CLI adapter calls the media engine and native video pipeline public C++ APIs. Task/profile/model/device orchestration services are still to be built; the current adapter is not the finished services layer. The Qt shell now builds locally but is not yet connected to video processing.
 
 ## Implemented media contract
 
@@ -20,10 +20,16 @@ Input I/O is restricted to local regular files and the `file` protocol. Cancella
 
 Encoding copies color properties to both frames and encoder context, rebuilds available static HDR frame metadata and retains codec-independent stream side data. Pre-publication checks verify stream presence, output bit depth and known color tags. Implicit precision reduction is rejected; HDR bit-depth reduction and RGB/YUV color transforms require the future validated color pipeline. Basic same-color pixel layout changes use libswscale. The selected encoder must open successfully; a registered encoder name is not a hardware capability claim. See `docs/development/ENCODING.md` for the current NVENC incompatibility.
 
+## Implemented interpolation pipeline
+
+`core/pipeline/video_pipeline` now joins adjacent decoded frames, the integer-index rational CFR clock, SDR conversion, conservative scene analysis, real asynchronous ONNX CUDA inference and the frame writer. It owns no UI state. Inputs remain bounded to adjacent frames and one pending output; exclusive GPU output buffers can be reclaimed only after all immutable references have gone. Source-coincident frames bypass inference. Held cut/duplicate/abnormal pairs are separately reported.
+
+The last output duration preserves the source's exclusive end. Full output re-decode, frame-count/PTS checks, copied-audio boundaries and color checks run inside the writer's prepublication callback. The `auto` encoder policy tests actual NVENC initialization and records the specific software fallback reason. Explicit codec requests stay strict. AAC priming/Matroska CodecDelay and final-packet presentation duration are preserved, with decoded-PCM regression evidence. See [pipeline contracts](../development/PIPELINE.md).
+
 ## Required next contracts
 
 - GPU-surface encoder submission, source-shared demux, comprehensive color conversions and full compatibility/fault coverage for the implemented CPU-frame writer.
-- Integrate the implemented async GPU interpolation contract with the rational timeline, quality policy and media pipeline; complete native CUDA numerical/operator validation first.
+- Expand the integrated native CUDA numerical/operator and video-reference tests to the full resolution/content/color matrix, plus TensorRT and qualified model presets.
 - A model registry/adaptor schema with checksum-verifiable provenance, exact license/weight rights, tensor layouts, shape/timestep/precision capabilities and versioned cache keys.
 - A bounded scheduler with explicit buffer ownership and backpressure across decode, preprocessing, quality, inference, postprocessing and encode stages.
 - Persistent task configuration/progress and safe output-segment checkpoints bound to source/model/build identity. Restart recovery must establish worker ownership before marking tasks interrupted.

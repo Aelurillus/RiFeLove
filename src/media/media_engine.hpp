@@ -23,8 +23,10 @@ public:
     MediaError(const std::string& operation, int code);
     [[nodiscard]] int code() const noexcept { return code_; }
     [[nodiscard]] bool cancelled() const noexcept;
+    [[nodiscard]] const std::string& operation() const noexcept { return operation_; }
 private:
     int code_;
+    std::string operation_;
 };
 
 struct SideDataInfo { std::string name; std::size_t bytes; };
@@ -67,6 +69,9 @@ struct StreamInfo {
     ColorInfo color;
     Metadata metadata;
     std::vector<SideDataInfo> sideData;
+    // Presentation end after codec delay, when declared by the stream/container.
+    std::optional<Rational> declaredEnd;
+    int initialPadding = 0;
 };
 struct ChapterInfo { std::int64_t id; Rational start; Rational end; Metadata metadata; };
 struct MediaInfo {
@@ -78,6 +83,7 @@ struct MediaInfo {
     Metadata metadata;
     std::vector<StreamInfo> streams;
     std::vector<ChapterInfo> chapters;
+    int preferredVideoStream = -1;
 };
 
 struct FramePlane { const std::uint8_t* data{}; int stride{}; };
@@ -105,6 +111,7 @@ struct RemuxResult { std::size_t copiedStreams; std::size_t packetsWritten; };
 class MediaEngine final {
 public:
     [[nodiscard]] static std::string runtimeVersion();
+    [[nodiscard]] static bool hasEncoder(const std::string& name);
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
         const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1, std::stop_token stop = {});

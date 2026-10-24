@@ -74,6 +74,9 @@ public:
     [[nodiscard]] std::uintptr_t streamAddress() const noexcept;
     [[nodiscard]] ScopedCudaContext activate() const;
     [[nodiscard]] std::shared_ptr<DeviceBuffer> allocate(std::size_t bytes, std::stop_token stop = {});
+    // Reclaim an immutable result only after its future has completed and all
+    // other references are gone. This enables exclusive output-buffer reuse.
+    [[nodiscard]] std::shared_ptr<DeviceBuffer> reclaim(std::shared_ptr<const DeviceBuffer> buffer) const;
     void synchronize(std::stop_token stop = {}) const;
     void copy(const DeviceBuffer& source, DeviceBuffer& destination, std::size_t bytes, std::stop_token stop = {}) const;
 private:

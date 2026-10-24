@@ -5,6 +5,7 @@
 namespace rifelove::media {
 
 std::string MediaEngine::runtimeVersion() { return av_version_info(); }
+bool MediaEngine::hasEncoder(const std::string& name) { return avcodec_find_encoder_by_name(name.c_str()) != nullptr; }
 
 MediaInfo MediaEngine::probe(const std::string& path, std::stop_token stop) {
     detail::Input input(path, stop);
@@ -12,6 +13,7 @@ MediaInfo MediaEngine::probe(const std::string& path, std::stop_token stop) {
     MediaInfo result{path, context->iformat->name,
         detail::timestamp(context->start_time, AV_TIME_BASE_Q), detail::timestamp(context->duration, AV_TIME_BASE_Q),
         context->bit_rate, detail::metadata(context->metadata), {}, {}};
+    result.preferredVideoStream = av_find_best_stream(context,AVMEDIA_TYPE_VIDEO,-1,-1,nullptr,0);
     for (unsigned i = 0; i < context->nb_streams; ++i) {
         detail::checkStopped(stop);
         const auto* stream = context->streams[i];
@@ -34,6 +36,8 @@ MediaInfo MediaEngine::probe(const std::string& path, std::stop_token stop) {
         info.sampleRate = parameters->sample_rate;
         info.channels = parameters->ch_layout.nb_channels;
         info.metadata = detail::metadata(stream->metadata);
+        info.declaredEnd = detail::declaredEnd(context,stream);
+        info.initialPadding = parameters->initial_padding;
         if (parameters->codec_type == AVMEDIA_TYPE_VIDEO) info.color = detail::color(parameters);
         for (int j = 0; j < parameters->nb_coded_side_data; ++j) {
             const auto& side = parameters->coded_side_data[j];
