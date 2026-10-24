@@ -73,6 +73,12 @@ struct StreamInfo {
     std::optional<Rational> declaredEnd;
     int initialPadding = 0;
 };
+struct EncoderCapability {
+    std::string encoder;
+    bool registered = false;
+    bool contextOpened = false;
+    std::string reason;
+};
 struct ChapterInfo { std::int64_t id; Rational start; Rational end; Metadata metadata; };
 struct MediaInfo {
     std::string path;
@@ -112,6 +118,10 @@ class MediaEngine final {
 public:
     [[nodiscard]] static std::string runtimeVersion();
     [[nodiscard]] static bool hasEncoder(const std::string& name);
+    // Opens a matching encoder context without writing frames. This detects
+    // missing hardware/driver APIs more accurately than encoder registration.
+    [[nodiscard]] static EncoderCapability probeEncoder(const std::string& name, const StreamInfo& source,
+        std::optional<Rational> frameRate = {}, std::stop_token stop = {});
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
         const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1, std::stop_token stop = {});

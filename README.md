@@ -52,6 +52,8 @@ With the media engine enabled, `media-probe INPUT` reports streams/metadata, `me
 
 `gpu-info [DEVICE_INDEX]` reports the installed CUDA driver's actual device, compute capability and memory. This command does not claim that ONNX, TensorRT, NVDEC or NVENC is available.
 
+`media-capabilities INPUT [--fps RATE]` opens encoder contexts for the source's dimensions/pixel format and reports whether H.264 NVENC, software H.264, HEVC and AV1 are registered and initialize. This is a preflight check, not proof that encoded frames were produced; the processing pipeline still validates the real output.
+
 ## Licensing
 
 The application source is licensed under MIT. SQLite is public domain, and the pinned GoogleTest source uses BSD-3-Clause; both are fetched at pinned versions and are not copied into the repository. FFmpeg, Qt, NVIDIA libraries, RIFE code and weights require separate version/build-specific redistribution review before packaging. No model weights or vendor runtime binaries are included.

@@ -9,7 +9,10 @@
 .\build\windows-dev\rifelove-cli.exe transcode source.mp4 output.mp4 --encoder libkvazaar
 .\build\windows-dev\rifelove-cli.exe transcode source.mkv output.mkv --encoder libaom-av1 --bitrate 0 --option crf=35 --option cpu-used=8
 .\build\windows-dev\rifelove-cli.exe transcode source.mkv lossless.mkv --encoder ffv1
+.\build\windows-dev\rifelove-cli.exe media-capabilities source.mkv --fps 60000/1001
 ```
+
+`media-capabilities` uses the selected video stream's dimensions and pixel format to open candidate encoder contexts for H.264 NVENC, software H.264, HEVC and AV1. Its JSON separates FFmpeg registration from successful context initialization and includes failure reasons. It does not submit a frame, so it is a useful driver/profile preflight but not proof of a complete encode.
 
 `transcode` keeps input video PTS and derives each frame duration from the following PTS, holding at most two decoded frames in its adapter. The final frame must have a reliable declared duration; otherwise it fails and asks for an explicit timeline boundary. Use the separate `interpolate` command for FPS conversion and real AI interpolation.
 
@@ -27,7 +30,7 @@ Output uses the same exclusive temporary reservation and no-replace publication 
 
 ## Actual local NVENC incompatibility
 
-On 2026-10-17, `nvidia-smi` reported GTX 1660 SUPER, driver `560.94` and 6144 MiB. A real `h264_nvenc` encode with the pinned FFmpeg SDK failed before producing packets: the SDK build required NVENC API `13.0` while the installed driver exposed `12.2`; FFmpeg reported driver `570.0` as its minimum for this build. This is not a successful NVENC result. AV1 hardware support cannot be inferred from an `av1_nvenc` name in the registered-encoder list.
+On this workstation, a real `h264_nvenc` open with the pinned FFmpeg SDK fails before producing packets: the SDK build requires NVENC API `13.0` while the installed driver exposes `12.2`; FFmpeg reports driver `570.0` as its minimum for this build. The source-profile preflight now reports the failure and confirms software H.264 context initialization. The end-to-end automatic path retries software H.264 and validates its output. This is not a successful NVENC result. AV1 hardware support cannot be inferred from an `av1_nvenc` name in the registered-encoder list.
 
 The interpolation pipeline now implements an explicit `auto` policy: try actual NVENC initialization, then report a software H.264 fallback if that encoder cannot open. Explicit `transcode`/encoder choices stay strict. The final application still needs a compatible FFmpeg/NVENC build/driver matrix and runtime device capabilities. The driver has not been changed.
 

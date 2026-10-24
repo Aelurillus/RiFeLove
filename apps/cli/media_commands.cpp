@@ -3,6 +3,8 @@
 #include "media/media_engine.hpp"
 #include "media/video_writer.hpp"
 
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <iomanip>
 #include <iostream>
@@ -136,6 +138,34 @@ int runMediaCommand(const std::vector<std::string>& args) {
         std::ostringstream json;
         writeProbe(json, MediaEngine::probe(args[2]));
         std::cout << json.str();
+        return 0;
+    }
+    if (args[1] == "media-capabilities") {
+        if (args.size() < 3) throw std::invalid_argument("media-capabilities requires INPUT and optional --fps RATE");
+        std::optional<rifelove::Rational> frameRate;
+        for (std::size_t i = 3; i < args.size(); ++i) {
+            if (args[i] != "--fps" || i + 1 >= args.size()) throw std::invalid_argument("media-capabilities accepts only --fps RATE");
+            frameRate = rifelove::Rational::parse(args[++i]);
+            if (*frameRate <= rifelove::Rational(0)) throw std::invalid_argument("probe FPS must be positive");
+        }
+        const auto info = MediaEngine::probe(args[2]);
+        const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const StreamInfo& stream) {
+            return stream.index == info.preferredVideoStream && stream.type == "video";
+        });
+        if (video == info.streams.end()) throw std::invalid_argument("input has no video stream to probe");
+        constexpr std::array<const char*,4> names{"h264_nvenc","libopenh264","libkvazaar","libaom-av1"};
+        std::cout << "{\"event\":\"media_capabilities\",\"ffmpeg_version\":" << jsonString(MediaEngine::runtimeVersion())
+            << ",\"width\":" << video->width << ",\"height\":" << video->height << ",\"pixel_format\":" << jsonString(video->color.pixelFormat)
+            << ",\"probe_fps\":" << jsonString((frameRate.value_or(video->averageRate.value_or(video->nominalRate.value_or(rifelove::Rational(30))))).toString())
+            << ",\"probe_scope\":\"encoder_context_open_only\",\"frames_encoded\":false,\"encoders\":[";
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            if (i) std::cout << ',';
+            const auto capability = MediaEngine::probeEncoder(names[i],*video,frameRate);
+            std::cout << "{\"name\":" << jsonString(capability.encoder) << ",\"registered\":" << (capability.registered ? "true" : "false")
+                << ",\"context_opened\":" << (capability.contextOpened ? "true" : "false")
+                << ",\"reason\":" << jsonString(capability.reason) << '}';
+        }
+        std::cout << "]}\n";
         return 0;
     }
     if (args[1] == "media-scan") {

@@ -77,6 +77,22 @@ class NativeMediaIntegration(unittest.TestCase):
         self.assertEqual(len(info["chapters"]), 1)
         self.assertEqual(info["chapters"][0]["metadata"]["title"], "Opening")
 
+    def test_media_capabilities_open_encoder_contexts_for_source_profile(self):
+        report = json.loads(invoke(CLI, "media-capabilities", self.reordered, "--fps", "60000/1001").stdout)
+        self.assertEqual(report["event"], "media_capabilities")
+        self.assertEqual((report["width"], report["height"], report["pixel_format"]), (96, 64, "yuv420p"))
+        self.assertEqual(report["probe_fps"], "60000/1001")
+        self.assertEqual(report["probe_scope"], "encoder_context_open_only")
+        self.assertFalse(report["frames_encoded"])
+        encoders = {entry["name"]: entry for entry in report["encoders"]}
+        self.assertEqual(set(encoders), {"h264_nvenc", "libopenh264", "libkvazaar", "libaom-av1"})
+        for entry in encoders.values():
+            self.assertIsInstance(entry["registered"], bool)
+            self.assertIsInstance(entry["context_opened"], bool)
+            self.assertEqual(entry["context_opened"], entry["registered"] and not bool(entry["reason"]))
+            if entry["registered"] and not entry["context_opened"]:
+                self.assertTrue(entry["reason"])
+
     def test_fractional_cfr_is_not_confused_with_timestamp_quantization(self):
         records = self.scan(self.source)
         self.assertEqual(records[-1]["frames"], 12)

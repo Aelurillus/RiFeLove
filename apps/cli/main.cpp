@@ -88,6 +88,7 @@ void usage(std::ostream& out) {
 #endif
 #ifdef RIFELOVE_HAS_MEDIA
     out << "  rifelove-cli media-probe INPUT\n"
+        << "  rifelove-cli media-capabilities INPUT [--fps RATE]\n"
         << "  rifelove-cli media-scan INPUT [--frames] [--stream INDEX]\n"
         << "  rifelove-cli remux INPUT OUTPUT\n"
         << "  rifelove-cli transcode INPUT OUTPUT [--encoder NAME] [--pixel-format FORMAT] [--bitrate N] [--bframes N] [--option KEY=VALUE] [--allow-precision-loss] [--progress]\n";
@@ -138,7 +139,7 @@ int main(int argc, char** argv) {
                 return 0;
             }
         }
-        if (command == "media-probe" || command == "media-scan" || command == "remux" || command == "transcode") {
+        if (command == "media-probe" || command == "media-capabilities" || command == "media-scan" || command == "remux" || command == "transcode") {
 #ifdef RIFELOVE_HAS_MEDIA
             return runMediaCommand(args);
 #else

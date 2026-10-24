@@ -37,8 +37,20 @@ ApplicationWindow {
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
+    readonly property bool selectedEncoderReady: {
+        if (!processingAvailable || !window.info.encoders) return false
+        const probes = window.info.encoders
+        if (encoder.currentIndex === 0) {
+            const nvenc = probes.h264_nvenc
+            const software = probes.libopenh264
+            return (!!nvenc && !!nvenc.contextOpened) || (!!software && !!software.contextOpened)
+        }
+        const names = ["libopenh264", "libkvazaar", "libaom-av1"]
+        const probe = probes[names[encoder.currentIndex - 1]]
+        return !!probe && !!probe.contextOpened
+    }
     readonly property bool canStart: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor &&
-        !!window.info.gpuAvailable && window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
+        !!window.info.gpuAvailable && window.selectedEncoderReady && window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
 
     function applyLocalDefaults() {
         if (!processingAvailable) return
@@ -79,6 +91,7 @@ ApplicationWindow {
         if (value === "inspected" && window.info.width) {
             if (!window.info.supportedColor) return qsTr("色彩格式暂不支持")
             if (!window.info.gpuAvailable) return qsTr("NVIDIA GPU 不可用")
+            if (!window.selectedEncoderReady) return qsTr("所选编码器不可用")
             if (!window.modelFolder.toString() || !window.runtimeFolder.toString()) return qsTr("请配置模型与运行库")
             return qsTr("可以开始")
         }
@@ -171,6 +184,16 @@ ApplicationWindow {
                         spacing: 7
                         Label { text: qsTr("本机加速器"); color: "#91a1b4"; font.pixelSize: 11 }
                         Label { text: window.info.gpu || qsTr("导入视频后检测"); wrapMode: Text.WordWrap; Layout.fillWidth: true; font.bold: true }
+                        Label {
+                            visible: !!window.info.width
+                            text: !window.info.nvencContextOpened && window.info.softwareH264ContextOpened
+                                ? qsTr("NVENC 不可用 · 自动使用软件 H.264")
+                                : window.info.nvencContextOpened ? qsTr("NVENC 编码器可初始化") : qsTr("H.264 编码器不可用")
+                            color: window.info.nvencContextOpened ? "#9ee6c8" : "#f0c98a"
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
                         Label { text: qsTr("源文件不会被修改"); color: "#91a1b4"; font.pixelSize: 11 }
                     }
                 }

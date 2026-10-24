@@ -53,6 +53,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 - [x] Add native CUDA device/context/stream/buffer primitives with actual local GPU transfer, budget and lifetime tests.
 - [ ] Probe GPU/driver/compute and codec capabilities at runtime.
+  - Studio inspects CUDA device information and opens encoder contexts using the selected source profile for NVENC, software H.264, HEVC and AV1. It warns before processing when automatic encoding will fall back and disables a selected codec that fails its preflight. `media-capabilities INPUT [--fps RATE]` reports the same initialization checks. This does not prove encoded-frame output or NVDEC support.
 - [ ] Add NVDEC/NVENC selection with tested fallback paths.
   - Auto encoding retries software H.264 when this workstation's NVENC open returns `Function not implemented`; a synthetic 720p TensorRT-to-output run validates the H.264 output and retained audio, and the updated Studio explains that processing continues. Successful NVENC hardware encoding and NVDEC remain unqualified. Local driver 560.94 exposes NVENC API 12.2; this FFmpeg build requires API 13.0 / driver 570.0 or newer.
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.

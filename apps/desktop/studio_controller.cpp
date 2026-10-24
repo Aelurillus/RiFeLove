@@ -3,6 +3,7 @@
 #include "timeline/timeline.hpp"
 #include <QFileInfo>
 #include <QDir>
+#include <QStringList>
 #include <QUrl>
 
 namespace {
@@ -41,6 +42,14 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
     if (busy_) return;
     try {
         if (source_.isEmpty() || media_.isEmpty()) throw std::invalid_argument("Select and inspect a source video first");
+        const auto encoders = media_.value("encoders").toMap();
+        if (encoder == QStringLiteral("auto")) {
+            const auto nvenc = encoders.value(QStringLiteral("h264_nvenc")).toMap().value(QStringLiteral("contextOpened")).toBool();
+            const auto software = encoders.value(QStringLiteral("libopenh264")).toMap().value(QStringLiteral("contextOpened")).toBool();
+            if (!nvenc && !software) throw std::invalid_argument("Automatic H.264 is unavailable: neither NVENC nor software H.264 could initialize");
+        } else if (!encoders.value(encoder).toMap().value(QStringLiteral("contextOpened")).toBool()) {
+            throw std::invalid_argument("The selected video encoder did not initialize for this source profile");
+        }
         if (output_.isEmpty() || QFileInfo::exists(output_)) throw std::invalid_argument("Output exists or is empty; select a new file path");
         const QString suffix = QFileInfo(output_).suffix().toLower();
         if (suffix != "mkv" && suffix != "mp4" && suffix != "mov") throw std::invalid_argument("Output must use .mkv, .mp4 or .mov");
@@ -83,7 +92,23 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         if (event.kind == Kind::inspected && event.media) {
             status_ = "inspected";
             sourceDurationEstimate_.reset();
+            QVariantMap encoders;
+            for (const auto& capability : event.encoderCapabilities) {
+                QVariantMap value;
+                value["registered"] = capability.registered;
+                value["contextOpened"] = capability.contextOpened;
+                value["reason"] = text(capability.reason);
+                encoders[text(capability.encoder)] = value;
+            }
+            media_["encoders"] = encoders;
+            const auto nvenc = encoders.value(QStringLiteral("h264_nvenc")).toMap();
+            const auto softwareH264 = encoders.value(QStringLiteral("libopenh264")).toMap();
+            media_["nvencContextOpened"] = nvenc.value("contextOpened").toBool();
+            media_["softwareH264ContextOpened"] = softwareH264.value("contextOpened").toBool();
+            media_["nvencReason"] = nvenc.value("reason").toString();
             bool hasVideo = false;
+            QStringList notices;
+            if (!event.detail.empty()) notices.push_back(text(event.detail));
             for (const auto& stream : event.media->streams) {
                 if (stream.index != event.media->preferredVideoStream) continue;
                 hasVideo = true;
@@ -106,8 +131,31 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             else media_["gpu"] = tr("NVIDIA GPU 不可用");
             media_["gpuAvailable"] = event.device.has_value();
             media_["streams"] = static_cast<int>(event.media->streams.size());
-            detail_ = text(event.detail);
-            if (hasVideo && !media_.value("supportedColor").toBool()) detail_ += tr("当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8-bit SDR；HDR、10-bit 和未标记色彩需要后续色彩处理支持。");
+            if (hasVideo && !media_.value("nvencContextOpened").toBool()) {
+                if (media_.value("softwareH264ContextOpened").toBool()) {
+                    const auto reason = media_.value("nvencReason").toString();
+                    const bool apiMismatch = reason.contains(QStringLiteral("Function not implemented"),Qt::CaseInsensitive) ||
+                        reason.contains(QStringLiteral("minimum required Nvidia driver"),Qt::CaseInsensitive) ||
+                        reason.contains(QStringLiteral("required nvenc API version"),Qt::CaseInsensitive);
+                    notices.push_back(apiMismatch
+                        ? tr("NVENC 与当前 NVIDIA 驱动不兼容；自动编码将使用软件 H.264，RIFE 插帧仍使用 GPU。")
+                        : tr("NVENC 当前无法初始化；自动编码将使用软件 H.264，RIFE 插帧仍使用 GPU。"));
+                } else {
+                    notices.push_back(tr("NVENC 和软件 H.264 均未能初始化；请选择其他可用编码器或检查本机编码运行环境。"));
+                }
+            }
+            if (hasVideo) {
+                const auto av1 = encoders.value(QStringLiteral("libaom-av1")).toMap();
+                const auto hevc = encoders.value(QStringLiteral("libkvazaar")).toMap();
+                QStringList unavailable;
+                if (!hevc.value(QStringLiteral("contextOpened")).toBool()) unavailable.push_back(tr("HEVC"));
+                if (!av1.value(QStringLiteral("contextOpened")).toBool()) unavailable.push_back(tr("AV1"));
+                if (!unavailable.isEmpty()) notices.push_back(tr("当前视频配置无法初始化：%1。选择这些编码器时不可开始。")
+                    .arg(unavailable.join(QStringLiteral("、"))));
+            }
+            if (hasVideo && !media_.value("supportedColor").toBool())
+                notices.push_back(tr("当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8-bit SDR；HDR、10-bit 和未标记色彩需要后续色彩处理支持。"));
+            detail_ = notices.join('\n');
             if (!hasVideo) { media_.clear(); status_ = "failed"; detail_ = tr("文件中没有可处理的视频轨。 "); }
         } else if (event.kind == Kind::completed && event.result) {
             status_ = "completed";

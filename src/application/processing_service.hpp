@@ -5,6 +5,7 @@
 #include <atomic>
 #include <optional>
 #include <thread>
+#include <vector>
 
 namespace rifelove::application {
 struct ProcessingJob {
@@ -39,6 +40,7 @@ struct ProcessingEvent {
     std::optional<Rational> timestamp;
     std::optional<media::MediaInfo> media;
     std::optional<gpu::DeviceInfo> device;
+    std::vector<media::EncoderCapability> encoderCapabilities;
     std::optional<PipelineResult> result;
     std::optional<ProcessingIdentity> identity;
     bool sourceColorSupported = false;

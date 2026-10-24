@@ -1,11 +1,62 @@
 #include "media/ffmpeg_helpers.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <memory>
 
 namespace rifelove::media {
 
 std::string MediaEngine::runtimeVersion() { return av_version_info(); }
 bool MediaEngine::hasEncoder(const std::string& name) { return avcodec_find_encoder_by_name(name.c_str()) != nullptr; }
+EncoderCapability MediaEngine::probeEncoder(const std::string& name, const StreamInfo& source,
+    std::optional<Rational> frameRate, std::stop_token stop) {
+    EncoderCapability result{name,false,false,{}};
+    if (name.empty()) throw std::invalid_argument("encoder name must not be empty");
+    const auto* encoder = avcodec_find_encoder_by_name(name.c_str());
+    if (!encoder || encoder->type != AVMEDIA_TYPE_VIDEO) {
+        result.reason = "video encoder is not registered in this FFmpeg build";
+        return result;
+    }
+    result.registered = true;
+    try {
+        detail::checkStopped(stop);
+        if (source.width <= 0 || source.height <= 0) throw std::invalid_argument("source dimensions are unknown");
+        if (source.color.pixelFormat.empty()) throw std::invalid_argument("source pixel format is unknown");
+        const auto pixelFormat = av_get_pix_fmt(source.color.pixelFormat.c_str());
+        if (pixelFormat == AV_PIX_FMT_NONE) throw std::invalid_argument("source pixel format is not recognized by this FFmpeg build");
+        const auto rate = frameRate.value_or(source.averageRate.value_or(source.nominalRate.value_or(Rational(30))));
+        if (rate <= Rational(0) || rate.numerator() > std::numeric_limits<int>::max() || rate.denominator() > std::numeric_limits<int>::max())
+            throw std::invalid_argument("probe frame rate is invalid or out of range");
+        auto freeCodec = [](AVCodecContext* context) { avcodec_free_context(&context); };
+        std::unique_ptr<AVCodecContext,decltype(freeCodec)> context(avcodec_alloc_context3(encoder),freeCodec);
+        if (!context) throw std::bad_alloc();
+        context->width = source.width;
+        context->height = source.height;
+        context->pix_fmt = pixelFormat;
+        context->framerate = {static_cast<int>(rate.numerator()),static_cast<int>(rate.denominator())};
+        context->time_base = {context->framerate.den,context->framerate.num};
+        context->bit_rate = 8'000'000;
+        context->gop_size = 120;
+        context->max_b_frames = 0;
+        context->thread_count = 1;
+        const void* supported = nullptr;
+        int supportedCount = 0;
+        detail::check(avcodec_get_supported_config(context.get(),encoder,AV_CODEC_CONFIG_PIX_FORMAT,0,&supported,&supportedCount),
+            "query encoder pixel formats");
+        if (supported && supportedCount > 0) {
+            const auto* formats = static_cast<const AVPixelFormat*>(supported);
+            if (std::find(formats,formats + supportedCount,pixelFormat) == formats + supportedCount)
+                throw std::invalid_argument("encoder does not support source pixel format " + source.color.pixelFormat);
+        }
+        detail::checkStopped(stop);
+        detail::check(avcodec_open2(context.get(),encoder,nullptr),"open video encoder " + name);
+        result.contextOpened = true;
+    } catch (const std::exception& error) {
+        result.reason = error.what();
+    }
+    return result;
+}
 
 MediaInfo MediaEngine::probe(const std::string& path, std::stop_token stop) {
     detail::Input input(path, stop);

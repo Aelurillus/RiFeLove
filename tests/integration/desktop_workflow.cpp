@@ -125,7 +125,23 @@ int main(int argc, char** argv) {
         require(studio.status() == "inspected", "Source inspection failed");
         require(studio.media().value("width").toInt() == 96 && studio.media().value("height").toInt() == 64, "Wrong imported dimensions");
         require(studio.media().value("color").toString().contains("bt470bg") && studio.media().value("color").toString().contains("smpte170m"), "Legacy SDR color tags were not detected");
+        const auto encoderCapabilities = studio.media().value("encoders").toMap();
+        require(encoderCapabilities.contains("h264_nvenc") && encoderCapabilities.contains("libopenh264") &&
+                encoderCapabilities.contains("libkvazaar") && encoderCapabilities.contains("libaom-av1") &&
+                studio.media().contains("nvencContextOpened") && studio.media().contains("softwareH264ContextOpened"),
+            "Studio did not report runtime encoder initialization checks");
+        if (!studio.media().value("nvencContextOpened").toBool() && studio.media().value("softwareH264ContextOpened").toBool())
+            require(studio.detail().contains(QStringLiteral("软件 H.264")) && !studio.detail().contains(QStringLiteral("Function not implemented")),
+                "Studio did not explain its preflight NVENC fallback in user-facing language");
         require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Supported BT.601 source readiness disagrees with the start control");
+        const auto av1Probe = encoderCapabilities.value(QStringLiteral("libaom-av1")).toMap();
+        if (!av1Probe.value(QStringLiteral("contextOpened")).toBool()) {
+            require(studioEncoder->setProperty("currentIndex",3) && !button->property("enabled").toBool() &&
+                    statusLabel->property("text").toString() == QStringLiteral("所选编码器不可用"),
+                "Studio allowed processing with an encoder that failed its source-profile initialization check");
+            require(studioEncoder->setProperty("currentIndex",0) && button->property("enabled").toBool(),
+                "Studio did not restore automatic encoding after a rejected encoder selection");
+        }
         const auto unsupportedHdr = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("queue-input/unsupported-hdr.mkv");
         studio.openSource(QUrl::fromLocalFile(unsupportedHdr)); wait(studio);
         require(!studio.media().value("supportedColor").toBool() && !button->property("enabled").toBool() &&
