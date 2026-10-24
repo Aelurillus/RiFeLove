@@ -29,8 +29,11 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
     if (contract.frameCount > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
         throw std::invalid_argument("video segment frame count exceeds the supported range");
 
-    const auto expectedEnd = contract.firstTimestamp + contract.frameDuration * Rational(static_cast<std::int64_t>(contract.frameCount));
-    if (expectedEnd <= contract.firstTimestamp) throw std::invalid_argument("video segment contract has an invalid end boundary");
+    const auto nominalEnd = contract.firstTimestamp + contract.frameDuration * Rational(static_cast<std::int64_t>(contract.frameCount));
+    const auto lastFrameStart = contract.firstTimestamp + contract.frameDuration * Rational(static_cast<std::int64_t>(contract.frameCount - 1));
+    const auto expectedEnd = contract.endExclusive.value_or(nominalEnd);
+    if (expectedEnd <= lastFrameStart || expectedEnd > nominalEnd)
+        throw std::invalid_argument("video segment contract has an invalid end boundary");
 
     const auto info = probe(path, stop);
     if (info.streams.size() != 1 || info.preferredVideoStream < 0 || info.streams.front().type != "video")
@@ -72,6 +75,7 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
 
     std::size_t decodedFrames = 0;
     std::optional<Rational> actualFirst;
+    std::optional<Rational> actualEnd;
     const auto decoded = decodeVideo(path, [&](const DecodedFrame& frame) {
         if (!frame.timestamp || frame.timestampRecovered)
             throw std::runtime_error("checkpoint segment contains a missing or reconstructed frame timestamp");
@@ -88,6 +92,7 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
         if (!withinTick(*frame.timestamp, expectedTimestamp, tick))
             throw std::runtime_error("checkpoint segment frame timestamp does not match the global timeline");
         if (!actualFirst) actualFirst = frame.timestamp;
+        if (frame.duration && *frame.duration > Rational(0)) actualEnd = *frame.timestamp + *frame.duration;
         ++decodedFrames;
     }, stream.index, stop);
 
@@ -95,8 +100,12 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
         throw std::runtime_error("checkpoint segment frame count does not match its contract");
     if (!actualFirst || !withinTick(*actualFirst, contract.firstTimestamp, tick))
         throw std::runtime_error("checkpoint segment first timestamp does not match its contract");
+    if (actualEnd && !withinTick(*actualEnd, expectedEnd, tick))
+        throw std::runtime_error("checkpoint segment final frame duration does not match its contract");
     if (stream.declaredEnd && !withinTick(*stream.declaredEnd, expectedEnd, tick))
         throw std::runtime_error("checkpoint segment declared end does not match its contract");
+    if (!actualEnd && !stream.declaredEnd)
+        throw std::runtime_error("checkpoint segment end boundary cannot be verified from the media container");
 
     return {decodedFrames, *actualFirst, expectedEnd, stream.codec, stream.color.pixelFormat};
 }

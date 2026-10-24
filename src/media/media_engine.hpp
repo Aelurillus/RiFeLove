@@ -119,6 +119,9 @@ struct VideoSegmentContract {
     std::size_t frameCount = 0;
     Rational firstTimestamp;
     Rational frameDuration;
+    // Most segments end on a full CFR tick. The final segment may end early
+    // when the source duration is not aligned to the output CFR clock.
+    std::optional<Rational> endExclusive;
     int width = 0;
     int height = 0;
     std::string codec;
@@ -136,6 +139,17 @@ struct VideoSegmentVerification {
     std::string codec;
     std::string pixelFormat;
 };
+struct VideoSegmentInput {
+    std::string path;
+    VideoSegmentContract contract;
+};
+struct VideoSegmentAssemblyResult {
+    std::size_t segments = 0;
+    std::size_t videoPackets = 0;
+    std::size_t auxiliaryPackets = 0;
+    Rational firstTimestamp;
+    Rational endExclusive;
+};
 
 class MediaEngine final {
 public:
@@ -152,6 +166,11 @@ public:
     // global-timeline contract before the caller journals or reuses it.
     [[nodiscard]] static VideoSegmentVerification verifyVideoSegment(const std::string& utf8Path,
         const VideoSegmentContract& contract, std::stop_token stop = {});
+    // Stream-copies verified video segments and the original auxiliary streams
+    // into a new output without replacing existing files.
+    [[nodiscard]] static VideoSegmentAssemblyResult assembleVideoSegments(const std::string& source,
+        const std::string& destination, int videoStreamIndex, const std::vector<VideoSegmentInput>& segments,
+        std::stop_token stop = {});
     // Copies compressed streams, metadata and chapters; never replaces an existing output.
     [[nodiscard]] static RemuxResult remux(const std::string& input, const std::string& output,
         std::stop_token stop = {});
