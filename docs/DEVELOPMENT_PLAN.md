@@ -73,6 +73,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Complete Home, folder/batch import, persistent preferences and qualified quality profiles.
 - [x] Validate real QML start-to-output, GUI event-loop responsiveness, no-overwrite handling and cooperative cancellation with native RIFE.
 - [ ] Implement persistent queue, progress, retry, pause and cancellation.
+  - Native service/SQLite/CLI queue now persists complete configuration and identity, supports pause/resume/cancel/retry, and passes actual GPU/crash tests; desktop queue page and complete history remain open.
 - [ ] Add comparison player, split mode and frame stepping.
 - [ ] Add model center, profiles and expert controls.
 - [ ] Localize zh-CN, zh-TW, en and ja; verify accessibility and keyboard use.
@@ -81,7 +82,9 @@ Current execution mode: local project, local Git, local builds/tests and local r
 
 - [ ] Design segment-boundary checkpoint format and safe output stitching.
 - [ ] Test restart recovery, cancellation, retries, disk-full, OOM and corrupted input.
+  - Actual process termination after flushed encoded output, owner/hard-link exclusion, interruption detection, new-output restart-from-zero, pause/cancel/retry and changed-source rejection pass locally. Segment resume and full fault matrix remain open.
 - [ ] Complete CLI JSON progress, profiles, batch jobs and diagnostics reports.
+  - Persistent queue add/import/export/list/run/retry/cancel/restart and JSON results are implemented; profiles and cross-process live control remain open.
 - [ ] Add advanced encoding controls and quality/performance reports.
 - [ ] Validate multi-hour jobs and resume semantics.
 

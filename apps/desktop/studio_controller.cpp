@@ -54,7 +54,7 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
 void StudioController::cancel() { if (busy_) { status_ = "cancelling"; emit changed(); service_.cancel(); } }
 void StudioController::receive(rifelove::application::ProcessingEvent event) {
     using Kind = rifelove::application::ProcessingEvent::Kind;
-    if (event.kind == Kind::progress) {
+    if (event.kind == Kind::progress || event.kind == Kind::prepared) {
         if (status_ != "cancelling") status_ = text(event.stage);
         progress_["frames"] = QVariant::fromValue<qulonglong>(event.outputFrames);
         progress_["aiFrames"] = QVariant::fromValue<qulonglong>(event.aiFrames);

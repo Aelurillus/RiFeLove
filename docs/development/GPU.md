@@ -1,5 +1,7 @@
 # Native CUDA and ONNX Runtime development
 
+The application now keeps one reviewed native runtime set and root ONNX environment per process while releasing individual sessions/buffers per task. Runtime directory changes require application restart. This lifecycle policy was added after an intermittent cuDNN access violation during repeated task sessions; the [queue regression](QUEUE.md) executes 20 sessions and compares decoded pixels/timing. It does not establish broad hardware or multi-hour stability. Upstream ONNX Runtime also manages provider initialization/shutdown at environment/library scope ([pinned v1.22 source](https://github.com/microsoft/onnxruntime/blob/v1.22.0/onnxruntime/core/session/provider_bridge_ort.cc)); that source is context for the lifecycle design, not proof of the local crash's root cause.
+
 The application runtime remains native C++20. Python/PyTorch are used only for source review, export and reference generation.
 
 ## Driver primitives and evidence

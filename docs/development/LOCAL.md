@@ -30,10 +30,12 @@ The CLI accepts Windows Unicode arguments and emits UTF-8 JSON. Use an existing 
 .\build\windows-dev\rifelove-cli.exe tasks .\build\my-tasks.sqlite
 ```
 
-Inspection opens the database read-only. It does not create a missing database or change task states. Once all workers have stopped, explicitly mark leftover running tasks as interrupted:
+Inspection opens the database read-only. It does not create a missing database or change task states. Once all workers have stopped, explicitly mark leftover running/paused legacy tasks as interrupted:
 
 ```powershell
 .\build\windows-dev\rifelove-cli.exe tasks-recover .\build\my-tasks.sqlite
 ```
 
 This operation identifies interrupted work; checkpoint resume is still unimplemented. Native decode, transcode and SDR8 RIFE processing are available through the [pipeline CLI](PIPELINE.md).
+
+For persisted processing configurations, live ownership, batch execution and checked retry/restart behavior, use the newer [configured queue](QUEUE.md). Its automatic recovery acquires an OS lock before touching active configured states; legacy maintenance must not be run against its active worker.

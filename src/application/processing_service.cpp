@@ -3,6 +3,70 @@
 #include <chrono>
 
 namespace rifelove::application {
+namespace {
+std::filesystem::path localPath(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(),value.end())); }
+std::timed_mutex engineSlot;
+}
+PipelineResult executeProcessingJob(const ProcessingJob& job, const std::function<void(ProcessingEvent)>& progress,
+    std::stop_token stop, PauseGate& pause) {
+    const auto started = std::chrono::steady_clock::now();
+    auto lastUpdate = started;
+    std::string lastStage;
+    auto send = [&](ProcessingEvent event) { if (progress) progress(std::move(event)); };
+    auto checkpoint = [&] {
+        pause.checkpoint(stop,[&](bool paused) {
+            ProcessingEvent event; event.stage = paused ? "paused" : "resumed"; send(std::move(event));
+        });
+    };
+    checkpoint();
+    std::unique_lock<std::timed_mutex> execution(engineSlot,std::defer_lock);
+    bool waiting = false;
+    while (!execution.try_lock_for(std::chrono::milliseconds(50))) {
+        checkpoint();
+        if (!waiting) { ProcessingEvent event; event.stage = "waiting_for_engine"; send(std::move(event)); waiting = true; }
+    }
+    checkpoint();
+    if (std::filesystem::exists(localPath(job.output))) throw std::invalid_argument("Output already exists; select a new path");
+    SourceLease source(localPath(job.source));
+    ProcessingEvent checking; checking.stage = "checking_source"; send(std::move(checking));
+    auto identity = source.fingerprint(stop,[&](std::uint64_t current, std::uint64_t total) {
+        checkpoint();
+        const auto now = std::chrono::steady_clock::now();
+        if (current != total && now - lastUpdate < std::chrono::milliseconds(100)) return;
+        lastUpdate = now;
+        ProcessingEvent event; event.stage = "checking_source"; event.detail = std::to_string(current) + " / " + std::to_string(total) + " bytes"; send(std::move(event));
+    });
+    if (!job.expectedSourceSha256.empty() && identity.sha256 != job.expectedSourceSha256)
+        throw std::runtime_error("Source SHA-256 changed since this task was prepared; create a new task for changed media");
+    checkpoint();
+    ProcessingEvent loading; loading.stage = "loading_model"; send(std::move(loading));
+    const auto pack = inference::loadModelPack(job.modelDirectory);
+    if (!job.expectedModelSha256.empty() && pack.sha256 != job.expectedModelSha256)
+        throw std::runtime_error("Model SHA-256 changed since this task was prepared; select a verified model for a new task");
+    if ((!job.expectedModelId.empty() && pack.id != job.expectedModelId) || (!job.expectedModelVersion.empty() && pack.version != job.expectedModelVersion))
+        throw std::runtime_error("Model identity/version changed since this task was queued");
+    checkpoint();
+    auto device = std::make_shared<gpu::CudaDevice>(job.deviceOrdinal);
+    ProcessingEvent prepared; prepared.kind = ProcessingEvent::Kind::prepared; prepared.stage = "loading_model";
+    prepared.identity = ProcessingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info()};
+    send(std::move(prepared));
+    inference::OnnxCudaConfig config; config.runtimeDirectory = job.runtimeDirectory;
+    inference::OnnxCudaBackend backend(device,config); backend.loadModel(pack);
+    checkpoint();
+    return interpolateVideo(job.source,job.output,job.settings,*device,backend,[&](const PipelineProgress& value) {
+        // A completed progress event follows atomic output publication. Do
+        // not acknowledge a new pause/cancel as though that output is partial.
+        if (value.stage != "completed") checkpoint();
+        const auto now = std::chrono::steady_clock::now();
+        if (value.stage == lastStage && now - lastUpdate < std::chrono::milliseconds(100)) return;
+        lastUpdate = now; lastStage = value.stage;
+        ProcessingEvent event; event.stage = value.stage; event.detail = value.detail;
+        event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames; event.timestamp = value.timestamp;
+        const auto seconds = std::chrono::duration<double>(now - started).count();
+        event.processingFps = seconds > 0 ? static_cast<double>(value.outputFrames) / seconds : 0;
+        send(std::move(event));
+    },stop);
+}
 ProcessingService::~ProcessingService() { cancel(); if (worker_.joinable()) worker_.join(); }
 void ProcessingService::cancel() { if (worker_.joinable()) worker_.request_stop(); }
 bool ProcessingService::launch(std::function<void(std::stop_token, const Callback&)> work, Callback callback) {
@@ -10,13 +74,14 @@ bool ProcessingService::launch(std::function<void(std::stop_token, const Callbac
     if (busy_.exchange(true)) return false;
     try {
         if (worker_.joinable()) worker_.join();
+        pause_.resume();
         worker_ = std::jthread([this, work = std::move(work), callback = std::move(callback)](std::stop_token stop) {
             const auto started = std::chrono::steady_clock::now();
             // Collect one terminal event, release GPU/media resources first,
             // then permit another job. Progress callbacks must not throw.
             ProcessingEvent terminal;
             const Callback deliver = [&](ProcessingEvent event) {
-                if (event.kind == ProcessingEvent::Kind::progress) callback(std::move(event));
+                if (event.kind == ProcessingEvent::Kind::progress || event.kind == ProcessingEvent::Kind::prepared) callback(std::move(event));
                 else terminal = std::move(event);
             };
             try { work(stop, deliver); }
@@ -53,30 +118,8 @@ bool ProcessingService::inspect(std::string source, Callback callback) {
     }, std::move(callback));
 }
 bool ProcessingService::submit(ProcessingJob job, Callback callback) {
-    return launch([job = std::move(job)](std::stop_token stop, const Callback& send) {
-        const auto started = std::chrono::steady_clock::now();
-        ProcessingEvent loading; loading.stage = "loading_model"; send(std::move(loading));
-        if (stop.stop_requested()) throw std::runtime_error("Processing cancelled");
-        const auto pack = inference::loadModelPack(job.modelDirectory);
-        if (stop.stop_requested()) throw std::runtime_error("Processing cancelled");
-        auto device = std::make_shared<gpu::CudaDevice>(job.deviceOrdinal);
-        inference::OnnxCudaConfig config; config.runtimeDirectory = job.runtimeDirectory;
-        inference::OnnxCudaBackend backend(device, config);
-        backend.loadModel(pack);
-        auto lastUpdate = std::chrono::steady_clock::now();
-        std::string lastStage;
-        auto result = interpolateVideo(job.source, job.output, job.settings, *device, backend,
-            [&](const PipelineProgress& progress) {
-                const auto now = std::chrono::steady_clock::now();
-                if (progress.stage == lastStage && now - lastUpdate < std::chrono::milliseconds(100)) return;
-                lastUpdate = now; lastStage = progress.stage;
-                ProcessingEvent event; event.stage = progress.stage; event.detail = progress.detail;
-                event.outputFrames = progress.outputFrames; event.aiFrames = progress.aiFrames;
-                event.timestamp = progress.timestamp;
-                const double seconds = std::chrono::duration<double>(now - started).count();
-                event.processingFps = seconds > 0 ? static_cast<double>(progress.outputFrames) / seconds : 0;
-                send(std::move(event));
-            }, stop);
+    return launch([this, job = std::move(job)](std::stop_token stop, const Callback& send) {
+        auto result = executeProcessingJob(job,send,stop,pause_);
         ProcessingEvent event; event.kind = ProcessingEvent::Kind::completed; event.result = std::move(result);
         send(std::move(event));
     }, std::move(callback));

@@ -4,6 +4,7 @@
 #include "gpu/cuda_device.hpp"
 #ifdef RIFELOVE_HAS_PIPELINE
 #include "interpolation_commands.hpp"
+#include "queue_commands.hpp"
 #endif
 #ifdef RIFELOVE_HAS_MEDIA
 #include "media_commands.hpp"
@@ -78,6 +79,12 @@ void usage(std::ostream& out) {
     out << "  rifelove-cli gpu-info [DEVICE_INDEX]\n";
 #ifdef RIFELOVE_HAS_PIPELINE
     out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--encoder auto|NAME] [--pixel-format FORMAT] [--progress]\n";
+    out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [encoding options]\n"
+        << "  rifelove-cli queue-run DATABASE [--progress]\n"
+        << "  rifelove-cli queue-list|queue-export DATABASE\n"
+        << "  rifelove-cli queue-import DATABASE PLAN_JSON\n"
+        << "  rifelove-cli queue-retry|queue-cancel DATABASE ID\n"
+        << "  rifelove-cli queue-restart DATABASE INTERRUPTED_ID NEW_OUTPUT\n";
 #endif
 #ifdef RIFELOVE_HAS_MEDIA
     out << "  rifelove-cli media-probe INPUT\n"
@@ -94,6 +101,13 @@ int main(int argc, char** argv) {
         const auto args = commandLineUtf8(argc, argv);
         if (args.size() < 2 || args[1] == "--help" || args[1] == "-h") { usage(std::cout); return 0; }
         const std::string& command = args[1];
+        if (command.rfind("queue-",0) == 0) {
+#ifdef RIFELOVE_HAS_PIPELINE
+            return runQueueCommand(args);
+#else
+            throw std::runtime_error("Processing queues require the media and ONNX CUDA build");
+#endif
+        }
         if (command == "interpolate") {
 #ifdef RIFELOVE_HAS_PIPELINE
             return runInterpolationCommand(args);

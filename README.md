@@ -12,6 +12,7 @@ RifeLove is an offline Windows video frame interpolation application in active d
 - A native CUDA driver layer, tested on the local GTX 1660 SUPER for device queries, owned memory, bounded allocations and transfers.
 - Checksum-pinned RIFE 4.25 export/reference tools and a native ONNX Runtime CUDA backend; small-profile SDR8 numerical comparisons and GPU operator-placement checks pass on the local GPU.
 - A streaming native RIFE pipeline with rational CFR scheduling, conservative cut/duplicate protection, actual encoder-open fallback and decoded-output validation before publication.
+- A persistent native/CLI batch queue with pinned configurations, source/model identities, pause/cancel/retry APIs, live ownership and interruption detection. [Queue contracts and limits](docs/development/QUEUE.md).
 - A connected Chinese Qt/QML Studio for single-video import, settings, local model/runtime selection, native processing, progress and cancellation; tested through the actual QML start button.
 - CMake/Ninja builds and automated tests. Qt 6.12 builds locally with a matching MinGW 15.1 toolchain; [desktop setup and checks](docs/development/DESKTOP.md).
 
@@ -40,7 +41,7 @@ Enable the media engine by supplying a local FFmpeg SDK with `check.ps1 -FFmpegR
 
 `rifelove-cli tasks <database-path>` opens an existing task database read-only and lists tasks without changing their state. `rifelove-cli task-create <database-path> <source> <output>` persists a new queued task. Paths, including Chinese names and spaces, are accepted as Unicode on Windows and JSON output is UTF-8.
 
-`rifelove-cli tasks-recover <database-path>` is a separate maintenance operation for an existing database, to be used after all workers have stopped. It marks `running` records as `interrupted`; it does not resume video processing. Automatic recovery with worker ownership and safe segment checkpoints remains roadmap work.
+`rifelove-cli tasks-recover <database-path>` is a separate legacy maintenance operation for an existing database, to be used after all workers have stopped. It marks `running`/`paused` records as `interrupted`; it does not resume video processing. The configured processing queue now establishes live ownership before recovery; safe segment checkpoints remain roadmap work.
 
 With the media engine enabled, `media-probe INPUT` reports streams/metadata, `media-scan INPUT --frames` decodes and reports rational PTS/color, and `remux INPUT OUTPUT` copies compatible streams into a new MP4/MOV/MKV file. Remuxing preserves compressed streams; it does not change frame rate or generate AI frames.
 

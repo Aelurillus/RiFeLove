@@ -72,21 +72,43 @@ public:
                 }
                 dependencyModules_.push_back(loaded);
             }
+            if (auto* status = api->CreateEnv(ORT_LOGGING_LEVEL_WARNING,"RifeLove",&environment_)) {
+                const std::string message = api->GetErrorMessage(status); api->ReleaseStatus(status);
+                throw InferenceError(InferenceErrorKind::unavailable,"Could not initialize process ONNX environment: " + message);
+            }
         } catch (...) { cleanup(); throw; }
     }
     ~Runtime() { cleanup(); }
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     const OrtApi* api{};
+    OrtEnv* environment() const { return environment_; }
 private:
+    OrtEnv* environment_{};
     HMODULE module_{};
     std::vector<HMODULE> dependencyModules_;
     void cleanup() noexcept {
+        if (environment_) { api->ReleaseEnv(environment_); environment_ = nullptr; }
         if (module_) { FreeLibrary(module_); module_ = nullptr; }
         for (auto iterator = dependencyModules_.rbegin(); iterator != dependencyModules_.rend(); ++iterator) FreeLibrary(*iterator);
         dependencyModules_.clear();
     }
 };
+std::shared_ptr<Runtime> processRuntime(const std::filesystem::path& selected) {
+    struct Registry { std::mutex mutex; std::filesystem::path directory; std::shared_ptr<Runtime> runtime; };
+    static Registry registry;
+    std::error_code error;
+    const auto directory = std::filesystem::canonical(selected,error);
+    if (error) throw InferenceError(InferenceErrorKind::unavailable,"Native ONNX Runtime directory is unavailable");
+    std::lock_guard lock(registry.mutex);
+    if (registry.runtime) {
+        if (!std::filesystem::equivalent(directory,registry.directory))
+            throw InferenceError(InferenceErrorKind::unavailable,"Restart RifeLove before changing the native ONNX/CUDA runtime directory");
+        return registry.runtime;
+    }
+    auto runtime = std::make_shared<Runtime>(directory);
+    registry.directory = directory; registry.runtime = runtime; return runtime;
+}
 void check(const OrtApi& api, OrtStatus* status, std::stop_token stop = {}, std::stop_token shutdown = {}) {
     if (!status) return;
     const std::string message = api.GetErrorMessage(status);
@@ -140,11 +162,10 @@ class OnnxCudaBackend::Impl final {
 public:
     struct Job { InterpolationRequest request; std::promise<InterpolationResult> promise; };
     Impl(std::shared_ptr<gpu::CudaDevice> selected, OnnxCudaConfig settings)
-        : device(std::move(selected)), config(std::move(settings)), runtime(config.runtimeDirectory), api(*runtime.api),
-          environment(api.ReleaseEnv), session(api.ReleaseSession), cudaMemory(api.ReleaseMemoryInfo) {
+        : device(std::move(selected)), config(std::move(settings)), runtime(processRuntime(config.runtimeDirectory)), api(*runtime->api),
+          session(api.ReleaseSession), cudaMemory(api.ReleaseMemoryInfo) {
         if (!device || !config.arenaBudgetBytes || !config.maxQueuedRequests || config.maxQueuedRequests > 64)
             throw InferenceError(InferenceErrorKind::invalidRequest, "Invalid CUDA backend device, budget or queue limit");
-        check(api, api.CreateEnv(ORT_LOGGING_LEVEL_WARNING, "RifeLove", &environment.value));
         check(api, api.CreateMemoryInfo("Cuda", OrtDeviceAllocator, device->info().ordinal, OrtMemTypeDefault, &cudaMemory.value));
         timestep = device->allocate(sizeof(float));
         worker = std::jthread([this](std::stop_token stop) { work(stop); });
@@ -181,7 +202,7 @@ public:
         try { check(api, api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value, provider.value)); }
         catch (const InferenceError& error) { throw InferenceError(InferenceErrorKind::unavailable, "CUDA provider could not initialize: " + std::string(error.what())); }
         Handle<OrtSession> next(api.ReleaseSession);
-        check(api, api.CreateSessionFromArray(environment.value, model.graph.data(), model.graph.size(), options.value, &next.value));
+        check(api, api.CreateSessionFromArray(runtime->environment(), model.graph.data(), model.graph.size(), options.value, &next.value));
         validateContract(api, next.value);
         session = std::move(next);
         modelId = model.id;
@@ -307,9 +328,8 @@ private:
     }
     std::shared_ptr<gpu::CudaDevice> device;
     OnnxCudaConfig config;
-    Runtime runtime;
+    std::shared_ptr<Runtime> runtime;
     const OrtApi& api;
-    Handle<OrtEnv> environment;
     Handle<OrtSession> session;
     Handle<OrtMemoryInfo> cudaMemory;
     std::shared_ptr<gpu::DeviceBuffer> timestep;

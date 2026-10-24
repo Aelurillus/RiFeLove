@@ -2,6 +2,7 @@
 #include "common/json.hpp"
 #include "core/pipeline/video_pipeline.hpp"
 #include "inference/onnx_cuda_backend.hpp"
+#include "console_cancellation.hpp"
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -16,32 +17,7 @@
 
 namespace {
 using namespace rifelove;
-std::atomic<bool> consoleCancel{false};
-BOOL WINAPI consoleHandler(DWORD event) {
-    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) return FALSE;
-    consoleCancel.store(true,std::memory_order_relaxed);
-    return TRUE;
-}
-class ConsoleCancellation final {
-public:
-    ConsoleCancellation() {
-        consoleCancel.store(false,std::memory_order_relaxed);
-        if (!SetConsoleCtrlHandler(consoleHandler,TRUE)) throw std::runtime_error("Could not register console cancellation handler");
-        try {
-            watcher_ = std::jthread([this](std::stop_token shutdown) {
-                while (!shutdown.stop_requested()) {
-                    if (consoleCancel.load(std::memory_order_relaxed)) { source_.request_stop(); return; }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                }
-            });
-        } catch (...) { SetConsoleCtrlHandler(consoleHandler,FALSE); throw; }
-    }
-    ~ConsoleCancellation() { watcher_.request_stop(); if (watcher_.joinable()) watcher_.join(); SetConsoleCtrlHandler(consoleHandler,FALSE); }
-    std::stop_token token() const { return source_.get_token(); }
-private:
-    std::stop_source source_;
-    std::jthread watcher_;
-};
+using rifelove::cli::ConsoleCancellation;
 std::int64_t integer(const std::string& value) {
     std::int64_t number = 0;
     const auto [end,status] = std::from_chars(value.data(),value.data() + value.size(),number);

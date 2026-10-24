@@ -2,6 +2,8 @@
 
 #include <string>
 #include <vector>
+#include <mutex>
+#include <optional>
 
 struct sqlite3;
 
@@ -20,6 +22,14 @@ struct TaskRecord {
     std::string updatedAt;
     std::string error;
 };
+struct ConfiguredTask {
+    TaskRecord task;
+    std::string configuration;
+    std::string identity;
+    std::string progress;
+    std::string result;
+};
+struct NewConfiguredTask { std::string sourcePath; std::string outputPath; std::string configuration; };
 
 class TaskStore final {
 public:
@@ -33,10 +43,19 @@ public:
     void transition(const std::string& id, TaskState next, const std::string& error = {});
     [[nodiscard]] std::size_t recoverInterrupted();
     [[nodiscard]] std::vector<TaskRecord> list() const;
+    // Payloads are versioned JSON owned/validated by application services.
+    // Batch creation and terminal state/result publication are transactional.
+    [[nodiscard]] std::vector<std::string> createConfigured(const std::vector<NewConfiguredTask>& tasks);
+    [[nodiscard]] std::vector<ConfiguredTask> configured() const;
+    void saveIdentity(const std::string& id, const std::string& json);
+    void saveProgress(const std::string& id, const std::string& json);
+    void finish(const std::string& id, TaskState state, const std::string& result, const std::string& error = {});
+    [[nodiscard]] std::size_t recoverConfigured();
 
 private:
     sqlite3* db_{};
     OpenMode mode_;
+    mutable std::mutex mutex_;
     void requireWritable() const;
 };
 
