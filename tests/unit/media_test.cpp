@@ -152,6 +152,29 @@ TEST(VideoMuxWriter, WritesVideoOnlyKeyframedSegmentsAtTheGlobalTimelineOrigin) 
     EXPECT_EQ(decoded.frameCount,2U);
     EXPECT_EQ(decoded.firstTimestamp,start);
     EXPECT_EQ(decoded.lastTimestamp,start + rifelove::Rational(1,50));
+
+    rifelove::media::VideoSegmentContract contract;
+    contract.frameCount = 2;
+    contract.firstTimestamp = start;
+    contract.frameDuration = rifelove::Rational(1,50);
+    contract.width = 96;
+    contract.height = 64;
+    contract.codec = "ffv1";
+    contract.pixelFormat = "yuv420p";
+    contract.bitDepth = 8;
+    const auto verified = MediaEngine::verifyVideoSegment(output.string(),contract);
+    EXPECT_EQ(verified.frameCount,2U);
+    EXPECT_EQ(verified.firstTimestamp,start);
+    EXPECT_EQ(verified.endExclusive,start + rifelove::Rational(2,50));
+    auto wrongCount = contract;
+    wrongCount.frameCount = 1;
+    EXPECT_THROW((void)MediaEngine::verifyVideoSegment(output.string(),wrongCount),std::runtime_error);
+    auto wrongOrigin = contract;
+    wrongOrigin.firstTimestamp = rifelove::Rational(0);
+    EXPECT_THROW((void)MediaEngine::verifyVideoSegment(output.string(),wrongOrigin),std::runtime_error);
+    auto wrongColor = contract;
+    wrongColor.primaries = "bt709";
+    EXPECT_THROW((void)MediaEngine::verifyVideoSegment(output.string(),wrongColor),std::runtime_error);
 }
 
 TEST(VideoMuxWriter, InvalidTimingAndCancellationRemovePartialFiles) {

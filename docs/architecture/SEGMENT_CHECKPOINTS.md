@@ -1,6 +1,6 @@
 # Safe segment checkpoints and recovery
 
-Status: the checkpoint contract, SQLite journal, and a video-only segment writer that requires an independently decodable first packet are implemented. The writer preserves the global PTS origin and omits source auxiliary streams. The processing pipeline does not yet create/register resumable segments, verify their hashes on recovery, stitch them, or expose a resume action.
+Status: the checkpoint contract, SQLite journal, video-only segment writer, and media-level segment verifier are implemented. The writer preserves the global PTS origin and omits source auxiliary streams. The verifier checks the single-video-stream contract, codec/dimensions/pixel and color tags, first-packet keyframe, full decoded frame count, and each frame's global rational timestamp. The processing pipeline does not yet create/register resumable segments, hash and re-verify their files on recovery, stitch them, or expose a resume action.
 
 ## Identity boundary
 
@@ -25,7 +25,7 @@ The pipeline may seek to a keyframe before a resumed boundary to reconstruct the
 
 A crash before step 4 leaves an unregistered orphan. Recovery never trusts it based on its filename; it remains available for diagnosis and is not deleted automatically. A crash after step 4 leaves a resumable record, subject to full identity and on-disk hash/contract verification. Partial temporary files are never treated as checkpoints.
 
-SQLite stores the immutable manifest and the ordered segment journal. The current journal API enforces manifest immutability, active-task ownership, SHA-256 syntax, positive file size, and contiguous frame ranges. The media writer validates a standalone video stream and its first encoded packet before no-replace publication. The caller remains responsible for hashing and later re-verifying each actual file.
+SQLite stores the immutable manifest and the ordered segment journal. The current journal API enforces manifest immutability, active-task ownership, SHA-256 syntax, positive file size, and contiguous frame ranges. The media writer validates a standalone video stream and its first encoded packet before no-replace publication. `MediaEngine::verifyVideoSegment` can validate the finalized segment against an expected media/timeline contract. The caller remains responsible for hashing and re-running this verification on each actual file.
 
 ## Final assembly and publication
 

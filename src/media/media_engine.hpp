@@ -115,6 +115,27 @@ struct DecodeSummary {
     std::optional<Rational> lastTimestamp;
 };
 struct RemuxResult { std::size_t copiedStreams; std::size_t packetsWritten; };
+struct VideoSegmentContract {
+    std::size_t frameCount = 0;
+    Rational firstTimestamp;
+    Rational frameDuration;
+    int width = 0;
+    int height = 0;
+    std::string codec;
+    std::string pixelFormat;
+    int bitDepth = 0;
+    std::optional<std::string> primaries;
+    std::optional<std::string> transfer;
+    std::optional<std::string> matrix;
+    std::optional<std::string> range;
+};
+struct VideoSegmentVerification {
+    std::size_t frameCount = 0;
+    Rational firstTimestamp;
+    Rational endExclusive;
+    std::string codec;
+    std::string pixelFormat;
+};
 
 class MediaEngine final {
 public:
@@ -127,6 +148,10 @@ public:
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
         const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1, std::stop_token stop = {});
+    // Fully decodes an internal video-only segment and verifies its media and
+    // global-timeline contract before the caller journals or reuses it.
+    [[nodiscard]] static VideoSegmentVerification verifyVideoSegment(const std::string& utf8Path,
+        const VideoSegmentContract& contract, std::stop_token stop = {});
     // Copies compressed streams, metadata and chapters; never replaces an existing output.
     [[nodiscard]] static RemuxResult remux(const std::string& input, const std::string& output,
         std::stop_token stop = {});
