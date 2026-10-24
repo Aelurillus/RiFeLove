@@ -105,6 +105,14 @@ int main(int argc, char** argv) {
         require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Studio did not recover readiness after selecting a supported source");
         studio.setOutput(QUrl::fromLocalFile(arguments[2]));
         int responsiveTicks = 0;
+        bool sawFallbackNotice = false;
+        bool sawRawFallbackError = false;
+        QObject::connect(&studio, &StudioController::changed, [&] {
+            if (studio.status() == "processing") {
+                sawFallbackNotice = sawFallbackNotice || studio.detail().contains(QStringLiteral("软件 H.264"));
+                sawRawFallbackError = sawRawFallbackError || studio.detail().contains(QStringLiteral("Function not implemented"));
+            }
+        });
         QTimer heartbeat; heartbeat.setInterval(5);
         QObject::connect(&heartbeat, &QTimer::timeout, [&] { ++responsiveTicks; });
         heartbeat.start();
@@ -115,6 +123,8 @@ int main(int argc, char** argv) {
         require(QFileInfo(arguments[2]).isFile(), "Completed output was not published");
         require(studio.progress().value("frames").toULongLong() == 36, "Wrong output frame count");
         require(studio.progress().value("aiFrames").toULongLong() > 0, "Desktop did not generate AI frames");
+        if (!studio.progress().value("encoderFallbackReason").toString().isEmpty())
+            require(sawFallbackNotice && !sawRawFallbackError, "Recoverable NVENC fallback was presented as a processing error");
         require(responsiveTicks > 5, "UI event loop did not stay responsive during processing");
         const auto aiFrames = studio.progress().value("aiFrames").toULongLong();
         // QML is rendered with the actual successful job, not a mocked view model.

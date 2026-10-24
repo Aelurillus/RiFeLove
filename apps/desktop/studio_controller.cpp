@@ -60,7 +60,13 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         progress_["aiFrames"] = QVariant::fromValue<qulonglong>(event.aiFrames);
         progress_["fps"] = event.processingFps;
         if (event.timestamp) progress_["timestamp"] = seconds(*event.timestamp);
-        if (!event.detail.empty()) detail_ = text(event.detail);
+        if (event.stage == "encoder_fallback") {
+            progress_["encoderFallbackReason"] = text(event.detail);
+            detail_ = tr("NVIDIA 视频编码器当前不可用，已切换到软件 H.264；补帧仍在进行。");
+        } else if (!event.detail.empty()) detail_ = text(event.detail);
+        else if (!progress_.value("encoderFallbackReason").toString().isEmpty())
+            detail_ = tr("NVIDIA 视频编码器当前不可用，已切换到软件 H.264；补帧仍在进行。");
+        else detail_.clear();
     } else {
         busy_ = false;
         if (event.kind == Kind::inspected && event.media) {
