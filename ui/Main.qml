@@ -13,20 +13,21 @@ ApplicationWindow {
     minimumWidth: 1080
     minimumHeight: 720
     title: "RifeLove"
-    color: "#0b1018"
-    Material.theme: Material.Dark
-    Material.accent: "#9ee6c8"
-    Material.primary: "#26394a"
+    color: "#F3F6F8"
+    Material.theme: Material.Light
+    Material.accent: "#16836B"
+    Material.primary: "#16836B"
     font.family: "Microsoft YaHei UI"
     font.pixelSize: 14
-    palette.text: "#eaf0fa"
-    palette.windowText: "#eaf0fa"
-    palette.buttonText: "#eaf0fa"
-    palette.base: "#111923"
-    palette.placeholderText: "#8493aa"
-    palette.button: "#283447"
-    palette.highlight: "#9ee6c8"
-    palette.highlightedText: "#10241f"
+    palette.text: "#1D2C3A"
+    palette.windowText: "#1D2C3A"
+    palette.buttonText: "#304353"
+    palette.base: "#FFFFFF"
+    palette.alternateBase: "#F3F6F8"
+    palette.placeholderText: "#70818F"
+    palette.button: "#EAF0F3"
+    palette.highlight: "#16836B"
+    palette.highlightedText: "#FFFFFF"
     property url modelFolder: ""
     property url runtimeFolder: ""
     property string inferenceBackend: "auto"
@@ -202,10 +203,10 @@ ApplicationWindow {
         return labels[value] || qsTr("正在处理")
     }
     function stateColor(value) {
-        if (value === "processing" && processingAvailable && studio.progressStalled) return "#f0c98a"
-        if (value === "failed" || (value === "inspected" && window.info.width && !window.info.supportedColor)) return "#ffb3ad"
-        if (value === "inspected" && !window.canStart) return "#f0c98a"
-        return "#9ee6c8"
+        if (value === "processing" && processingAvailable && studio.progressStalled) return "#A66C13"
+        if (value === "failed" || (value === "inspected" && window.info.width && !window.info.supportedColor)) return "#B33B44"
+        if (value === "inspected" && !window.canStart) return "#A66C13"
+        return "#16836B"
     }
     FileDialog {
         id: sourceDialog
@@ -242,8 +243,8 @@ ApplicationWindow {
         Rectangle {
             Layout.fillHeight: true
             Layout.preferredWidth: 240
-            color: "#0f1720"
-            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: "#202c38" }
+            color: "#FAFBFC"
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: "#DCE4E9" }
             ColumnLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 18
@@ -265,30 +266,30 @@ ApplicationWindow {
                     }
                     ColumnLayout {
                         spacing: 2
-                        Label { text: "RifeLove"; font.pixelSize: 21; font.bold: true; color: "#f0f5fa" }
-                        Label { text: qsTr("离线视频工作台"); color: "#8393a5"; font.pixelSize: 11 }
+                        Label { text: "RifeLove"; font.pixelSize: 21; font.bold: true; color: "#1D2C3A" }
+                        Label { text: qsTr("离线视频工作台"); color: "#6E7F8D"; font.pixelSize: 11 }
                     }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#202c38"; Layout.topMargin: 10; Layout.bottomMargin: 7 }
-                Label { text: qsTr("工作区"); color: "#718196"; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 9; Layout.bottomMargin: 3 }
-                ActionButton { objectName: "homeNavigationButton"; navigation: true; text: qsTr("⌂     工作区"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
-                ActionButton { objectName: "studioNavigationButton"; navigation: true; text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
-                ActionButton { objectName: "queueNavigationButton"; navigation: true; text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
-                ActionButton { objectName: "modelNavigationButton"; navigation: true; text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
-                ActionButton { objectName: "comparisonButton"; navigation: true; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 4; onClicked: window.currentPage = 4 }
+                Rectangle { Layout.fillWidth: true; height: 1; color: "#DCE4E9"; Layout.topMargin: 10; Layout.bottomMargin: 7 }
+                Label { text: qsTr("工作区"); color: "#6E7F8C"; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 9; Layout.bottomMargin: 3 }
+                ActionButton { objectName: "homeNavigationButton"; navigation: true; iconText: "⌂"; text: qsTr("工作区"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
+                ActionButton { objectName: "studioNavigationButton"; navigation: true; iconText: "▶"; text: qsTr("插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
+                ActionButton { objectName: "queueNavigationButton"; navigation: true; iconText: "☷"; text: qsTr("任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
+                ActionButton { objectName: "modelNavigationButton"; navigation: true; iconText: "◇"; text: qsTr("模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
+                ActionButton { objectName: "comparisonButton"; navigation: true; iconText: "◫"; text: qsTr("对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 4; onClicked: window.currentPage = 4 }
                 Item { Layout.fillHeight: true }
                 Rectangle {
                     Layout.fillWidth: true
                     radius: 13
-                    color: "#121d28"
-                    border.color: "#263746"
+                    color: "#FFFFFF"
+                    border.color: "#DCE4E9"
                     implicitHeight: deviceInfo.implicitHeight + 28
                     ColumnLayout {
                         id: deviceInfo
                         anchors.fill: parent
                         anchors.margins: 14
                         spacing: 7
-                        Label { text: qsTr("本机加速器"); color: "#8292a5"; font.pixelSize: 10; font.bold: true }
+                        Label { text: qsTr("本机加速器"); color: "#6E7F8D"; font.pixelSize: 10; font.bold: true }
                         Label {
                             text: window.info.gpu || (window.backendAvailable && studio.deviceInfo.available
                                 ? studio.deviceInfo.name : qsTr("未检测到 NVIDIA GPU"))
@@ -300,7 +301,7 @@ ApplicationWindow {
                         Label {
                             visible: !window.info.width && window.backendAvailable && studio.deviceInfo.available
                             text: qsTr("显存 %1 GB · CUDA %2").arg((Number(studio.deviceInfo.totalBytes) / 1073741824).toFixed(1)).arg(studio.deviceInfo.computeCapability)
-                            color: "#91a1b4"
+                            color: "#647685"
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -310,12 +311,12 @@ ApplicationWindow {
                             text: !window.info.nvencContextOpened && window.automaticSoftwareEncoder() !== ""
                                 ? qsTr("NVENC 不可用 · 自动使用%1").arg(window.automaticSoftwareEncoderLabel())
                                 : window.info.nvencContextOpened ? qsTr("NVENC 编码器可初始化") : qsTr("H.264 编码器不可用")
-                            color: window.info.nvencContextOpened ? "#9ee6c8" : "#f0c98a"
+                            color: window.info.nvencContextOpened ? "#16836B" : "#A66C13"
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
-                        Label { text: qsTr("源文件不会被修改"); color: "#8292a5"; font.pixelSize: 10 }
+                        Label { text: qsTr("源文件不会被修改"); color: "#6E7F8D"; font.pixelSize: 10 }
                     }
                 }
             }
@@ -357,10 +358,10 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 120
                         radius: 18
-                        border.color: "#2a3a4b"
+                        border.color: "#D7E2E4"
                         gradient: Gradient {
-                            GradientStop { position: 0; color: "#192a3b" }
-                            GradientStop { position: 1; color: "#111a25" }
+                            GradientStop { position: 0; color: "#E6F2EE" }
+                            GradientStop { position: 1; color: "#F3F7F8" }
                         }
                         RowLayout {
                             anchors.fill: parent
@@ -372,9 +373,9 @@ ApplicationWindow {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 7
-                                Label { text: qsTr("RIFELOVE  /  MOTION STUDIO"); color: "#9ee6c8"; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1.2 }
-                                Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 29; font.bold: true; color: "#f2f6fa" }
-                                Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#a9b8c9"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                Label { text: qsTr("RIFELOVE  /  MOTION STUDIO"); color: "#16836B"; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1.2 }
+                                Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 29; font.bold: true; color: "#1D2C3A" }
+                                Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#667889"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             }
                             ColumnLayout {
                                 Layout.preferredWidth: 304
@@ -384,34 +385,34 @@ ApplicationWindow {
                                     spacing: 7
                                     Rectangle {
                                         Layout.preferredWidth: 72; Layout.preferredHeight: 52
-                                        radius: 10; color: "#172838"; border.color: "#385267"
-                                        Rectangle { x: 13; y: 13; width: 25; height: 27; radius: 13; color: "#2b5663" }
-                                        Rectangle { x: 43; y: 12; width: 15; height: 3; radius: 2; color: "#78bda9" }
-                                        Rectangle { x: 43; y: 20; width: 12; height: 3; radius: 2; color: "#587f8c" }
-                                        Rectangle { x: 43; y: 28; width: 17; height: 3; radius: 2; color: "#587f8c" }
+                                        radius: 10; color: "#EDF4F5"; border.color: "#C3D8DB"
+                                        Rectangle { x: 13; y: 13; width: 25; height: 27; radius: 13; color: "#C5DDD9" }
+                                        Rectangle { x: 43; y: 12; width: 15; height: 3; radius: 2; color: "#2D8976" }
+                                        Rectangle { x: 43; y: 20; width: 12; height: 3; radius: 2; color: "#678E91" }
+                                        Rectangle { x: 43; y: 28; width: 17; height: 3; radius: 2; color: "#678E91" }
                                     }
-                                    Label { text: "›"; color: "#78bda9"; font.pixelSize: 22 }
+                                    Label { text: "›"; color: "#2D8976"; font.pixelSize: 22 }
                                     Rectangle {
                                         Layout.preferredWidth: 72; Layout.preferredHeight: 52
-                                        radius: 10; color: "#183027"; border.color: "#47735f"
-                                        Rectangle { x: 11; y: 12; width: 50; height: 5; radius: 3; color: "#4d9b7a" }
-                                        Rectangle { x: 17; y: 23; width: 38; height: 5; radius: 3; color: "#7bd3ae" }
-                                        Rectangle { x: 23; y: 34; width: 26; height: 5; radius: 3; color: "#4d9b7a" }
+                                        radius: 10; color: "#E1F1EA"; border.color: "#A4C7B7"
+                                        Rectangle { x: 11; y: 12; width: 50; height: 5; radius: 3; color: "#347F65" }
+                                        Rectangle { x: 17; y: 23; width: 38; height: 5; radius: 3; color: "#3E9E7D" }
+                                        Rectangle { x: 23; y: 34; width: 26; height: 5; radius: 3; color: "#347F65" }
                                     }
-                                    Label { text: "›"; color: "#78bda9"; font.pixelSize: 22 }
+                                    Label { text: "›"; color: "#2D8976"; font.pixelSize: 22 }
                                     Rectangle {
                                         Layout.preferredWidth: 72; Layout.preferredHeight: 52
-                                        radius: 10; color: "#172838"; border.color: "#385267"
-                                        Rectangle { x: 11; y: 11; width: 50; height: 30; radius: 6; color: "#203b4c" }
-                                        Rectangle { x: 18; y: 30; width: 38; height: 3; radius: 2; color: "#93d6ba" }
-                                        Rectangle { x: 23; y: 35; width: 28; height: 2; radius: 1; color: "#6ba99f" }
+                                        radius: 10; color: "#EDF4F5"; border.color: "#C3D8DB"
+                                        Rectangle { x: 11; y: 11; width: 50; height: 30; radius: 6; color: "#E0EBEF" }
+                                        Rectangle { x: 18; y: 30; width: 38; height: 3; radius: 2; color: "#3C9476" }
+                                        Rectangle { x: 23; y: 35; width: 28; height: 2; radius: 1; color: "#3B9B84" }
                                     }
                                 }
                                 Label {
                                     Layout.fillWidth: true
                                     horizontalAlignment: Text.AlignHCenter
                                     text: qsTr("源帧     ·     RIFE 生成     ·     补帧输出")
-                                    color: "#91a6b7"
+                                    color: "#6A8390"
                                     font.pixelSize: 11
                                 }
                                 Label {
@@ -419,7 +420,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     horizontalAlignment: Text.AlignHCenter
                                     text: window.selectedModelVerified ? qsTr("●  本地模型已校验 · CUDA 推理") : qsTr("●  CUDA 推理")
-                                    color: "#a8efd5"
+                                    color: "#12816A"
                                     font.pixelSize: 11
                                     font.bold: true
                                 }
@@ -429,10 +430,10 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: importContent.implicitHeight + 26
-                        color: "#121d28"
+                        color: "#FFFFFF"
                         radius: 14
-                        border.color: drop.containsDrag ? "#6fdbb8" : "#263746"
-                        Rectangle { width: 3; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; radius: 2; color: window.info.width ? "#6fdbb8" : "#344454" }
+                        border.color: drop.containsDrag ? "#177F68" : "#DCE4E9"
+                        Rectangle { width: 3; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; radius: 2; color: window.info.width ? "#177F68" : "#778895" }
                         DropArea {
                             id: drop
                             anchors.fill: parent
@@ -451,9 +452,9 @@ ApplicationWindow {
                                 Label { text: qsTr("导入视频"); font.bold: true; font.pixelSize: 15; Layout.fillWidth: true }
                                 ActionButton { text: qsTr("选择文件"); primary: true; enabled: processingAvailable && !window.active; onClicked: sourceDialog.open() }
                             }
-                            Label { text: processingAvailable && studio.source ? studio.source : qsTr("将一个视频拖到这里，或选择文件"); elide: Text.ElideMiddle; Layout.fillWidth: true; color: "#c2d0dd" }
-                            Label { visible: !!window.info.width; text: (window.info.width || 0) + " × " + (window.info.height || 0) + "   ·   " + (window.info.rate || "—") + " FPS   ·   " + (window.info.codec || "") + "   ·   " + (window.info.depth || 0) + "-bit"; color: "#97a8ba"; font.pixelSize: 12 }
-                            Label { visible: !!window.info.color; text: window.info.color || ""; color: "#7fa2be"; font.pixelSize: 11 }
+                            Label { text: processingAvailable && studio.source ? studio.source : qsTr("将一个视频拖到这里，或选择文件"); elide: Text.ElideMiddle; Layout.fillWidth: true; color: "#506578" }
+                            Label { visible: !!window.info.width; text: (window.info.width || 0) + " × " + (window.info.height || 0) + "   ·   " + (window.info.rate || "—") + " FPS   ·   " + (window.info.codec || "") + "   ·   " + (window.info.depth || 0) + "-bit"; color: "#6B7E8E"; font.pixelSize: 12 }
+                            Label { visible: !!window.info.color; text: window.info.color || ""; color: "#507F9B"; font.pixelSize: 11 }
                             ActionButton {
                                 objectName: "studioMediaDetailsToggle"
                                 visible: Number(window.info.streams || 0) > 0
@@ -467,7 +468,7 @@ ApplicationWindow {
                             Label {
                                 visible: window.mediaDetailsOpen && !!window.info.containerSummary
                                 text: window.info.containerSummary || ""
-                                color: "#9aaac0"
+                                color: "#697B8B"
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
                                 textFormat: Text.PlainText
@@ -481,7 +482,7 @@ ApplicationWindow {
                                     objectName: "studioMediaStreamDetail"
                                     Layout.fillWidth: true
                                     implicitHeight: streamInfoLayout.implicitHeight + 16
-                                    color: "#101722"
+                                    color: "#F3F6F8"
                                     radius: 7
                                     ColumnLayout {
                                         id: streamInfoLayout
@@ -489,9 +490,9 @@ ApplicationWindow {
                                         anchors.margins: 8
                                         spacing: 3
                                         Label { text: modelData.heading || ""; font.bold: true; font.pixelSize: 12; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                                        Label { text: modelData.summary || ""; color: "#c4d1e4"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                                        Label { visible: !!modelData.color; text: modelData.color || ""; color: "#9aaac0"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                                        Label { visible: !!modelData.metadata; text: modelData.metadata || ""; color: "#9aaac0"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { text: modelData.summary || ""; color: "#52697A"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { visible: !!modelData.color; text: modelData.color || ""; color: "#697B8B"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { visible: !!modelData.metadata; text: modelData.metadata || ""; color: "#697B8B"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                     }
                                 }
                             }
@@ -500,8 +501,8 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         radius: 13
-                        color: "#101923"
-                        border.color: "#202f3d"
+                        color: "#F5F8F9"
+                        border.color: "#DCE4E9"
                         implicitHeight: studioProfiles.implicitHeight + 24
                         LocalProfilePicker {
                             id: studioProfiles
@@ -519,8 +520,8 @@ ApplicationWindow {
                         Rectangle {
                             Layout.fillWidth: true
                             radius: 13
-                            color: "#111b26"
-                            border.color: "#263746"
+                            color: "#F8FAFB"
+                            border.color: "#DCE4E9"
                             implicitHeight: settingsContent.implicitHeight + 28
                             ColumnLayout {
                                 id: settingsContent
@@ -544,8 +545,8 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         radius: 13
-                        color: "#111b26"
-                        border.color: "#263746"
+                        color: "#F8FAFB"
+                        border.color: "#DCE4E9"
                         implicitHeight: outputContent.implicitHeight + 20
                         ColumnLayout {
                             id: outputContent
@@ -637,7 +638,7 @@ ApplicationWindow {
                                     : encoder.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
                                     : encoder.currentIndex === 4 ? qsTr("NVENC 恒定质量使用 VBR + CQ（0–51），需要可用的 NVIDIA 视频编码驱动；较低 CQ 通常会生成更大的文件。")
                                     : qsTr("自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。")
-                                color: "#9aaac0"
+                                color: "#697B8B"
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
@@ -662,7 +663,7 @@ ApplicationWindow {
                                 Label {
                                     Layout.fillWidth: true
                                     text: window.selectedModelDisplayName || qsTr("尚未选择已校验模型")
-                                    color: window.selectedModelVerified ? "#9ee6c8" : "#f0c98a"
+                                    color: window.selectedModelVerified ? "#16836B" : "#A66C13"
                                     elide: Text.ElideRight
                                 }
                                 ActionButton { text: qsTr("打开模型中心"); enabled: !window.active; onClicked: window.currentPage = 3 }
@@ -697,9 +698,9 @@ ApplicationWindow {
                                     onValueModified: { window.cutMeanDifference = value / 100; window.persistLocalDefaults() }
                                 }
                             }
-                            Label { text: qsTr("较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
-                            Label { text: qsTr("模型必须先在本地模型中心通过完整性校验，再设为默认模型。色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库只从本机目录读取。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
-                            Label { text: qsTr("推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
+                            Label { text: qsTr("较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#697B8B"; font.pixelSize: 12 }
+                            Label { text: qsTr("模型必须先在本地模型中心通过完整性校验，再设为默认模型。色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库只从本机目录读取。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#697B8B"; font.pixelSize: 12 }
+                            Label { text: qsTr("推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#697B8B"; font.pixelSize: 12 }
                         }
                     }
                     RowLayout {
@@ -729,7 +730,7 @@ ApplicationWindow {
                                 }
                                 return value
                             }
-                            color: "#9aaac0"
+                            color: "#697B8B"
                         }
                         ActionButton { text: qsTr("取消"); visible: processingAvailable && studio.busy; enabled: window.state !== "cancelling"; onClicked: studio.cancel() }
                         ActionButton {
@@ -766,7 +767,7 @@ ApplicationWindow {
                                 summary += qsTr(" · 输出验证 %1 秒").arg(seconds("outputValidationSeconds"))
                             return summary
                         }
-                        color: "#91a1b4"
+                        color: "#647685"
                         font.pixelSize: 11
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
@@ -780,7 +781,7 @@ ApplicationWindow {
                         }
                         wrapMode: Text.WrapAnywhere
                         Layout.fillWidth: true
-                        color: window.state === "failed" ? "#ffb3ad" : studio.progressStalled ? "#f0c98a" : "#b9c9dd"
+                        color: window.state === "failed" ? "#B33B44" : studio.progressStalled ? "#A66C13" : "#536A7C"
                         font.pixelSize: 12
                     }
                 }

@@ -122,15 +122,15 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { text: qsTr("任务队列"); font.pixelSize: 27; font.bold: true }
-                Label { text: qsTr("批量导入并持久保存任务。已完成片段会在本机校验和保存；中断后可继续，也可从头重启。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("批量导入并持久保存任务。已完成片段会在本机校验和保存；中断后可继续，也可从头重启。"); color: "#697B8B"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             ActionButton { text: qsTr("重新连接"); visible: !page.queueController.available; onClicked: page.queueController.reconnect() }
         }
         Rectangle {
             Layout.fillWidth: true
             radius: 10
-            color: "#1a2432"
-            border.color: drop.containsDrag ? "#79d6ba" : "#324259"
+            color: "#FFFFFF"
+            border.color: drop.containsDrag ? "#13836B" : "#CBD6DC"
             implicitHeight: importForm.implicitHeight + 28
             DropArea {
                 id: drop
@@ -148,7 +148,7 @@ Item {
                     ActionButton { text: qsTr("选择多个视频"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: filesDialog.open() }
                     ActionButton { text: qsTr("选择文件夹"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: sourceFolderDialog.open() }
                 }
-                Label { text: qsTr("拖入视频文件或文件夹；自动检查媒体轨道和模型支持的色彩格式。重复文件、已有队列输出和输出目录中的已生成文件会跳过。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12 }
+                Label { text: qsTr("拖入视频文件或文件夹；自动检查媒体轨道和模型支持的色彩格式。重复文件、已有队列输出和输出目录中的已生成文件会跳过。"); color: "#697B8B"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12 }
                 LocalProfilePicker {
                     objectName: "queueLocalProfiles"
                     Layout.fillWidth: true
@@ -226,7 +226,7 @@ Item {
                                 : encoderBox.currentIndex === 3 ? qsTr("AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。")
                                 : encoderBox.currentIndex === 4 ? qsTr("NVENC 恒定质量使用 VBR + CQ（0–51），需要可用的 NVIDIA 视频编码驱动；较低 CQ 通常会生成更大的文件。")
                                 : qsTr("自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。")
-                            color: "#9aaac0"
+                            color: "#697B8B"
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -267,7 +267,7 @@ Item {
                         enabled: !page.queueController.busy && !page.queueController.importing
                         onActivated: { page.inferenceBackend = ["auto", "cuda", "tensorrt"][currentIndex]; page.persistDefaults() }
                     }
-                    Label { text: qsTr("FP32 固定；FP16 尚未通过数值与画质验证。"); color: "#9aaac0"; font.pixelSize: 12; Layout.preferredWidth: 260; wrapMode: Text.WordWrap }
+                    Label { text: qsTr("FP32 固定；FP16 尚未通过数值与画质验证。"); color: "#697B8B"; font.pixelSize: 12; Layout.preferredWidth: 260; wrapMode: Text.WordWrap }
                 }
                 RowLayout {
                     visible: page.advancedOpen
@@ -284,7 +284,7 @@ Item {
                         enabled: !page.queueController.busy && !page.queueController.importing
                         onValueModified: { page.cutMeanDifference = value / 100; page.persistDefaults() }
                     }
-                    Label { text: qsTr("较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。"); color: "#9aaac0"; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Label { text: qsTr("较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。"); color: "#697B8B"; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 RowLayout {
                     CheckBox { text: qsTr("扫描子文件夹"); checked: page.recursive; onToggled: page.recursive = checked; enabled: !page.queueController.busy && !page.queueController.importing }
@@ -308,7 +308,7 @@ Item {
             Layout.fillWidth: true
             spacing: 8
             Label { text: qsTr("%1 项").arg(page.queueController.counts.total || 0); font.bold: true; Layout.fillWidth: true }
-            Label { text: qsTr("等待 %1 · 运行 %2 · 完成 %3 · 失败 %4").arg(page.queueController.counts.queued || 0).arg(page.queueController.counts.running || 0).arg(page.queueController.counts.completed || 0).arg(page.queueController.counts.failed || 0); color: "#9aaac0" }
+            Label { text: qsTr("等待 %1 · 运行 %2 · 完成 %3 · 失败 %4").arg(page.queueController.counts.queued || 0).arg(page.queueController.counts.running || 0).arg(page.queueController.counts.completed || 0).arg(page.queueController.counts.failed || 0); color: "#697B8B" }
             ActionButton { objectName: "queueReportButton"; text: qsTr("导出报告"); enabled: page.queueController.available; onClicked: queueReportDialog.open() }
             ActionButton { objectName: "queueStartButton"; text: qsTr("开始队列"); primary: true; enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && (page.queueController.counts.queued || 0) > 0; onClicked: page.queueController.start() }
             ActionButton { objectName: "queuePauseButton"; text: qsTr("暂停"); visible: page.queueController.busy && ["running", "pausing"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "running"; onClicked: page.queueController.pause() }
@@ -319,9 +319,9 @@ Item {
             Layout.fillWidth: true
             visible: page.queueController.detail !== ""
             radius: 8
-            color: page.queueController.state === "error" ? "#3a2428" : "#202d3d"
+            color: page.queueController.state === "error" ? "#F7E5E5" : "#DEE6EB"
             implicitHeight: queueDetail.implicitHeight + 20
-            Label { id: queueDetail; anchors.fill: parent; anchors.margins: 10; text: page.queueController.detail; textFormat: Text.PlainText; wrapMode: Text.WordWrap; color: page.queueController.state === "error" ? "#ffb3ad" : "#c4d1e4"; font.pixelSize: 12 }
+            Label { id: queueDetail; anchors.fill: parent; anchors.margins: 10; text: page.queueController.detail; textFormat: Text.PlainText; wrapMode: Text.WordWrap; color: page.queueController.state === "error" ? "#B33B44" : "#52697A"; font.pixelSize: 12 }
         }
         ListView {
             id: tasksView
@@ -349,8 +349,8 @@ Item {
                 width: tasksView.width
                 implicitHeight: taskCard.implicitHeight + 22
                 radius: 8
-                color: "#1a2432"
-                border.color: taskState === "failed" ? "#73434b" : "#29384d"
+                color: "#FFFFFF"
+                border.color: taskState === "failed" ? "#D58A8D" : "#DFE7EB"
                 ColumnLayout {
                     id: taskCard
                     anchors.fill: parent
@@ -359,8 +359,8 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { text: fileName; font.bold: true; elide: Text.ElideMiddle; Layout.fillWidth: true; textFormat: Text.PlainText }
-                        Label { text: page.statusText(taskState); color: taskState === "failed" ? "#ffb3ad" : taskState === "completed" ? "#79d6ba" : "#c4d1e4"; font.bold: true }
-                        Label { text: targetRate + qsTr(" FPS"); color: "#9aaac0" }
+                        Label { text: page.statusText(taskState); color: taskState === "failed" ? "#B33B44" : taskState === "completed" ? "#13836B" : "#52697A"; font.bold: true }
+                        Label { text: targetRate + qsTr(" FPS"); color: "#697B8B" }
                     }
                     Label {
                         text: {
@@ -379,14 +379,14 @@ Item {
                             }
                             return value
                         }
-                        color: "#9aaac0"
+                        color: "#697B8B"
                         font.pixelSize: 12
                         textFormat: Text.PlainText
                     }
-                    Label { visible: taskState === "failed"; text: errorText; color: "#ffb3ad"; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; font.pixelSize: 12; textFormat: Text.PlainText }
+                    Label { visible: taskState === "failed"; text: errorText; color: "#B33B44"; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; font.pixelSize: 12; textFormat: Text.PlainText }
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: outputPath; elide: Text.ElideMiddle; color: "#8da1bd"; font.pixelSize: 11; Layout.fillWidth: true; textFormat: Text.PlainText }
+                        Label { text: outputPath; elide: Text.ElideMiddle; color: "#6D8193"; font.pixelSize: 11; Layout.fillWidth: true; textFormat: Text.PlainText }
                         ActionButton { objectName: "cancelTaskButton"; text: qsTr("取消任务"); visible: taskState === "queued" || taskState === "running" || taskState === "paused"; enabled: taskState !== "running" || page.queueController.busy; onClicked: page.queueController.cancelTask(taskId) }
                         ActionButton { objectName: "retryTaskButton"; text: qsTr("重试"); visible: taskState === "failed" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.retryTask(taskId) }
                         ActionButton { text: qsTr("从检查点继续"); visible: taskState === "interrupted" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.resumeTask(taskId) }
@@ -399,7 +399,7 @@ Item {
                 anchors.centerIn: parent
                 visible: (page.queueController.counts.total || 0) === 0
                 text: qsTr("队列为空\n导入多个视频或整个文件夹开始处理")
-                color: "#8493aa"
+                color: "#70818F"
                 horizontalAlignment: Text.AlignHCenter
                 lineHeight: 1.5
             }

@@ -7,7 +7,7 @@ import QtMultimedia
 Rectangle {
     id: page
     objectName: "comparisonPage"
-    color: "#0b1018"
+    color: "#F3F6F8"
 
     property url originalSource: ""
     property url processedSource: ""
@@ -152,9 +152,9 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 5
-                Label { text: qsTr("对比预览"); color: "#9ee6c8"; font.pixelSize: 12; font.bold: true }
+                Label { text: qsTr("对比预览"); color: "#16836B"; font.pixelSize: 12; font.bold: true }
                 Label { text: qsTr("同步播放、分屏比较，逐帧检查补帧结果"); font.pixelSize: 27; font.bold: true }
-                Label { text: qsTr("本地播放，不会上传视频。步进速度根据补帧视频的帧率读取。"); color: "#9aaac0"; wrapMode: Text.WordWrap }
+                Label { text: qsTr("本地播放，不会上传视频。步进速度根据补帧视频的帧率读取。"); color: "#697B8B"; wrapMode: Text.WordWrap }
             }
             CheckBox {
                 objectName: "comparisonSync"
@@ -178,13 +178,13 @@ Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 56
                     radius: 10
-                    color: "#151f2c"
-                    border.color: "#263548"
+                    color: "#FFFFFF"
+                    border.color: "#DEE6EA"
                     RowLayout {
                         anchors.fill: parent
                         anchors.margins: 12
                         Label { text: modelData.title; font.bold: true }
-                        Label { text: modelData.name; color: "#9aaac0"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                        Label { text: modelData.name; color: "#697B8B"; elide: Text.ElideMiddle; Layout.fillWidth: true }
                         ActionButton {
                             text: modelData.button
                             onClicked: index === 0 ? originalDialog.open() : processedDialog.open()
@@ -211,7 +211,7 @@ Rectangle {
                 Layout.minimumWidth: 240
                 radius: 12
                 color: "#05080d"
-                border.color: "#263548"
+                border.color: "#DEE6EA"
                 clip: true
                 Label {
                     anchors.left: parent.left
@@ -219,13 +219,13 @@ Rectangle {
                     anchors.margins: 12
                     z: 2
                     text: qsTr("原视频")
-                    color: "#eaf0fa"
-                    background: Rectangle { color: "#990b1018"; radius: 5 }
+                    color: "#DDE5EA"
+                    background: Rectangle { color: "#A80F1818"; radius: 5 }
                     padding: 6
                 }
                 VideoOutput { id: originalVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit; visible: !page.exactPreviewVisible }
                 Image { objectName: "exactOriginalFrameImage"; anchors.fill: parent; visible: page.exactPreviewVisible; source: page.exactPreviewVisible ? comparisonPreview.originalFrameUrl : ""; fillMode: Image.PreserveAspectFit; cache: false; asynchronous: false }
-                Label { anchors.centerIn: parent; visible: !originalPlayer.hasVideo; text: qsTr("选择视频以开始预览"); color: "#8493aa" }
+                Label { anchors.centerIn: parent; visible: !originalPlayer.hasVideo; text: qsTr("选择视频以开始预览"); color: "#DDE5EA" }
             }
             Rectangle {
                 Layout.fillWidth: true
@@ -233,7 +233,7 @@ Rectangle {
                 Layout.minimumWidth: 240
                 radius: 12
                 color: "#05080d"
-                border.color: "#263548"
+                border.color: "#DEE6EA"
                 clip: true
                 Label {
                     anchors.left: parent.left
@@ -241,13 +241,13 @@ Rectangle {
                     anchors.margins: 12
                     z: 2
                     text: qsTr("补帧视频")
-                    color: "#eaf0fa"
-                    background: Rectangle { color: "#990b1018"; radius: 5 }
+                    color: "#DDE5EA"
+                    background: Rectangle { color: "#A80F1818"; radius: 5 }
                     padding: 6
                 }
                 VideoOutput { id: processedVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit; visible: !page.exactPreviewVisible }
                 Image { objectName: "exactProcessedFrameImage"; anchors.fill: parent; visible: page.exactPreviewVisible; source: page.exactPreviewVisible ? comparisonPreview.processedFrameUrl : ""; fillMode: Image.PreserveAspectFit; cache: false; asynchronous: false }
-                Label { anchors.centerIn: parent; visible: !processedPlayer.hasVideo; text: qsTr("选择视频以开始预览"); color: "#8493aa" }
+                Label { anchors.centerIn: parent; visible: !processedPlayer.hasVideo; text: qsTr("选择视频以开始预览"); color: "#DDE5EA" }
             }
         }
 
@@ -272,7 +272,7 @@ Rectangle {
                 enabled: page.originalReady && page.processedReady && (!page.exactPreviewAvailable || !comparisonPreview.busy)
                 onClicked: page.stepFrame(1)
             }
-            Label { text: page.formatTime(originalPlayer.position); color: "#9aaac0"; font.family: "Consolas" }
+            Label { text: page.formatTime(originalPlayer.position); color: "#697B8B"; font.family: "Consolas" }
             Slider {
                 objectName: "comparisonTimeline"
                 Layout.fillWidth: true
@@ -282,8 +282,8 @@ Rectangle {
                 enabled: page.originalReady && page.processedReady
                 onMoved: { page.seek(value); page.scheduleExactPreview(value) }
             }
-            Label { text: page.formatTime(page.durationMs); color: "#9aaac0"; font.family: "Consolas" }
-            Label { text: qsTr("步进 1/%1 秒").arg(Number(page.frameRate).toFixed(3)); color: "#9aaac0"; font.pixelSize: 12 }
+            Label { text: page.formatTime(page.durationMs); color: "#697B8B"; font.family: "Consolas" }
+            Label { text: qsTr("步进 1/%1 秒").arg(Number(page.frameRate).toFixed(3)); color: "#697B8B"; font.pixelSize: 12 }
         }
         Label {
             objectName: "comparisonStatus"
@@ -294,7 +294,7 @@ Rectangle {
                    page.exactPreviewAvailable && comparisonPreview.busy ? qsTr("正在精确解码所选时间的原片与补帧画面…") :
                    page.originalReady && page.processedReady ? qsTr("两路视频按时间戳同步；输出帧率 %1 FPS").arg(Number(page.frameRate).toFixed(3)) : qsTr("请选择原视频和补帧结果"))
             color: (page.exactPreviewAvailable && comparisonPreview.navigationErrorString) ||
-                   (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ? "#ffb3ad" : "#91a1b4"
+                   (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ? "#B33B44" : "#647685"
             wrapMode: Text.WrapAnywhere
         }
     }

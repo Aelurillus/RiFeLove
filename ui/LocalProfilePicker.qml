@@ -84,7 +84,7 @@ Item {
             }
             Label {
                 text: qsTr("只读取或写入本机 JSON 设置文件。")
-                color: "#91a2b8"
+                color: "#657989"
                 font.pixelSize: 11
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
@@ -93,7 +93,7 @@ Item {
         Label {
             visible: picker.message.length > 0
             text: picker.message
-            color: picker.messageIsError ? "#f0c98a" : "#91d9ba"
+            color: picker.messageIsError ? "#A66C13" : "#3D9776"
             font.pixelSize: 11
             Layout.leftMargin: 82
             Layout.fillWidth: true
