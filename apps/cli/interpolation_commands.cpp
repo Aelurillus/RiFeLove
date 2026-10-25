@@ -128,6 +128,9 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             << ",\"model_adapter\":" << jsonString(result.adapterId) << ",\"model_adapter_version\":" << result.adapterVersion
             << ",\"inference_fallback_reason\":" << jsonString(result.inferenceFallbackReason)
             << ",\"encoder_fallback_reason\":" << jsonString(result.encoderFallbackReason) << ",\"target_fps\":" << jsonString(settings.targetRate.toString())
+            << ",\"source_decoder\":" << jsonString(result.sourceDecoder)
+            << ",\"source_decode_acceleration\":" << jsonString(result.sourceDecodeAcceleration)
+            << ",\"source_decode_fallback_reason\":" << jsonString(result.sourceDecodeFallbackReason)
             << ",\"source_frames\":" << result.sourceFrames << ",\"output_frames\":" << result.video.framesSubmitted << ",\"ai_frames\":" << result.aiFrames
             << ",\"original_frames\":" << result.originalFrames << ",\"held_frames\":" << result.heldFrames << ",\"scene_cuts\":" << result.sceneCuts
             << ",\"duplicate_pairs\":" << result.duplicatePairs << ",\"abnormal_pairs\":" << result.abnormalPairs

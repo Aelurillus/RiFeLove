@@ -197,6 +197,8 @@ std::string serializeProgress(const ProcessingEvent& event) {
 std::string serializeResult(const PipelineResult& r) {
     return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},
         {"modelAdapter",{{"id",r.adapterId},{"version",r.adapterVersion}}},{"inferenceFallbackReason",r.inferenceFallbackReason},
+        {"sourceDecoder",r.sourceDecoder},{"sourceDecodeAcceleration",r.sourceDecodeAcceleration},
+        {"sourceDecodeFallbackReason",r.sourceDecodeFallbackReason},
         {"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
         {"aiFrames",r.aiFrames},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
         {"recoveredTimestamps",r.recoveredTimestamps},
@@ -221,7 +223,9 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
     const Json report{
         {"schemaVersion",1},
         {"application",{{"name","RifeLove"},{"ffmpegRuntime",media::MediaEngine::runtimeVersion()}}},
-        {"source",{{"path",context.sourcePath},{"decodedFrames",result.sourceFrames},{"recoveredTimestamps",result.recoveredTimestamps},{"endEvidence",result.sourceEndEvidence}}},
+        {"source",{{"path",context.sourcePath},{"decodedFrames",result.sourceFrames},{"recoveredTimestamps",result.recoveredTimestamps},
+            {"decoder",result.sourceDecoder},{"decodeAcceleration",result.sourceDecodeAcceleration},
+            {"decodeFallbackReason",result.sourceDecodeFallbackReason},{"endEvidence",result.sourceEndEvidence}}},
         {"output",{{"path",context.outputPath},{"targetFrameRate",context.targetFrameRate},{"encoder",result.video.encoder},
             {"submittedFrames",result.video.framesSubmitted},{"videoPackets",result.video.videoPackets},{"copiedPackets",result.video.copiedPackets},
             {"firstTimestamp",result.video.firstTimestamp.toString()},{"endExclusive",result.video.endExclusive.toString()}}},

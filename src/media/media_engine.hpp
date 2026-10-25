@@ -125,8 +125,16 @@ struct DecodeSummary {
     std::size_t recoveredTimestamps = 0;
     std::size_t nonIncreasingTimestamps = 0;
     std::string cadence = "insufficient_data";
+    std::string decoder;
+    std::string acceleration = "software";
+    std::string accelerationFallbackReason;
     std::optional<Rational> firstTimestamp;
     std::optional<Rational> lastTimestamp;
+};
+enum class DecodeAcceleration { software, preferCuda };
+struct DecodeOptions {
+    DecodeAcceleration acceleration = DecodeAcceleration::software;
+    int deviceOrdinal = 0;
 };
 struct DecodedPreviewFrame {
     int width = 0;
@@ -191,7 +199,8 @@ public:
         const EncoderProbeSettings& settings, std::stop_token stop = {});
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
-        const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1, std::stop_token stop = {});
+        const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1,
+        std::stop_token stop = {}, DecodeOptions options = {});
     // Seeks and decodes the nearest presentation frame to an exact rational
     // timestamp. The preview conversion accepts only the validated tagged SDR path.
     [[nodiscard]] static DecodedPreviewFrame decodeFrameNearTime(const std::string& utf8Path,

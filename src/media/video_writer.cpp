@@ -184,7 +184,13 @@ public:
     void write(const DecodedFrame& input, Rational timestamp, Rational duration) {
         detail::checkStopped(stop_);
         if (!input.storage || input.width != codec_->width || input.height != codec_->height) throw std::invalid_argument("generated frame storage or dimensions are invalid");
-        if (!sameColor(input.color, referenceColor_)) throw std::invalid_argument("frame color properties differ from the output color contract");
+        if (!sameColor(input.color, referenceColor_)) {
+            const auto describe = [](const ColorInfo& color) {
+                return color.primaries + "/" + color.transfer + "/" + color.matrix + "/" + color.range;
+            };
+            throw std::invalid_argument("frame color properties differ from the output color contract (frame=" +
+                describe(input.color) + ", output=" + describe(referenceColor_) + ")");
+        }
         const auto pts = ticks(timestamp, codec_->time_base);
         const auto length = ticks(duration, codec_->time_base);
         if (pts == AV_NOPTS_VALUE) throw std::invalid_argument("frame timestamp uses the reserved unknown-timestamp value");

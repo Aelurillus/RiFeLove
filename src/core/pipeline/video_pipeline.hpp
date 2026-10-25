@@ -77,6 +77,9 @@ struct PipelineResult {
     std::size_t recoveredTimestamps;
     std::string modelId;
     std::string backend;
+    std::string sourceDecoder;
+    std::string sourceDecodeAcceleration = "software";
+    std::string sourceDecodeFallbackReason;
     std::string adapterId = "rife-sdr-v1";
     int adapterVersion = 1;
     std::string inferenceFallbackReason;

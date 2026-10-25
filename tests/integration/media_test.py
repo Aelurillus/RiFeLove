@@ -139,6 +139,14 @@ class NativeMediaIntegration(unittest.TestCase):
                 records = self.scan(source)
                 self.assertEqual(records[-1]["event"], "decode_summary")
                 self.assertEqual(records[-1]["frames"], 12)
+                if codec == "h264":
+                    accelerated = [json.loads(line) for line in invoke(CLI, "media-scan", source, "--frames", "--decode", "cuda").stdout.splitlines()]
+                    self.assertEqual(accelerated[-1]["event"], "decode_summary")
+                    self.assertEqual(accelerated[-1]["frames"], 12)
+                    self.assertEqual(accelerated[-1]["decoder"], "h264")
+                    self.assertIn(accelerated[-1]["acceleration"], ("cuda", "software"))
+                    if accelerated[-1]["acceleration"] == "software":
+                        self.assertTrue(accelerated[-1]["acceleration_fallback_reason"])
 
     def test_media_capabilities_open_encoder_contexts_for_source_profile(self):
         report = json.loads(invoke(CLI, "media-capabilities", self.reordered, "--fps", "60000/1001").stdout)

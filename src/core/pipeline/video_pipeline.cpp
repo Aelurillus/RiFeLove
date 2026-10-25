@@ -377,11 +377,14 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         }
         if (previous) pair(*previous,current);
         previous = std::move(current);
-    },encoding.videoStreamIndex,stop);
+    },encoding.videoStreamIndex,stop,{media::DecodeAcceleration::preferCuda,device.info().ordinal});
     const auto decodeWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - decodeStarted).count();
     result.timings.sourceDecodeSeconds = std::max(0.0,decodeWallSeconds - decodeCallbackSeconds);
     result.sourceFrames = decoded.frameCount;
     result.recoveredTimestamps = decoded.recoveredTimestamps;
+    result.sourceDecoder = decoded.decoder;
+    result.sourceDecodeAcceleration = decoded.acceleration;
+    result.sourceDecodeFallbackReason = decoded.accelerationFallbackReason;
     if (!previous) throw std::runtime_error("Source produced no video frames");
     std::optional<Rational> boundary;
     if (previous->source.duration && *previous->source.duration > Rational(0)) boundary = *previous->source.timestamp + *previous->source.duration;

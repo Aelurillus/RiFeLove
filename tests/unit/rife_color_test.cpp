@@ -115,6 +115,13 @@ TEST(RifeColor, NormalizesKnownContainerAndBitstreamBt601SdrTagConflict) {
     EXPECT_EQ(normalized.range, "tv");
     EXPECT_NO_THROW(validateRifeSdrColor(normalized));
 
+    auto hardwareTransferColor = decodedColor;
+    hardwareTransferColor.pixelFormat = "nv12";
+    const auto normalizedHardwareColor = normalizeDecodedSdrColor(hardwareTransferColor, streamColor);
+    EXPECT_EQ(normalizedHardwareColor.pixelFormat, "nv12");
+    EXPECT_EQ(normalizedHardwareColor.transfer, "bt709");
+    EXPECT_EQ(normalizedHardwareColor.matrix, "smpte170m");
+
     auto mismatchedRange = decodedColor; mismatchedRange.range = "pc";
     EXPECT_EQ(normalizeDecodedSdrColor(mismatchedRange, streamColor).range, "pc");
     auto hdr = decodedColor; hdr.transfer = "smpte2084"; hdr.hdrTransfer = true;

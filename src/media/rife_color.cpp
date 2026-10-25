@@ -64,11 +64,14 @@ ColorInfo normalizeDecodedSdrColor(const ColorInfo& decodedColor, const ColorInf
         return decodedColor;
     }
 
-    const bool sameLayout = decodedColor.pixelFormat == streamColor.pixelFormat && decodedColor.bitDepth == streamColor.bitDepth;
+    // Hardware frame transfer can change the host pixel layout (for example,
+    // yuv420p to nv12) without changing the decoded color interpretation.
+    // Reconcile tags independently of layout, but never across bit depths.
+    const bool sameBitDepth = decodedColor.bitDepth == streamColor.bitDepth;
     const bool samePrimariesAndRange = decodedColor.primaries == streamColor.primaries && decodedColor.range == streamColor.range;
     const bool sameBt601Family = isBt601Primaries(decodedColor.primaries) && isBt601Matrix(decodedColor.matrix) &&
         isBt601Matrix(streamColor.matrix) && isBt601SdrTransfer(decodedColor.transfer) && isBt601SdrTransfer(streamColor.transfer);
-    if (!sameLayout || !samePrimariesAndRange || !sameBt601Family || decodedColor.hdrTransfer || streamColor.hdrTransfer ||
+    if (!sameBitDepth || !samePrimariesAndRange || !sameBt601Family || decodedColor.hdrTransfer || streamColor.hdrTransfer ||
         decodedColor.masteringDisplay || streamColor.masteringDisplay || decodedColor.contentLight || streamColor.contentLight)
         return decodedColor;
 

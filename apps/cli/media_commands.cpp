@@ -184,12 +184,18 @@ int runMediaCommand(const std::vector<std::string>& args) {
         if (args.size() < 3) throw std::invalid_argument("media-scan requires INPUT [--frames] [--stream INDEX]");
         bool frames = false;
         int stream = -1;
+        DecodeOptions decodeOptions;
         for (std::size_t i = 3; i < args.size(); ++i) {
             if (args[i] == "--frames") frames = true;
             else if (args[i] == "--stream" && i + 1 < args.size()) {
                 const auto& value = args[++i];
                 const auto [end, status] = std::from_chars(value.data(), value.data() + value.size(), stream);
                 if (status != std::errc{} || end != value.data() + value.size() || stream < 0) throw std::invalid_argument("invalid video stream index");
+            } else if (args[i] == "--decode" && i + 1 < args.size()) {
+                const auto& value = args[++i];
+                if (value == "software") decodeOptions.acceleration = DecodeAcceleration::software;
+                else if (value == "cuda") decodeOptions.acceleration = DecodeAcceleration::preferCuda;
+                else throw std::invalid_argument("--decode must be software or cuda");
             } else throw std::invalid_argument("unknown media-scan option: " + args[i]);
         }
         const auto summary = MediaEngine::decodeVideo(args[2], frames ? std::function<void(const DecodedFrame&)>([](const DecodedFrame& frame) {
@@ -198,10 +204,12 @@ int runMediaCommand(const std::vector<std::string>& args) {
                 << ",\"width\":" << frame.width << ",\"height\":" << frame.height << ",\"color\":";
             writeColor(std::cout, frame.color);
             std::cout << "}\n";
-        }) : std::function<void(const DecodedFrame&)>(), stream);
+        }) : std::function<void(const DecodedFrame&)>(), stream,{},decodeOptions);
         std::cout << "{\"event\":\"decode_summary\",\"frames\":" << summary.frameCount << ",\"cadence\":" << jsonString(summary.cadence)
             << ",\"missing_timestamps\":" << summary.missingTimestamps << ",\"recovered_timestamps\":" << summary.recoveredTimestamps
             << ",\"non_increasing_timestamps\":" << summary.nonIncreasingTimestamps
+            << ",\"decoder\":" << jsonString(summary.decoder) << ",\"acceleration\":" << jsonString(summary.acceleration)
+            << ",\"acceleration_fallback_reason\":" << jsonString(summary.accelerationFallbackReason)
             << ",\"first_pts\":" << number(summary.firstTimestamp) << ",\"last_pts\":" << number(summary.lastTimestamp) << "}\n";
         return 0;
     }

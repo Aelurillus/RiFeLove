@@ -4,16 +4,65 @@
 
 extern "C" {
 #include <libavutil/imgutils.h>
+#include <libavutil/error.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
 
 #include <cmath>
 #include <limits>
+#include <string>
 
 namespace rifelove::media {
+namespace {
+void freeCodecContext(AVCodecContext* value) { avcodec_free_context(&value); }
+void freeBufferReference(AVBufferRef* value) { if (value) av_buffer_unref(&value); }
+void freeDecodedFrame(AVFrame* value) { av_frame_free(&value); }
+
+std::string ffmpegError(int code) {
+    std::array<char, AV_ERROR_MAX_STRING_SIZE> message{};
+    if (av_strerror(code,message.data(),message.size()) < 0) return "FFmpeg error " + std::to_string(code);
+    return message.data();
+}
+
+struct HardwareFormatSelection {
+    bool requested = false;
+    AVPixelFormat format = AV_PIX_FMT_NONE;
+    bool selectedCuda = false;
+    bool selectedSoftware = false;
+};
+
+AVPixelFormat selectDecodeFormat(AVCodecContext* context, const AVPixelFormat* formats) {
+    auto* selection = static_cast<HardwareFormatSelection*>(context->opaque);
+    if (selection && selection->requested) {
+        for (auto current = formats; *current != AV_PIX_FMT_NONE; ++current) {
+            if (*current == selection->format) {
+                selection->selectedCuda = true;
+                return *current;
+            }
+        }
+        selection->selectedSoftware = true;
+        for (auto current = formats; *current != AV_PIX_FMT_NONE; ++current) {
+            const auto* description = av_pix_fmt_desc_get(*current);
+            if (description && !(description->flags & AV_PIX_FMT_FLAG_HWACCEL)) return *current;
+        }
+    }
+    return formats[0];
+}
+
+std::unique_ptr<AVCodecContext, decltype(&freeCodecContext)> makeDecoderContext(
+    const AVCodec* decoder, const AVStream* stream) {
+    std::unique_ptr<AVCodecContext, decltype(&freeCodecContext)> context(avcodec_alloc_context3(decoder),freeCodecContext);
+    if (!context) throw std::bad_alloc();
+    detail::check(avcodec_parameters_to_context(context.get(),stream->codecpar),"configure video decoder");
+    context->pkt_timebase = stream->time_base;
+    return context;
+}
+}
 
 DecodeSummary MediaEngine::decodeVideo(const std::string& path,
-    const std::function<void(const DecodedFrame&)>& onFrame, int streamIndex, std::stop_token stop) {
+    const std::function<void(const DecodedFrame&)>& onFrame, int streamIndex, std::stop_token stop, DecodeOptions options) {
     detail::Input input(path, stop);
     if (streamIndex < 0) streamIndex = av_find_best_stream(input.context, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     detail::check(streamIndex, "find video stream");
@@ -24,18 +73,66 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
     const auto streamColor = detail::color(stream->codecpar);
     const auto* decoder = avcodec_find_decoder(stream->codecpar->codec_id);
     if (!decoder) throw std::runtime_error("no decoder is available for this video codec");
-    auto freeCodec = [](AVCodecContext* p) { avcodec_free_context(&p); };
     auto freePacket = [](AVPacket* p) { av_packet_free(&p); };
-    auto freeFrame = [](AVFrame* p) { av_frame_free(&p); };
-    std::unique_ptr<AVCodecContext, decltype(freeCodec)> context(avcodec_alloc_context3(decoder), freeCodec);
+    auto freeFrame = &freeDecodedFrame;
+    std::unique_ptr<AVCodecContext, decltype(&freeCodecContext)> context(nullptr,freeCodecContext);
     std::unique_ptr<AVPacket, decltype(freePacket)> packet(av_packet_alloc(), freePacket);
     std::unique_ptr<AVFrame, decltype(freeFrame)> frame(av_frame_alloc(), freeFrame);
-    if (!context || !packet || !frame) throw std::bad_alloc();
-    detail::check(avcodec_parameters_to_context(context.get(), stream->codecpar), "configure video decoder");
-    context->pkt_timebase = stream->time_base;
-    detail::check(avcodec_open2(context.get(), decoder, nullptr), "open video decoder");
+    std::unique_ptr<AVFrame, decltype(freeFrame)> hostFrame(av_frame_alloc(),freeFrame);
+    if (!packet || !frame || !hostFrame) throw std::bad_alloc();
+
+    HardwareFormatSelection formatSelection;
+    std::unique_ptr<AVBufferRef,decltype(&freeBufferReference)> hardwareDevice(nullptr,freeBufferReference);
+    std::string accelerationFallbackReason;
+    if (options.acceleration == DecodeAcceleration::preferCuda) {
+        if (options.deviceOrdinal < 0) throw std::invalid_argument("CUDA decode device index must be non-negative");
+        const AVCodecHWConfig* configuration = nullptr;
+        for (int index = 0;; ++index) {
+            const auto* candidate = avcodec_get_hw_config(decoder,index);
+            if (!candidate) break;
+            if (candidate->device_type == AV_HWDEVICE_TYPE_CUDA &&
+                (candidate->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0) {
+                configuration = candidate;
+                break;
+            }
+        }
+        if (!configuration) {
+            accelerationFallbackReason = "selected video decoder has no CUDA hardware configuration";
+        } else {
+            AVBufferRef* createdDevice = nullptr;
+            const auto deviceName = std::to_string(options.deviceOrdinal);
+            const int deviceStatus = av_hwdevice_ctx_create(&createdDevice,configuration->device_type,deviceName.c_str(),nullptr,0);
+            if (deviceStatus < 0) {
+                accelerationFallbackReason = "CUDA video decode device is unavailable: " + ffmpegError(deviceStatus);
+                if (createdDevice) av_buffer_unref(&createdDevice);
+            } else {
+                hardwareDevice.reset(createdDevice);
+                formatSelection = {true,configuration->pix_fmt,false,false};
+                context = makeDecoderContext(decoder,stream);
+                context->hw_device_ctx = av_buffer_ref(hardwareDevice.get());
+                if (!context->hw_device_ctx) {
+                    accelerationFallbackReason = "could not retain the CUDA video decode device";
+                    context.reset();
+                } else {
+                    context->opaque = &formatSelection;
+                    context->get_format = selectDecodeFormat;
+                    const int openStatus = avcodec_open2(context.get(),decoder,nullptr);
+                    if (openStatus < 0) {
+                        accelerationFallbackReason = "CUDA video decoder could not open: " + ffmpegError(openStatus);
+                        context.reset();
+                        formatSelection = {};
+                    }
+                }
+            }
+        }
+    }
+    if (!context) {
+        context = makeDecoderContext(decoder,stream);
+        detail::check(avcodec_open2(context.get(),decoder,nullptr),"open video decoder");
+    }
 
     DecodeSummary summary;
+    summary.decoder = decoder->name ? decoder->name : "unknown";
     std::optional<Rational> previous;
     std::optional<Rational> delta;
     bool variable = false;
@@ -44,15 +141,30 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
     const auto rate = stream->avg_frame_rate.num > 0 && stream->avg_frame_rate.den > 0 ? stream->avg_frame_rate : stream->r_frame_rate;
     const bool hasRate = rate.num > 0 && rate.den > 0;
     bool matchesQuantizedConstantRate = hasRate;
+    bool sawCudaFrame = false;
+    bool sawSoftwareFrame = false;
     auto receive = [&]() {
         for (;;) {
             detail::checkStopped(stop);
             const int status = avcodec_receive_frame(context.get(), frame.get());
             if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) return status;
             detail::check(status, "receive decoded frame");
-            const auto pts = frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+            AVFrame* decodedFrame = frame.get();
+            if (frame->format == formatSelection.format && formatSelection.selectedCuda) {
+                av_frame_unref(hostFrame.get());
+                detail::check(av_hwframe_transfer_data(hostFrame.get(),frame.get(),0),"transfer NVDEC frame to host memory");
+                detail::check(av_frame_copy_props(hostFrame.get(),frame.get()),"copy NVDEC frame properties");
+                decodedFrame = hostFrame.get();
+                sawCudaFrame = true;
+            } else {
+                sawSoftwareFrame = true;
+                if (options.acceleration == DecodeAcceleration::preferCuda &&
+                    accelerationFallbackReason.empty() && !formatSelection.selectedCuda)
+                    accelerationFallbackReason = "decoder selected a software pixel format instead of CUDA";
+            }
+            const auto pts = decodedFrame->best_effort_timestamp != AV_NOPTS_VALUE ? decodedFrame->best_effort_timestamp : decodedFrame->pts;
             const auto observedTimestamp = detail::timestamp(pts, stream->time_base);
-            const auto duration = frame->duration > 0 ? detail::timestamp(frame->duration,stream->time_base) : std::optional<Rational>{};
+            const auto duration = decodedFrame->duration > 0 ? detail::timestamp(decodedFrame->duration,stream->time_base) : std::optional<Rational>{};
             const auto resolution = timestampRecovery.resolve(observedTimestamp,duration);
             const auto timestamp = resolution.timestamp;
             if (!timestamp) ++summary.missingTimestamps;
@@ -75,7 +187,7 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
                 previous = timestamp;
             }
             if (onFrame) {
-                std::shared_ptr<AVFrame> retained(av_frame_clone(frame.get()), freeFrame);
+                std::shared_ptr<AVFrame> retained(av_frame_clone(decodedFrame), freeFrame);
                 if (!retained) throw std::bad_alloc();
                 DecodedFrame output{};
                 output.index = summary.frameCount;
@@ -91,6 +203,7 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
             }
             ++summary.frameCount;
             av_frame_unref(frame.get());
+            av_frame_unref(hostFrame.get());
         }
     };
 
@@ -110,6 +223,15 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
     detail::check(avcodec_send_packet(context.get(), nullptr), "flush video decoder");
     if (receive() != AVERROR_EOF) throw std::runtime_error("decoder did not reach EOF after flushing");
     if (summary.frameCount == 0) throw std::runtime_error("video decoder produced no frames");
+    if (sawCudaFrame && sawSoftwareFrame) {
+        summary.acceleration = "mixed";
+        if (accelerationFallbackReason.empty())
+            accelerationFallbackReason = "decoder returned both CUDA and software frames";
+    }
+    else if (sawCudaFrame) summary.acceleration = "cuda";
+    if (options.acceleration == DecodeAcceleration::preferCuda && formatSelection.selectedSoftware && accelerationFallbackReason.empty())
+        accelerationFallbackReason = "decoder did not negotiate CUDA frames";
+    summary.accelerationFallbackReason = accelerationFallbackReason;
     if (summary.missingTimestamps || summary.nonIncreasingTimestamps) summary.cadence = "invalid_timestamps";
     else if (delta) summary.cadence = variable && !matchesQuantizedConstantRate ? "variable" : "constant";
     return summary;

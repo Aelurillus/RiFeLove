@@ -54,6 +54,20 @@ TEST(MediaEngine, DecodedPixelsRemainOwnedAfterDecoderCloses) {
     EXPECT_EQ(retained.planes[0].data[4], 255);
 }
 
+TEST(MediaEngine, PreferCudaFallsBackForSoftwareOnlyDecoders) {
+    ImageFixture fixture;
+    DecodedFrame retained{};
+    const auto summary = MediaEngine::decodeVideo(fixture.path.string(),
+        [&](const DecodedFrame& frame) { retained = frame; },-1,{},
+        {rifelove::media::DecodeAcceleration::preferCuda,0});
+    EXPECT_EQ(summary.frameCount,1U);
+    EXPECT_EQ(summary.decoder,"ppm");
+    EXPECT_EQ(summary.acceleration,"software");
+    EXPECT_FALSE(summary.accelerationFallbackReason.empty());
+    ASSERT_TRUE(retained.storage);
+    EXPECT_EQ(retained.planes[0].data[0],255);
+}
+
 TEST(MediaEngine, CancellationIsExplicitAndRetainedFramesStayValid) {
     ImageFixture fixture;
     std::stop_source source;

@@ -113,7 +113,7 @@ void usage(std::ostream& out) {
 #ifdef RIFELOVE_HAS_MEDIA
     out << "  rifelove-cli media-probe INPUT\n"
         << "  rifelove-cli media-capabilities INPUT [--fps RATE]\n"
-        << "  rifelove-cli media-scan INPUT [--frames] [--stream INDEX]\n"
+        << "  rifelove-cli media-scan INPUT [--frames] [--stream INDEX] [--decode software|cuda]\n"
         << "  rifelove-cli remux INPUT OUTPUT\n"
         << "  rifelove-cli transcode INPUT OUTPUT [--encoder NAME] [--pixel-format FORMAT] [--bitrate N] [--bframes N] [--option KEY=VALUE] [--allow-precision-loss] [--progress]\n";
 #endif

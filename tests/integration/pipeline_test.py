@@ -49,6 +49,9 @@ class NativeRifePipeline(unittest.TestCase):
         invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=24:duration=0.5",
                "-f","lavfi","-i","sine=frequency=440:sample_rate=48000:duration=0.5",
                "-vf",cls.color,"-c:v","mpeg4","-bf","2","-q:v","3","-c:a","aac",cls.bframes)
+        cls.nvdecSource = cls.root / "nvdec-h264.mp4"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=320x180:rate=30:duration=0.5",
+               "-vf",cls.color,"-fps_mode","cfr","-c:v","libopenh264","-b:v","512k",cls.nvdecSource)
         cls.bt601TagConflict = cls.root / "bt601-container-vui-conflict.mp4"
         invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=5:duration=0.6",
                "-f","lavfi","-i","sine=frequency=330:sample_rate=48000:duration=0.6",
@@ -170,12 +173,21 @@ class NativeRifePipeline(unittest.TestCase):
             },
         }, ensure_ascii=False), encoding="utf-8")
         output = self.root / "profile-60.mkv"
-        response = invoke(CLI, "interpolate", self.bframes, output, "--profile", profile_path, "--progress")
+        response = invoke(CLI, "interpolate", self.nvdecSource, output, "--profile", profile_path, "--encoder", "ffv1", "--progress")
         events = [json.loads(line) for line in response.stdout.splitlines()]
         self.assertEqual(events[-1]["event"], "interpolation_completed")
         self.assertEqual(events[-1]["target_fps"], "60/1")
         self.assertGreater(events[-1]["ai_frames"], 0)
+        self.assertEqual(events[-1]["source_decode_acceleration"], "cuda")
+        self.assertEqual(events[-1]["source_decode_fallback_reason"], "")
         self.verify_timing(output, events[-1])
+        source_pixels, output_pixels = frame_bytes(self.nvdecSource), frame_bytes(output)
+        frame_size = 320 * 180 * 3 // 2
+        self.assertEqual(len(source_pixels), 15 * frame_size)
+        self.assertEqual(len(output_pixels), 30 * frame_size)
+        for index in range(15):
+            self.assertEqual(source_pixels[index * frame_size:(index + 1) * frame_size],
+                             output_pixels[index * 2 * frame_size:(index * 2 + 1) * frame_size])
 
     def test_auto_h264_fallback_and_fractional_mp4_timing(self):
         output = self.root / "auto.mp4"
@@ -211,6 +223,7 @@ class NativeRifePipeline(unittest.TestCase):
 
         output = self.root / "bt601-tag-conflict-output.mkv"
         result,_ = self.run_job(self.bt601TagConflict,output,"10","--encoder","ffv1")
+        self.assertEqual(result["source_decode_acceleration"],"cuda")
         self.verify_timing(output,result)
         self.assertGreater(result["ai_frames"],0)
         output_video = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]
