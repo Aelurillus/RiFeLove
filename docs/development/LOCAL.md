@@ -9,6 +9,7 @@ Run from PowerShell:
 ```powershell
 C:\itzming\rifelove\tools\development\check.ps1
 C:\itzming\rifelove\tools\development\check.ps1 -Preset windows-release
+C:\itzming\rifelove\tools\development\check.ps1 -Preset windows-release -TensorRTRuntimeDirectory C:/itzming/dependences/rifelove-tensorrt-10.9.0.34/onnxruntime-win-x64-gpu-1.22.0/lib
 ```
 
 The script works from any current directory. It uses the existing dependency source cache and disables dependency downloads unless explicitly enabled. It invokes the CMake configure/build/test presets and writes:
@@ -21,6 +22,8 @@ Both are local generated files excluded from Git. SQLite, GoogleTest and applica
 For a new offline build directory, source caches can be supplied using `FETCHCONTENT_SOURCE_DIR_SQLITE3` and `FETCHCONTENT_SOURCE_DIR_GOOGLETEST`. A machine without those sources must first receive copies of the pinned dependency sources or explicitly enable one-time dependency acquisition with `-AllowDependencyDownload`. The normal local check never opts into that download step.
 
 Current presets use MinGW for the core and CLI. The optional native FFmpeg engine has a locally installed, pinned shared-library SDK; see [FFmpeg development](FFMPEG.md). Qt 6.12 and matching MinGW 15.1 MSVCRT now build the desktop locally in a separate directory. Production MSVC/vcpkg and installer validation remain pending. Python is optional for development integration/reference checks, and is not part of the user runtime.
+
+When `-TensorRTRuntimeDirectory` points at the combined, locally installed TensorRT runtime, the check configures CTest to run the native TensorRT FP32 model reference in addition to the CUDA checks. The combined runtime folder must contain the pinned ONNX Runtime and TensorRT/CUDA/cuDNN DLLs; the standalone ONNX Runtime CUDA SDK folder is not enough to initialize TensorRT.
 
 ## Task maintenance
 

@@ -3,7 +3,8 @@ param(
     [ValidateSet('windows-dev', 'windows-release')]
     [string]$Preset = 'windows-dev',
     [switch]$AllowDependencyDownload,
-    [string]$FFmpegRoot = ''
+    [string]$FFmpegRoot = '',
+    [string]$TensorRTRuntimeDirectory = ''
 )
 
 Set-StrictMode -Version Latest
@@ -37,6 +38,7 @@ try {
     $downloadSetting = if ($AllowDependencyDownload) { 'ON' } else { 'OFF' }
     $configureArguments = @('--preset', $Preset, "-DRIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=$downloadSetting")
     if ($FFmpegRoot) { $configureArguments += @('-DRIFELOVE_BUILD_MEDIA=ON', "-DRIFELOVE_FFMPEG_ROOT=$FFmpegRoot") }
+    if ($TensorRTRuntimeDirectory) { $configureArguments += @("-DRIFELOVE_TENSORRT_RUNTIME_DIR=$TensorRTRuntimeDirectory") }
     Invoke-CheckStep -Step 'configure' -Executable 'cmake' -CommandArguments $configureArguments
     Invoke-CheckStep -Step 'build' -Executable 'cmake' -CommandArguments @('--build', '--preset', $Preset)
     Invoke-CheckStep -Step 'test' -Executable 'ctest' -CommandArguments @('--preset', $Preset, '--output-junit', $testReportPath)

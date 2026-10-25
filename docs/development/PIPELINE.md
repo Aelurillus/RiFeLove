@@ -10,13 +10,15 @@ Enable `RIFELOVE_BUILD_MEDIA` and `RIFELOVE_BUILD_ONNX_CUDA` with the pinned loc
 .\build\windows-release\rifelove-cli.exe interpolate input.mkv output.mkv `
   --fps 60000/1001 `
   --model-dir models/cache/rife-4.25-fp32-sdr8-v2 `
-  --runtime-dir C:/itzming/dependences/onnxruntime-win-x64-gpu-1.22.0/lib `
+  --runtime-dir C:/itzming/dependences/rifelove-tensorrt-10.9.0.34/onnxruntime-win-x64-gpu-1.22.0/lib `
   --encoder auto --progress --report output-report.json
 ```
 
 The application does not invoke Python or acquire models. It reads local files, keeps the source intact and refuses an existing output. JSON progress separates target FPS from measured processing FPS. Studio shows cumulative RIFE wait, frame encoding, source decode, source preparation/transfers/color restoration and output validation timings. `--report PATH` atomically writes a no-overwrite JSON sidecar with model/GPU identity, actual encoder and fallback reason, throughput, the same stage timing breakdown, cut/duplicate/abnormal-pair counts and output timing validation. Decoder and validation measurements are separate from time spent in their callbacks. It explicitly marks perceptual quality metrics as unmeasured because no reference video is supplied. Ctrl+C/Ctrl+Break requests cooperative cancellation; final and temporary outputs are absent after the tested cancellation path. Abrupt process-kill cleanup/checkpoint recovery is separate future work.
 
 `queue-report DATABASE [--output JSON]` reads the SQLite queue without creating or changing it. It includes legacy and configured tasks, current states, stored configurations/identities/results, failure reasons, output/AI-frame totals, completed-task aggregate FPS and scene/duplicate/abnormal-motion counters. The desktop Queue page exports the same schema. A report refuses to replace an existing destination; it states that PSNR, SSIM and LPIPS were not measured because no reference video is attached. This is operational evidence, not a substitute for the separate visual-quality matrix.
+
+When TensorRT is installed, `--runtime-dir` must point to the combined runtime folder containing ONNX Runtime 1.22, the TensorRT provider/runtime DLLs and their CUDA/cuDNN dependencies. Passing only the CUDA-only ONNX Runtime SDK folder makes the TensorRT provider unavailable and causes the preferred backend to fall back to ONNX Runtime CUDA FP32.
 
 ## Data and timing contracts
 

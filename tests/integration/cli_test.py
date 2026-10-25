@@ -99,7 +99,8 @@ class LocalCliWorkflow(unittest.TestCase):
         self.assertFalse(report["qualityDiagnostics"]["perceptualMetricsMeasured"])
         self.assertEqual(report["failures"], [{"id": failed["id"], "state": "failed", "error": "test failure"}])
         self.assertEqual(len(report["tasks"]), 2)
-        self.assertEqual(report["tasks"][0]["source"], "完成源.mp4")
+        reported = {task["id"]: task for task in report["tasks"]}
+        self.assertEqual(reported[completed["id"]]["source"], "完成源.mp4")
         with closing(sqlite3.connect(self.database)) as database:
             states = dict(database.execute("SELECT id,state FROM tasks"))
         self.assertEqual(states[completed["id"]], "completed")
