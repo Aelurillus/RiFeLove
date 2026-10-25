@@ -1,4 +1,5 @@
 #include "media/media_engine.hpp"
+#include "media/nvenc_diagnostic.hpp"
 #include "media/video_writer.hpp"
 
 #include <gtest/gtest.h>
@@ -52,6 +53,23 @@ TEST(MediaEngine, DecodedPixelsRemainOwnedAfterDecoderCloses) {
     EXPECT_EQ(retained.color.bitDepth, 8);
     EXPECT_EQ(retained.planes[0].data[0], 255);
     EXPECT_EQ(retained.planes[0].data[4], 255);
+}
+
+TEST(MediaEngine, NvencApiMismatchReportsDriverAndFfmpegRequirements) {
+    const auto mismatch = rifelove::media::findNvencApiMismatch(
+        rifelove::media::NvencApiVersion{12,2},{13,0},"570.0");
+    ASSERT_TRUE(mismatch);
+    const auto reason = rifelove::media::nvencApiMismatchReason(*mismatch);
+    EXPECT_NE(reason.find("Required: 13.0 Found: 12.2"),std::string::npos);
+    EXPECT_NE(reason.find("minimum required Nvidia driver for nvenc is 570.0 or newer"),std::string::npos);
+}
+
+TEST(MediaEngine, NvencApiMismatchIsNotReportedWhenTheDriverIsCompatible) {
+    EXPECT_FALSE(rifelove::media::findNvencApiMismatch(
+        rifelove::media::NvencApiVersion{13,0},{13,0},"570.0"));
+    EXPECT_FALSE(rifelove::media::findNvencApiMismatch(
+        rifelove::media::NvencApiVersion{13,1},{13,0},"570.0"));
+    EXPECT_FALSE(rifelove::media::findNvencApiMismatch(std::nullopt,{13,0},"570.0"));
 }
 
 TEST(MediaEngine, PreferCudaFallsBackForSoftwareOnlyDecoders) {

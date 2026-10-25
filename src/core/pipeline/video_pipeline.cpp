@@ -1,5 +1,6 @@
 #include "core/pipeline/video_pipeline.hpp"
 #include "common/logging.hpp"
+#include "media/nvenc_diagnostic.hpp"
 #include "timeline/timeline.hpp"
 #include <algorithm>
 #include <array>
@@ -173,7 +174,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop); }
             catch (const media::MediaError& error) {
                 if (error.operation() != "open video encoder h264_nvenc" || stop.stop_requested()) throw;
-                fallback = error.what();
+                fallback = media::diagnoseNvencFailure(encoding.encoder,error.what());
             } catch (const std::invalid_argument& error) {
                 if (std::string(error.what()).find("encoder does not support the requested pixel format") == std::string::npos) throw;
                 fallback = error.what();

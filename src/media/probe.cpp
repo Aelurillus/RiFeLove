@@ -1,4 +1,5 @@
 #include "media/ffmpeg_helpers.hpp"
+#include "media/nvenc_diagnostic.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -80,7 +81,7 @@ EncoderCapability MediaEngine::probeEncoderWithSettings(const std::string& name,
         if (!ignoredOption.empty()) throw std::invalid_argument("unsupported encoder option: " + ignoredOption);
         result.contextOpened = true;
     } catch (const std::exception& error) {
-        result.reason = error.what();
+        result.reason = diagnoseNvencFailure(name,error.what());
     }
     return result;
 }

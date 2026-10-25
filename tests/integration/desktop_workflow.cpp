@@ -320,9 +320,15 @@ int main(int argc, char** argv) {
                 encoderCapabilities.contains("libkvazaar") && encoderCapabilities.contains("libaom-av1") &&
                 studio.media().contains("nvencContextOpened") && studio.media().contains("softwareH264ContextOpened"),
             "Studio did not report runtime encoder initialization checks");
-        if (!studio.media().value("nvencContextOpened").toBool() && studio.media().value("softwareH264ContextOpened").toBool())
+        if (!studio.media().value("nvencContextOpened").toBool() && studio.media().value("softwareH264ContextOpened").toBool()) {
             require(studio.detail().contains(QStringLiteral("软件 H.264")) && !studio.detail().contains(QStringLiteral("Function not implemented")),
                 "Studio did not explain its preflight NVENC fallback in user-facing language");
+            const auto nvencReason = encoderCapabilities.value(QStringLiteral("h264_nvenc")).toMap().value(QStringLiteral("reason")).toString();
+            if (nvencReason.contains(QStringLiteral("required nvenc API version"),Qt::CaseInsensitive))
+                require(studio.detail().contains(QStringLiteral("NVENC 驱动接口不兼容：当前提供 API")) &&
+                        studio.detail().contains(QStringLiteral("FFmpeg 需要 API")) && studio.detail().contains(QStringLiteral("驱动")),
+                    "Studio did not show the detected NVENC API and minimum driver versions");
+        }
         require(!button->property("enabled").toBool() &&
                 statusLabel->property("text").toString() == QStringLiteral("所选模型未通过本机校验，请在模型中心检查"),
             "Studio allowed an unverified model path to reach native model loading");
