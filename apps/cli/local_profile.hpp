@@ -19,6 +19,7 @@ struct LocalProfile final {
     std::string container;
     std::string qualityMode;
     std::string inferenceBackend = "auto";
+    double cutMeanDifference = 0.25;
     int bitrateKbps = 8000;
     int quality = 32;
     int gopSize = 120;

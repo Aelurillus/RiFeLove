@@ -1,0 +1,5 @@
+{
+  "retainedDownloads": 2,
+  "releaseStorageBudgetBytes": 9000000000,
+  "notes": "Retain release metadata indefinitely. Keep up to two current OSS archives within the 9 GB safety cap; remove older OSS objects only after publishing the new manifest. Marked major releases also receive a private Storj backup."
+}

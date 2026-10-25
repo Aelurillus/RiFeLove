@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1118">
+  <meta name="description" content="RifeLove 各版本更新记录、发布时间、下载包与校验信息。">
+  <title>更新日志 · RifeLove</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a1118;
+      --panel: #111c26;
+      --panel-soft: #15232f;
+      --line: #263a47;
+      --text: #edf5f3;
+      --muted: #9aacb7;
+      --mint: #9ee6c8;
+      --mint-dark: #16372f;
+      --gold: #e9c98b;
+      --danger: #ffb6aa;
+      font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(ellipse at 14% 0%, rgba(59, 131, 111, .2), transparent 34rem),
+        radial-gradient(ellipse at 100% 25%, rgba(41, 74, 95, .18), transparent 30rem),
+        var(--bg);
+    }
+    a { color: inherit; }
+    .shell { width: min(1040px, calc(100% - 40px)); margin: 0 auto; }
+    .topbar { height: 78px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(153, 181, 187, .14); }
+    .brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; }
+    .brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 13px; color: #08211c; background: var(--mint); font-size: 21px; font-weight: 850; }
+    .brand-name { font-size: 18px; font-weight: 760; letter-spacing: -.3px; }
+    .brand-caption { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 450; letter-spacing: .2px; }
+    .top-link { color: var(--muted); font-size: 13px; text-decoration: none; transition: color .15s ease; }
+    .top-link:hover, .top-link:focus-visible { color: var(--mint); }
+    main { padding: 62px 0 74px; }
+    .eyebrow { color: var(--mint); font-size: 12px; font-weight: 750; letter-spacing: 1.9px; text-transform: uppercase; }
+    h1 { max-width: 760px; margin: 13px 0 12px; font-size: clamp(35px, 6vw, 58px); line-height: 1.07; letter-spacing: -2.2px; }
+    .intro { max-width: 650px; margin: 0; color: #bdccd0; font-size: 16px; line-height: 1.75; }
+    .latest { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; align-items: center; margin: 35px 0 53px; padding: 21px 24px; border: 1px solid rgba(158, 230, 200, .3); border-radius: 16px; background: linear-gradient(110deg, rgba(25, 67, 55, .47), rgba(21, 35, 47, .7)); }
+    .latest-label { margin-bottom: 7px; color: var(--mint); font-size: 11px; font-weight: 750; letter-spacing: 1.3px; text-transform: uppercase; }
+    .latest-version { font-size: 22px; font-weight: 760; }
+    .latest-date { margin-top: 5px; color: #c0d0d0; font-size: 13px; }
+    .latest-status { white-space: nowrap; padding: 8px 12px; border: 1px solid rgba(233, 201, 139, .32); border-radius: 999px; color: var(--gold); background: rgba(62, 50, 29, .33); font-size: 12px; font-weight: 650; }
+    .section-heading { display: flex; align-items: baseline; gap: 12px; margin-bottom: 22px; }
+    h2 { margin: 0; font-size: 21px; letter-spacing: -.35px; }
+    .section-note { color: var(--muted); font-size: 12px; }
+    .release-list { display: grid; gap: 18px; }
+    .release-card { position: relative; overflow: hidden; padding: 26px 28px 27px; border: 1px solid var(--line); border-radius: 17px; background: linear-gradient(145deg, rgba(21, 35, 47, .96), rgba(15, 25, 34, .96)); box-shadow: 0 18px 55px rgba(0, 0, 0, .12); }
+    .release-card::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: linear-gradient(var(--mint), rgba(158, 230, 200, .08)); content: ""; }
+    .release-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .release-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 9px; }
+    .version { color: var(--mint); font-size: 14px; font-weight: 760; letter-spacing: .25px; }
+    .tag { padding: 4px 8px; border: 1px solid #344a56; border-radius: 999px; color: #b7c8cb; background: rgba(255,255,255,.025); font-size: 10px; font-weight: 650; }
+    time { color: var(--muted); font-size: 12px; }
+    h3 { margin: 0; font-size: 20px; line-height: 1.4; letter-spacing: -.35px; }
+    .summary { margin: 11px 0 0; color: #b8c8cc; font-size: 14px; line-height: 1.75; }
+    .release-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .48fr); gap: 25px; margin-top: 22px; padding-top: 19px; border-top: 1px solid rgba(164, 191, 196, .12); }
+    .change-title { margin: 0 0 11px; color: #dbe7e5; font-size: 12px; font-weight: 700; }
+    .highlights { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+    .highlights li { display: grid; grid-template-columns: 9px minmax(0, 1fr); gap: 10px; color: #bdcbd0; font-size: 13px; line-height: 1.62; }
+    .highlights li::before { width: 5px; height: 5px; margin-top: 7px; border-radius: 50%; background: var(--mint); content: ""; }
+    .download-box { align-self: start; padding: 15px; border: 1px solid rgba(153, 181, 187, .16); border-radius: 12px; background: rgba(8, 15, 21, .38); }
+    .download-title { margin: 0 0 10px; color: #dce8e5; font-size: 12px; font-weight: 730; }
+    .download-button { display: flex; min-height: 40px; align-items: center; justify-content: center; padding: 9px 12px; border: 0; border-radius: 9px; color: #09221c; background: var(--mint); font-size: 13px; font-weight: 760; text-decoration: none; transition: background .15s ease, transform .15s ease; }
+    .download-button:hover, .download-button:focus-visible { background: #b4f1d8; transform: translateY(-1px); outline: 2px solid #d4ffed; outline-offset: 2px; }
+    .download-button[aria-disabled="true"] { cursor: not-allowed; color: #98a6ae; background: #26333c; transform: none; }
+    .download-detail { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+    .download-detail strong { color: #c4d3d4; font-weight: 650; }
+    .empty { padding: 32px; border: 1px dashed #38515d; border-radius: 15px; color: var(--muted); text-align: center; }
+    .error { margin: 13px 0 0; color: var(--danger); font-size: 12px; }
+    footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 22px 0 28px; border-top: 1px solid rgba(153, 181, 187, .14); color: #7f929d; font-size: 11px; line-height: 1.6; }
+    @media (max-width: 700px) {
+      .shell { width: min(100% - 28px, 1040px); }
+      .topbar { height: 68px; }
+      main { padding: 43px 0 52px; }
+      h1 { letter-spacing: -1.2px; }
+      .latest { grid-template-columns: minmax(0, 1fr); gap: 15px; margin: 27px 0 40px; padding: 17px; }
+      .latest-status { justify-self: start; }
+      .release-card { padding: 21px 18px 20px; }
+      .release-head { flex-direction: column; }
+      .release-body { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+      .download-box { width: 100%; }
+      footer { flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <header class="shell topbar">
+    <a class="brand" href="./" aria-label="RifeLove 更新日志首页">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span class="brand-name">RifeLove<span class="brand-caption">本地 AI 视频补帧</span></span>
+    </a>
+    <a class="top-link" href="#versions">查看所有版本 <span aria-hidden="true">↓</span></a>
+  </header>
+  <main class="shell">
+    <div class="eyebrow">RIFELOVE · RELEASE NOTES</div>
+    <h1>每个版本，<br>都有清楚的记录。</h1>
+    <p class="intro">查看 RifeLove 的版本号、发布时间、功能变化与下载校验信息。视频处理、模型和任务数据仍保留在本机。</p>
+    <section class="latest" aria-label="最新版本">
+      <div>
+        <div class="latest-label">最新记录</div>
+        <div class="latest-version" id="latestVersion">读取版本中…</div>
+        <div class="latest-date" id="latestDate"></div>
+      </div>
+      <div class="latest-status" id="latestStatus">本机预览</div>
+    </section>
+    <section id="versions" aria-labelledby="versionsTitle">
+      <div class="section-heading">
+        <h2 id="versionsTitle">版本记录</h2>
+        <span class="section-note">按发布时间从新到旧排列</span>
+      </div>
+      <div class="release-list" id="releaseList" aria-live="polite"></div>
+      <p class="error" id="loadError" role="status" hidden></p>
+    </section>
+  </main>
+  <footer class="shell">
+    <span>RifeLove · Windows x64 · 本地处理</span>
+    <span>下载包按保留规则清理；版本号、发布日期和更新记录长期保留。</span>
+  </footer>
+  <script>
+    const dateText = value => {
+      const date = new Date(`${value}T00:00:00`)
+      return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("zh-CN", {year: "numeric", month: "long", day: "numeric"}).format(date)
+    }
+    const appendText = (parent, tag, className, value) => {
+      const element = document.createElement(tag)
+      if (className) element.className = className
+      element.textContent = value || ""
+      parent.append(element)
+      return element
+    }
+    function render(data) {
+      const releases = Array.isArray(data?.releases) ? data.releases : []
+      const list = document.getElementById("releaseList")
+      list.replaceChildren()
+      const latest = releases[0]
+      document.getElementById("latestVersion").textContent = latest ? `v${latest.version}` : "暂无版本记录"
+      document.getElementById("latestDate").textContent = latest ? dateText(latest.date) : ""
+      document.getElementById("latestStatus").textContent = latest?.downloadAvailable ? "可下载" : "开发预览"
+      if (!releases.length) {
+        appendText(list, "div", "empty", "暂无版本记录。发布首个版本后，版本号和日期会显示在这里。")
+        return
+      }
+      for (const release of releases) {
+        const card = document.createElement("article")
+        card.className = "release-card"
+        const head = document.createElement("div")
+        head.className = "release-head"
+        const titleBlock = document.createElement("div")
+        const meta = document.createElement("div")
+        meta.className = "release-meta"
+        appendText(meta, "span", "version", `v${release.version}`)
+        appendText(meta, "span", "tag", release.channel || "正式版本")
+        const date = document.createElement("time")
+        date.dateTime = release.date || ""
+        date.textContent = dateText(release.date || "")
+        meta.append(date)
+        titleBlock.append(meta)
+        appendText(titleBlock, "h3", "", release.title || `RifeLove ${release.version}`)
+        appendText(titleBlock, "p", "summary", release.summary || "此版本没有附带说明。")
+        head.append(titleBlock)
+        card.append(head)
+
+        const body = document.createElement("div")
+        body.className = "release-body"
+        const changes = document.createElement("div")
+        appendText(changes, "p", "change-title", "本次更新")
+        const bullets = document.createElement("ul")
+        bullets.className = "highlights"
+        for (const item of (Array.isArray(release.highlights) ? release.highlights : [])) appendText(bullets, "li", "", item)
+        if (!bullets.children.length) appendText(bullets, "li", "", "版本说明将在发布时补充。")
+        changes.append(bullets)
+        body.append(changes)
+
+        const download = document.createElement("aside")
+        download.className = "download-box"
+        appendText(download, "p", "download-title", "Windows x64 下载")
+        const downloadUrl = release.downloadAvailable ? release.artifact?.downloadUrl : null
+        const link = appendText(download, "a", "download-button", downloadUrl ? "下载此版本" : "暂未提供发行包")
+        link.href = downloadUrl || "#"
+        if (!downloadUrl) {
+          link.setAttribute("aria-disabled", "true")
+          link.setAttribute("tabindex", "-1")
+        }
+        if (downloadUrl) link.rel = "noopener noreferrer"
+        if (release.artifact?.sha256) {
+          appendText(download, "p", "download-detail", "SHA-256")
+          const hash = appendText(download, "p", "download-detail", release.artifact.sha256)
+          hash.setAttribute("aria-label", `SHA-256 ${release.artifact.sha256}`)
+        } else {
+          appendText(download, "p", "download-detail", "当前记录为本机开发预览；尚未发布可移植安装包。")
+        }
+        if (release.artifact?.sizeBytes) {
+          const sizeMiB = (release.artifact.sizeBytes / (1024 * 1024)).toFixed(1)
+          appendText(download, "p", "download-detail", `文件大小：${sizeMiB} MiB`)
+        }
+        if (release.storjBackup) appendText(download, "p", "download-detail", "大版本备份：Storj")
+        body.append(download)
+        card.append(body)
+        list.append(card)
+      }
+    }
+    async function loadReleaseLog() {
+      const local = await fetch("./releases.json", {cache: "no-store"})
+      if (!local.ok) throw new Error("无法读取版本记录")
+      const data = await local.json()
+      render(data)
+    }
+    loadReleaseLog().catch(error => {
+      document.getElementById("latestVersion").textContent = "版本记录暂不可用"
+      document.getElementById("releaseList").replaceChildren()
+      appendText(document.getElementById("releaseList"), "div", "empty", "请稍后重新打开此页面。")
+      const message = document.getElementById("loadError")
+      message.textContent = error?.message || "读取版本记录失败"
+      message.hidden = false
+    })
+  </script>
+</body>
+</html>

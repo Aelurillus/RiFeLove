@@ -17,6 +17,7 @@
 #include <set>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -142,9 +143,9 @@ public:
         });
     }); }
     void saveDefaults(QString rate, QUrl model, QUrl runtime, QUrl output, QString encoder, QString container,
-        QVariantMap encodingOptions, QString inferenceBackend) {
+        QVariantMap encodingOptions, QString inferenceBackend, double cutMeanDifference) {
         if (!settings_) return;
-        const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend);
+        const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
         if (!warning.isEmpty()) post([warning](QueueController& c) { c.detail_ = warning; emit c.changed(); });
     }
     void saveProfile(QString name, QVariantMap values) {
@@ -271,9 +272,11 @@ public:
         }
     }
     void importItems(QList<QUrl> inputs, QUrl output, QString rate, QUrl model, QUrl runtime, QString encoder, QString container,
-        QVariantMap encodingOptions, bool recursive, QString inferenceBackend, std::stop_token stop) {
+        QVariantMap encodingOptions, bool recursive, QString inferenceBackend, double cutMeanDifference, std::stop_token stop) {
         try {
             requireQueue();
+            if (!std::isfinite(cutMeanDifference) || cutMeanDifference < 0.0 || cutMeanDifference > 1.0)
+                throw std::invalid_argument("Scene-cut threshold must be a finite value from zero to one");
             if (!model.isLocalFile() || !runtime.isLocalFile() || (!output.isEmpty() && !output.isLocalFile()))
                 throw std::invalid_argument("Select local model, runtime and output directories");
             ImportRequest request;
@@ -286,6 +289,7 @@ public:
             request.settings.modelDirectory = path(model.toLocalFile()); request.settings.runtimeDirectory = path(runtime.toLocalFile());
             request.settings.settings.targetRate = Rational::parse(utf8(rate));
             request.settings.settings.inferenceBackend = utf8(inferenceBackend);
+            request.settings.settings.scene.cutMeanDifference = cutMeanDifference;
             request.settings.settings.encoding = desktop::makeVideoEncodingSettings(encoder,encodingOptions);
             auto last = std::chrono::steady_clock::now();
             const auto result = importVideos(*queue_,request,stop,[&](std::size_t done, std::size_t total) {
@@ -304,7 +308,7 @@ public:
             }
             if (result.taskIds.empty()) throw std::invalid_argument(utf8(tr("没有找到当前模型可处理的视频。\n") + skipped.join('\n')));
             output = QUrl::fromLocalFile(QString::fromStdWString(result.outputDirectory.wstring()));
-            const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend);
+            const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
             snapshot();
             post([count=result.taskIds.size(),rejected=result.rejected.size(),skipped,warning](QueueController& c) {
                 c.importing_ = false; c.state_ = "ready"; c.detail_ = tr("已加入 %1 个任务。输出使用新文件名。").arg(count);
@@ -420,6 +424,9 @@ private:
         result["container"] = QStringList{"mkv","mp4","mov"}.contains(container) ? container : QString("mkv");
         const auto backend = settings_->value("inferenceBackend","auto").toString();
         result["inferenceBackend"] = QStringList{"auto","cuda","tensorrt"}.contains(backend) ? backend : QString("auto");
+        bool thresholdOk = false;
+        const auto threshold = settings_->value("cutMeanDifference",0.25).toDouble(&thresholdOk);
+        result["cutMeanDifference"] = thresholdOk && std::isfinite(threshold) && threshold >= 0.0 && threshold <= 1.0 ? threshold : 0.25;
         QVariantMap encodingOptions{{"bitrateKbps",settings_->value("encoding/bitrateKbps",8000)},
             {"qualityMode",settings_->value("encoding/qualityMode","bitrate")},
             {"quality",settings_->value("encoding/quality",32)}, {"gopSize",settings_->value("encoding/gopSize",120)}};
@@ -429,14 +436,18 @@ private:
         return result;
     }
     QString writeDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
-        const QString& encoder, const QString& container, const QVariantMap& encodingOptions, const QString& inferenceBackend) {
+        const QString& encoder, const QString& container, const QVariantMap& encodingOptions, const QString& inferenceBackend,
+        double cutMeanDifference) {
         if (!settings_) return tr("默认设置未保存。");
         try { (void)desktop::makeVideoEncodingSettings(encoder,encodingOptions); }
         catch (const std::exception&) { return tr("高级编码参数超出范围或与当前编码器不兼容，默认设置未保存。"); }
         if (!QStringList{"auto","cuda","tensorrt"}.contains(inferenceBackend)) return tr("推理后端选择无效，默认设置未保存。");
+        if (!std::isfinite(cutMeanDifference) || cutMeanDifference < 0.0 || cutMeanDifference > 1.0)
+            return tr("镜头切换阈值必须介于 0 和 1 之间，默认设置未保存。");
         settings_->setValue("rate",rate); settings_->setValue("model",model); settings_->setValue("runtime",runtime);
         if (!output.isEmpty()) settings_->setValue("output",output);
         settings_->setValue("encoder",encoder); settings_->setValue("container",container); settings_->setValue("inferenceBackend",inferenceBackend);
+        settings_->setValue("cutMeanDifference",cutMeanDifference);
         for (auto it = encodingOptions.cbegin(); it != encodingOptions.cend(); ++it) settings_->setValue(QStringLiteral("encoding/") + it.key(),it.value());
         settings_->sync();
         if (settings_->status() != QSettings::NoError) return tr("任务可继续使用，但默认设置未能保存。");
@@ -479,11 +490,11 @@ void QueueController::snapshot(std::vector<UiTaskRow> rows) {
 void QueueController::reconnect() { if (available_ || busy_ || importing_) return; state_ = "loading"; emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->initialize(); },Qt::QueuedConnection); }
 void QueueController::addItems(const QList<QUrl>& sources, const QUrl& output, const QString& rate, const QUrl& model,
     const QUrl& runtime, const QString& encoder, const QString& container, const QVariantMap& encodingOptions, bool recursive,
-    const QString& inferenceBackend) {
+    const QString& inferenceBackend, double cutMeanDifference) {
     if (!available_ || busy_ || importing_) { setError(tr("队列忙碌或尚未连接，请等待当前操作结束。")); return; }
     importing_ = true; state_ = "importing"; detail_.clear(); importCancel_ = std::stop_source(); const auto stop = importCancel_.get_token(); emit changed();
-    QMetaObject::invokeMethod(worker_,[w=worker_,sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,inferenceBackend,stop] {
-        w->importItems(sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,inferenceBackend,stop);
+    QMetaObject::invokeMethod(worker_,[w=worker_,sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,inferenceBackend,cutMeanDifference,stop] {
+        w->importItems(sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,inferenceBackend,cutMeanDifference,stop);
     },Qt::QueuedConnection);
 }
 void QueueController::start() { if (!available_ || busy_ || importing_) return; busy_ = true; state_ = "running"; detail_.clear(); emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->start(); },Qt::QueuedConnection); }
@@ -500,9 +511,10 @@ void QueueController::exportReport(const QUrl& destination) {
     QMetaObject::invokeMethod(worker_,[w=worker_,destination] { w->exportReport(destination); },Qt::QueuedConnection);
 }
 void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
-    const QString& encoder, const QString& container, const QVariantMap& encodingOptions, const QString& inferenceBackend) {
-    if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend] {
-        w->saveDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend);
+    const QString& encoder, const QString& container, const QVariantMap& encodingOptions, const QString& inferenceBackend,
+    double cutMeanDifference) {
+    if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference] {
+        w->saveDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
     },Qt::QueuedConnection);
 }
 void QueueController::saveProfile(const QString& name, const QVariantMap& values) {
@@ -527,7 +539,7 @@ void QueueController::applyProfile(const QString& id) {
     saveDefaults(profile.value("rate","60").toString(),profile.value("model").toUrl(),
         profile.value("runtime").toUrl(),profile.value("output").toUrl(),
         profile.value("encoder","auto").toString(),profile.value("container","mkv").toString(),options,
-        profile.value("inferenceBackend","auto").toString());
+        profile.value("inferenceBackend","auto").toString(),profile.value("cutMeanDifference",0.25).toDouble());
     emit profileApplied(profile);
     emit profileOperationFinished(true,QStringLiteral("apply"));
 }
@@ -567,7 +579,7 @@ void QueueController::setDefaultModel(const QUrl& directory) {
         defaults_.value("output").toUrl(),defaults_.value("encoder","auto").toString(),defaults_.value("container","mkv").toString(),
         {{"bitrateKbps",defaults_.value("bitrateKbps",8000)}, {"qualityMode",defaults_.value("qualityMode","bitrate")},
          {"quality",defaults_.value("quality",32)}, {"gopSize",defaults_.value("gopSize",120)}},
-        defaults_.value("inferenceBackend","auto").toString());
+        defaults_.value("inferenceBackend","auto").toString(),defaults_.value("cutMeanDifference",0.25).toDouble());
 }
 bool QueueController::supportsModelInputProfile(const QUrl& directory, const QString& profile) const {
     if (!directory.isLocalFile() || directory.toLocalFile().isEmpty() || profile.isEmpty()) return false;

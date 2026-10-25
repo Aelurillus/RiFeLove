@@ -1015,6 +1015,14 @@
         <translation>必須使用 TensorRT</translation>
     </message>
     <message>
+        <source>镜头切换阈值</source>
+        <translation>鏡頭切換閾值</translation>
+    </message>
+    <message>
+        <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
+        <translation>較低的值會將更多畫面變化判定為鏡頭切換，並減少跨切鏡補幀。</translation>
+    </message>
+    <message>
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>推論精度目前固定為 FP32。FP16 尚未通過數值與畫質驗證，因此不會用於處理。</translation>
     </message>
@@ -1702,6 +1710,14 @@
     <message>
         <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
         <translation>固定使用 FP32；FP16 尚未通過數值與畫質驗證。</translation>
+    </message>
+    <message>
+        <source>镜头切换阈值</source>
+        <translation>鏡頭切換閾值</translation>
+    </message>
+    <message>
+        <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
+        <translation>較低的值會將更多畫面變化判定為鏡頭切換，並減少跨切鏡補幀。</translation>
     </message>
 </context>
 <context>

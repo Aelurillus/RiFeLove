@@ -10,6 +10,7 @@
 #include <QUrl>
 #include <QUuid>
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace rifelove::desktop {
@@ -18,7 +19,7 @@ std::string utf8(const QString& value) { return value.toUtf8().toStdString(); }
 QStringList knownEncoders() { return {"auto","libopenh264","libkvazaar","libaom-av1","h264_nvenc"}; }
 QStringList knownContainers() { return {"mkv","mp4","mov"}; }
 constexpr auto profileFormat = "rifelove-local-profile";
-constexpr int profileFormatVersion = 2;
+constexpr int profileFormatVersion = 3;
 constexpr qint64 maxProfileFileBytes = 64 * 1024;
 
 QJsonObject profileValuesToJson(const QVariantMap& profile) {
@@ -34,6 +35,7 @@ QJsonObject profileValuesToJson(const QVariantMap& profile) {
         {"container",profile.value("container").toString()}, {"bitrateKbps",profile.value("bitrateKbps").toInt()},
         {"qualityMode",profile.value("qualityMode").toString()}, {"quality",profile.value("quality").toInt()},
         {"inferenceBackend",profile.value("inferenceBackend",QStringLiteral("auto")).toString()},
+        {"cutMeanDifference",profile.value("cutMeanDifference",0.25).toDouble()},
         {"gopSize",profile.value("gopSize").toInt()}};
 }
 
@@ -52,6 +54,7 @@ QVariantMap profileValuesFromJson(const QJsonObject& object, int version) {
     QStringList fields{"name","rate","modelUrl","runtimeUrl","outputUrl","encoder","container",
         "bitrateKbps","qualityMode","quality","gopSize"};
     if (version >= 2) fields.push_back(QStringLiteral("inferenceBackend"));
+    if (version >= 3) fields.push_back(QStringLiteral("cutMeanDifference"));
     for (const auto& key : object.keys())
         if (!fields.contains(key)) throw std::invalid_argument("Profile file contains an unsupported field");
     for (const auto& key : fields)
@@ -60,7 +63,8 @@ QVariantMap profileValuesFromJson(const QJsonObject& object, int version) {
         !object.value("encoder").isString() || !object.value("container").isString() ||
         !object.value("qualityMode").isString() || !object.value("bitrateKbps").isDouble() ||
         !object.value("quality").isDouble() || !object.value("gopSize").isDouble() ||
-        (version >= 2 && !object.value("inferenceBackend").isString()))
+        (version >= 2 && !object.value("inferenceBackend").isString()) ||
+        (version >= 3 && !object.value("cutMeanDifference").isDouble()))
         throw std::invalid_argument("Profile file contains a field with the wrong type");
     return {{"name",object.value("name").toString()}, {"rate",object.value("rate").toString()},
         {"model",localUrlFromJson(object,"modelUrl")}, {"runtime",localUrlFromJson(object,"runtimeUrl")},
@@ -68,6 +72,7 @@ QVariantMap profileValuesFromJson(const QJsonObject& object, int version) {
         {"container",object.value("container").toString()}, {"bitrateKbps",object.value("bitrateKbps").toInt()},
         {"qualityMode",object.value("qualityMode").toString()}, {"quality",object.value("quality").toInt()},
         {"inferenceBackend",version >= 2 ? object.value("inferenceBackend").toString() : QStringLiteral("auto")},
+        {"cutMeanDifference",version >= 3 ? object.value("cutMeanDifference").toDouble() : 0.25},
         {"gopSize",object.value("gopSize").toInt()}};
 }
 
@@ -91,6 +96,7 @@ QVariantMap loadValues(QSettings& settings) {
     values["qualityMode"] = settings.value("qualityMode");
     values["quality"] = settings.value("quality");
     values["inferenceBackend"] = settings.value("inferenceBackend",QStringLiteral("auto"));
+    values["cutMeanDifference"] = settings.value("cutMeanDifference",0.25);
     values["gopSize"] = settings.value("gopSize");
     return values;
 }
@@ -113,10 +119,13 @@ QVariantMap LocalProfileStore::normalize(const QString& rawName, const QVariantM
     const auto encoder = values.value("encoder", QStringLiteral("auto")).toString();
     const auto container = values.value("container", QStringLiteral("mkv")).toString();
     const auto inferenceBackend = values.value("inferenceBackend",QStringLiteral("auto")).toString();
+    const auto cutMeanDifference = values.value("cutMeanDifference",0.25).toDouble();
     if (!knownEncoders().contains(encoder)) throw std::invalid_argument("Profile encoder is not supported");
     if (!knownContainers().contains(container)) throw std::invalid_argument("Profile container is not supported");
     if (!QStringList{"auto","cuda","tensorrt"}.contains(inferenceBackend))
         throw std::invalid_argument("Profile inference backend is not supported");
+    if (!std::isfinite(cutMeanDifference) || cutMeanDifference < 0.0 || cutMeanDifference > 1.0)
+        throw std::invalid_argument("Profile scene-cut threshold must be from zero to one");
 
     QVariantMap options{{"bitrateKbps",values.value("bitrateKbps",8000)},
         {"qualityMode",values.value("qualityMode",QStringLiteral("bitrate"))},
@@ -126,7 +135,8 @@ QVariantMap LocalProfileStore::normalize(const QString& rawName, const QVariantM
 
     QVariantMap result{{"name",name},{"rate",rate},{"model",values.value("model",QUrl())},
         {"runtime",values.value("runtime",QUrl())},{"output",values.value("output",QUrl())},
-        {"encoder",encoder},{"container",container},{"inferenceBackend",inferenceBackend}};
+        {"encoder",encoder},{"container",container},{"inferenceBackend",inferenceBackend},
+        {"cutMeanDifference",cutMeanDifference}};
     for (auto it = options.cbegin(); it != options.cend(); ++it) result[it.key()] = it.value();
     return result;
 }
@@ -233,7 +243,7 @@ QString LocalProfileStore::importFromFile(const QString& localPath) {
     const auto root = document.object();
     const int version = root.value("version").toInt(-1);
     if (root.value("format").toString() != QString::fromLatin1(profileFormat) ||
-        (version != 1 && version != profileFormatVersion) || !root.value("profile").isObject())
+        (version < 1 || version > profileFormatVersion) || !root.value("profile").isObject())
         throw std::invalid_argument("The local profile file format or version is not supported");
     const auto values = profileValuesFromJson(root.value("profile").toObject(),version);
     const auto normalized = normalize(values.value("name").toString(),values);

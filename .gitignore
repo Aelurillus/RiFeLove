@@ -4,6 +4,9 @@
 /models/weights/
 /models/engines/
 /models/cache/
+/release-site/dist/
+/release-site/node_modules/
+/release-site/.wrangler/
 *.user
 *.suo
 *.log

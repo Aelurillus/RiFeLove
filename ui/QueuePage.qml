@@ -15,6 +15,7 @@ Item {
     property string targetRate: "60"
     property string encoder: "auto"
     property string inferenceBackend: "auto"
+    property real cutMeanDifference: 0.25
     property string container: "mkv"
     property bool recursive: false
     property bool advancedOpen: false
@@ -36,6 +37,8 @@ Item {
         if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
         inferenceBackend = ["auto", "cuda", "tensorrt"].includes(values.inferenceBackend) ? values.inferenceBackend : "auto"
+        const threshold = Number(values.cutMeanDifference)
+        cutMeanDifference = Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : 0.25
         encodingBitrate.value = Number(values.bitrateKbps || 8000)
         encodingQuality.value = Number(values.quality || 32)
         encodingGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
@@ -58,19 +61,20 @@ Item {
         return {rate: rateBox.editText, model: modelFolder, runtime: runtimeFolder,
             output: outputFolder, encoder: encoder, container: containerBox.currentText || "mkv",
             bitrateKbps: options.bitrateKbps, qualityMode: options.qualityMode,
-            quality: options.quality, gopSize: options.gopSize, inferenceBackend: inferenceBackend}
+            quality: options.quality, gopSize: options.gopSize, inferenceBackend: inferenceBackend,
+            cutMeanDifference: cutMeanDifference}
     }
     function add(sources) {
         if (!sources || sources.length === 0) return
         selectedSources = sources
         queueController.addItems(sources, outputFolder, rateBox.editText, modelFolder, runtimeFolder,
-                                 encoder, container, encodingOptions(), recursive, inferenceBackend)
+                                 encoder, container, encodingOptions(), recursive, inferenceBackend, cutMeanDifference)
         selectedSources = []
     }
     function persistDefaults() {
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
-            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions(), inferenceBackend)
+            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference)
     }
     function statusText(value) {
         const labels = {queued: qsTr("等待处理"), running: qsTr("正在处理"), paused: qsTr("已暂停"),
@@ -264,6 +268,23 @@ Item {
                         onActivated: { page.inferenceBackend = ["auto", "cuda", "tensorrt"][currentIndex]; page.persistDefaults() }
                     }
                     Label { text: qsTr("FP32 固定；FP16 尚未通过数值与画质验证。"); color: "#9aaac0"; font.pixelSize: 12; Layout.preferredWidth: 260; wrapMode: Text.WordWrap }
+                }
+                RowLayout {
+                    visible: page.advancedOpen
+                    Layout.fillWidth: true
+                    Label { text: qsTr("镜头切换阈值"); Layout.preferredWidth: 110 }
+                    SpinBox {
+                        objectName: "queueCutMeanDifference"
+                        from: 0
+                        to: 100
+                        stepSize: 1
+                        value: Math.round(page.cutMeanDifference * 100)
+                        textFromValue: function(value, locale) { return value + "%" }
+                        valueFromText: function(text, locale) { return Number(text.replace("%", "")) }
+                        enabled: !page.queueController.busy && !page.queueController.importing
+                        onValueModified: { page.cutMeanDifference = value / 100; page.persistDefaults() }
+                    }
+                    Label { text: qsTr("较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。"); color: "#9aaac0"; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 RowLayout {
                     CheckBox { text: qsTr("扫描子文件夹"); checked: page.recursive; onToggled: page.recursive = checked; enabled: !page.queueController.busy && !page.queueController.importing }

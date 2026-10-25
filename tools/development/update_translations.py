@@ -319,6 +319,8 @@ TensorRT 未能启动，已使用 ONNX Runtime CUDA 完成推理。|TensorRT cou
 界面语言已保存；关闭并重新启动 RifeLove 后生效。|Language saved. Restart RifeLove to apply it.|介面語言已儲存；關閉並重新啟動 RifeLove 後生效。|言語設定を保存しました。RifeLove を再起動すると反映されます。
 界面语言设置只保存在本机。|The interface language setting is stored only on this device.|介面語言設定只會儲存在本機。|表示言語の設定はこの PC にのみ保存されます。
 推理后端|Inference backend|推理後端|推論バックエンド
+镜头切换阈值|Scene-cut threshold|鏡頭切換閾值|シーン切り替えしきい値
+较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。|Lower values detect more scene changes and reduce interpolation across cuts.|較低的值會將更多畫面變化判定為鏡頭切換，並減少跨切鏡補幀。|値を低くすると、より多くの画面変化をカットとして扱い、カットをまたぐ補間を減らします。
 自动：TensorRT 优先，失败时回退 CUDA|Automatic: prefer TensorRT and fall back to CUDA|自動：優先使用 TensorRT，失敗時回退至 CUDA|自動：TensorRT を優先し、失敗時は CUDA に切り替え
 仅 ONNX Runtime CUDA|ONNX Runtime CUDA only|僅使用 ONNX Runtime CUDA|ONNX Runtime CUDA のみ
 必须使用 TensorRT|Require TensorRT|必須使用 TensorRT|TensorRT を必須にする

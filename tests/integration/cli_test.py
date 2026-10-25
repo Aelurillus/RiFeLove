@@ -137,13 +137,14 @@ class LocalCliWorkflow(unittest.TestCase):
         source.write_bytes(b"synthetic queue source")
         profile = Path(self.directory.name) / "电影 配置.json"
         profile.write_text(json.dumps({
-            "format": "rifelove-local-profile", "version": 2,
+            "format": "rifelove-local-profile", "version": 3,
             "profile": {
                 "name": "中文 电影", "rate": "120", "modelUrl": model.as_uri(),
                 "runtimeUrl": runtime.as_uri(), "outputUrl": output_folder.as_uri(),
                 "encoder": "h264_nvenc", "container": "mkv", "bitrateKbps": 8000,
                 "qualityMode": "cq", "quality": 19, "gopSize": 90,
                 "inferenceBackend": "cuda",
+                "cutMeanDifference": 0.41,
             },
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -156,6 +157,17 @@ class LocalCliWorkflow(unittest.TestCase):
         self.assertEqual(Path(summary["output_location"]), output_folder.resolve())
         self.assertEqual(summary["quality_mode"], "cq")
         self.assertEqual(summary["inference_backend"], "cuda")
+        self.assertEqual(summary["version"], 3)
+        self.assertAlmostEqual(summary["cut_mean_difference"], 0.41)
+
+        version_two = Path(self.directory.name) / "旧版电影配置.json"
+        legacy_data = json.loads(profile.read_text(encoding="utf-8"))
+        legacy_data["version"] = 2
+        legacy_data["profile"].pop("cutMeanDifference")
+        version_two.write_text(json.dumps(legacy_data, ensure_ascii=False), encoding="utf-8")
+        legacy_summary = json.loads(self.run_cli("profile-check", version_two).stdout)
+        self.assertEqual(legacy_summary["version"], 3)
+        self.assertAlmostEqual(legacy_summary["cut_mean_difference"], 0.25)
 
         output = output_folder / "补帧.mkv"
         first = json.loads(self.run_cli("queue-add", self.database, source, output, "--profile", profile,
@@ -170,6 +182,7 @@ class LocalCliWorkflow(unittest.TestCase):
         self.assertEqual(configuration["encoding"]["gopSize"], 60)
         self.assertEqual(configuration["encoding"]["options"], {"rc": "vbr", "cq": "19"})
         self.assertEqual(configuration["inferenceBackend"], "cuda")
+        self.assertAlmostEqual(configuration["scene"]["cutMeanDifference"], 0.41)
 
         override_output = output_folder / "覆盖.mkv"
         second = json.loads(self.run_cli("queue-add", self.database, source, override_output, "--profile", profile,

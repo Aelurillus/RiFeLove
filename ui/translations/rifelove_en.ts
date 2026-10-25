@@ -1015,6 +1015,14 @@
         <translation>Require TensorRT</translation>
     </message>
     <message>
+        <source>镜头切换阈值</source>
+        <translation>Scene-cut threshold</translation>
+    </message>
+    <message>
+        <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
+        <translation>Lower values detect more scene changes and reduce interpolation across cuts.</translation>
+    </message>
+    <message>
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>Inference precision is fixed to FP32. FP16 has not passed numerical and image-quality validation, so it is not used for processing.</translation>
     </message>
@@ -1702,6 +1710,14 @@ Import multiple videos or a folder to get started</translation>
     <message>
         <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
         <translation>FP32 only; FP16 has not passed numerical and image-quality validation.</translation>
+    </message>
+    <message>
+        <source>镜头切换阈值</source>
+        <translation>Scene-cut threshold</translation>
+    </message>
+    <message>
+        <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
+        <translation>Lower values detect more scene changes and reduce interpolation across cuts.</translation>
     </message>
 </context>
 <context>

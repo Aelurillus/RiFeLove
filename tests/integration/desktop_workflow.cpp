@@ -207,7 +207,9 @@ int main(int argc, char** argv) {
         auto* queueRate = root->findChild<QObject*>("queueTargetRate");
         auto* studioBackend = root->findChild<QObject*>("studioInferenceBackend");
         auto* queueBackend = queuePage ? queuePage->findChild<QObject*>("queueInferenceBackend") : nullptr;
-        require(queuePage && queueRate && studioBackend && queueBackend && root->findChild<QObject*>("studioLocalProfiles") &&
+        auto* studioCutThreshold = root->findChild<QObject*>("studioCutMeanDifference");
+        auto* queueCutThreshold = queuePage ? queuePage->findChild<QObject*>("queueCutMeanDifference") : nullptr;
+        require(queuePage && queueRate && studioBackend && queueBackend && studioCutThreshold && queueCutThreshold && root->findChild<QObject*>("studioLocalProfiles") &&
                 queuePage->findChild<QObject*>("queueLocalProfiles") &&
                 root->findChild<QObject*>("localProfileImportButton") &&
                 root->findChild<QObject*>("localProfileExportButton") &&
@@ -219,7 +221,8 @@ int main(int argc, char** argv) {
             {"model",QUrl::fromLocalFile(arguments[3])},{"runtime",QUrl::fromLocalFile(arguments[4])},
             {"output",QUrl::fromLocalFile(queueFolder)},{"encoder",QStringLiteral("libopenh264")},
             {"container",QStringLiteral("mkv")},{"bitrateKbps",5500},{"qualityMode",QStringLiteral("bitrate")},
-            {"quality",32},{"gopSize",90},{"inferenceBackend",QStringLiteral("cuda")}};
+            {"quality",32},{"gopSize",90},{"inferenceBackend",QStringLiteral("cuda")},
+            {"cutMeanDifference",0.41}};
         taskQueue.saveProfile(QStringLiteral("Desktop Workflow Profile"),workflowProfile);
         QVariantMap savedProfile;
         waitUntil([&] {
@@ -261,8 +264,10 @@ int main(int argc, char** argv) {
                 queueRate->property("editText").toString() == QStringLiteral("144") &&
                 root->property("selectedEncoderId").toString() == QStringLiteral("libopenh264") &&
                 root->property("inferenceBackend").toString() == QStringLiteral("cuda") &&
+                std::abs(root->property("cutMeanDifference").toDouble() - 0.41) < 1e-12 &&
                 studioBackend->property("currentIndex").toInt() == 1 && queuePage->property("inferenceBackend").toString() == QStringLiteral("cuda") &&
                 queueBackend->property("currentIndex").toInt() == 1 &&
+                studioCutThreshold->property("value").toInt() == 41 && queueCutThreshold->property("value").toInt() == 41 &&
                 queuePage->property("outputFolder").toUrl().toLocalFile() == queueFolder,
             "Applying a local profile did not update both Studio and Queue settings");
         taskQueue.removeProfile(savedProfile.value("id").toString());
@@ -270,9 +275,10 @@ int main(int argc, char** argv) {
             "The desktop did not remove the local processing profile");
         taskQueue.saveDefaults(QStringLiteral("240"),QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),
             QUrl::fromLocalFile(queueFolder),QStringLiteral("libopenh264"),QStringLiteral("mp4"),
-            {{"bitrateKbps",4500},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",60}},QStringLiteral("auto"));
+            {{"bitrateKbps",4500},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",60}},QStringLiteral("auto"),0.73);
         waitUntil([&] { return taskQueue.defaults().value("rate").toString() == QStringLiteral("240") &&
-            taskQueue.defaults().value("container").toString() == QStringLiteral("mp4"); },
+            taskQueue.defaults().value("container").toString() == QStringLiteral("mp4") &&
+            std::abs(taskQueue.defaults().value("cutMeanDifference").toDouble() - 0.73) < 1e-12; },
             "The desktop did not restore its defaults after the profile workflow");
         // Confirm restoration above, then keep the synthetic workflow short.
         require(targetRate->setProperty("editText","60"), "Could not set the synthetic workflow FPS");
@@ -537,6 +543,7 @@ int main(int argc, char** argv) {
         require(reopened.available() && reopened.defaults().value("rate").toString() == "60" &&
                 reopened.defaults().value("bitrateKbps").toInt() == 3200 && reopened.defaults().value("gopSize").toInt() == 48 &&
                 reopened.defaults().value("inferenceBackend").toString() == "cuda" &&
+                std::abs(reopened.defaults().value("cutMeanDifference").toDouble() - 0.25) < 1e-12 &&
                 QFileInfo(reopened.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("runtime").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[4]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("output").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(queueFolder).absoluteFilePath(),

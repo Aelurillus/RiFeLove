@@ -189,15 +189,25 @@ if(RIFELOVE_BUILD_MEDIA AND RIFELOVE_BUILD_ONNX_CUDA)
 endif()
 
 if(RIFELOVE_BUILD_DESKTOP)
-  find_package(Qt6 QUIET COMPONENTS Quick QuickControls2 Multimedia)
+  find_package(Qt6 QUIET COMPONENTS Quick QuickControls2 Multimedia Svg)
   if(Qt6_FOUND)
     qt_standard_project_setup(REQUIRES 6.8)
+    if(WIN32)
+      enable_language(RC)
+    endif()
     add_library(rifelove_localization apps/desktop/language_settings.cpp apps/desktop/language_settings.hpp)
     target_include_directories(rifelove_localization PUBLIC apps/desktop)
     target_link_libraries(rifelove_localization PUBLIC Qt6::Core)
     qt_add_executable(rifelove-desktop WIN32 apps/desktop/main.cpp)
+    if(WIN32)
+      target_sources(rifelove-desktop PRIVATE apps/desktop/rifelove.rc)
+    endif()
     set_target_properties(rifelove-desktop PROPERTIES OUTPUT_NAME "RifeLove")
     qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/LocalProfilePicker.qml ui/ProgressEstimate.js ui/ActionButton.qml)
+    set_source_files_properties(ui/assets/rifelove-icon.svg PROPERTIES QT_RESOURCE_ALIAS "rifelove-icon.svg")
+    qt_add_resources(rifelove-desktop rifelove_icon_resources
+      PREFIX "/rifelove/assets"
+      FILES ui/assets/rifelove-icon.svg)
     get_filename_component(rifelove_qt_root "${Qt6_DIR}/../../../" ABSOLUTE)
     find_program(RIFELOVE_LRELEASE_EXECUTABLE NAMES lrelease.exe lrelease HINTS "${rifelove_qt_root}/bin" REQUIRED)
     set(rifelove_translation_sources
@@ -222,7 +232,7 @@ if(RIFELOVE_BUILD_DESKTOP)
       PREFIX "/rifelove/i18n"
       FILES ${rifelove_translation_outputs})
     target_link_libraries(rifelove-desktop PRIVATE rifelove_localization)
-    target_link_libraries(rifelove-desktop PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia rifelove_core)
+    target_link_libraries(rifelove-desktop PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Svg rifelove_core)
     if(TARGET rifelove_application)
       add_library(rifelove_studio apps/desktop/studio_controller.cpp apps/desktop/studio_controller.hpp
         apps/desktop/queue_controller.cpp apps/desktop/queue_controller.hpp apps/desktop/profile_store.cpp apps/desktop/profile_store.hpp

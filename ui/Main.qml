@@ -30,6 +30,7 @@ ApplicationWindow {
     property url modelFolder: ""
     property url runtimeFolder: ""
     property string inferenceBackend: "auto"
+    property real cutMeanDifference: 0.25
     property bool advancedOpen: false
     property bool encodingAdvancedOpen: false
     property bool mediaDetailsOpen: false
@@ -100,6 +101,8 @@ ApplicationWindow {
         if (values.rate) rate.editText = values.rate
         if (values.encoder) encoder.currentIndex = window.encoderIds.indexOf(values.encoder)
         inferenceBackend = ["auto", "cuda", "tensorrt"].includes(values.inferenceBackend) ? values.inferenceBackend : "auto"
+        const threshold = Number(values.cutMeanDifference)
+        cutMeanDifference = Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : 0.25
         studioBitrate.value = Number(values.bitrateKbps || 8000)
         studioQuality.value = Number(values.quality || 32)
         studioGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
@@ -133,7 +136,7 @@ ApplicationWindow {
     function persistLocalDefaults() {
         if (!processingAvailable) return
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
-            window.selectedEncoderId, taskQueue.defaults.container || "mkv", encodingOptions(), inferenceBackend)
+            window.selectedEncoderId, taskQueue.defaults.container || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference)
     }
     function localProfileValues() {
         const options = encodingOptions()
@@ -141,7 +144,7 @@ ApplicationWindow {
             output: taskQueue.defaults.output || "", encoder: window.selectedEncoderId,
             container: taskQueue.defaults.container || "mkv", bitrateKbps: options.bitrateKbps,
             qualityMode: options.qualityMode, quality: options.quality, gopSize: options.gopSize,
-            inferenceBackend: inferenceBackend}
+            inferenceBackend: inferenceBackend, cutMeanDifference: cutMeanDifference}
     }
     function ensureStartupModelValidation() {
         if (!processingAvailable || !taskQueue || !taskQueue.available || window.startupModelValidationStarted ||
@@ -251,12 +254,14 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 11
-                    Rectangle {
+                    Image {
+                        id: brandIcon
                         Layout.preferredWidth: 44
                         Layout.preferredHeight: 44
-                        radius: 13
-                        gradient: Gradient { GradientStop { position: 0; color: "#a8efd5" } GradientStop { position: 1; color: "#49b99c" } }
-                        Label { anchors.centerIn: parent; text: "R"; color: "#09251e"; font.pixelSize: 27; font.bold: true }
+                        source: "qrc:/rifelove/assets/rifelove-icon.svg"
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
                     }
                     ColumnLayout {
                         spacing: 2
@@ -678,6 +683,21 @@ ApplicationWindow {
                                     onActivated: { window.inferenceBackend = ["auto", "cuda", "tensorrt"][currentIndex]; window.persistLocalDefaults() }
                                 }
                             }
+                            RowLayout {
+                                Label { text: qsTr("镜头切换阈值"); Layout.preferredWidth: 110 }
+                                SpinBox {
+                                    objectName: "studioCutMeanDifference"
+                                    from: 0
+                                    to: 100
+                                    stepSize: 1
+                                    value: Math.round(window.cutMeanDifference * 100)
+                                    textFromValue: function(value, locale) { return value + "%" }
+                                    valueFromText: function(text, locale) { return Number(text.replace("%", "")) }
+                                    enabled: !window.active
+                                    onValueModified: { window.cutMeanDifference = value / 100; window.persistLocalDefaults() }
+                                }
+                            }
+                            Label { text: qsTr("较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                             Label { text: qsTr("模型必须先在本地模型中心通过完整性校验，再设为默认模型。色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库只从本机目录读取。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                             Label { text: qsTr("推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                         }
@@ -719,7 +739,7 @@ ApplicationWindow {
                             highlighted: true
                             primary: true
                             onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder,
-                                window.selectedEncoderId, window.encodingOptions(), window.inferenceBackend)
+                                window.selectedEncoderId, window.encodingOptions(), window.inferenceBackend, window.cutMeanDifference)
                         }
                     }
                     ProgressBar {

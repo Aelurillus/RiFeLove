@@ -1015,6 +1015,14 @@
         <translation>TensorRT を必須にする</translation>
     </message>
     <message>
+        <source>镜头切换阈值</source>
+        <translation>シーン切り替えしきい値</translation>
+    </message>
+    <message>
+        <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
+        <translation>値を低くすると、より多くの画面変化をカットとして扱い、カットをまたぐ補間を減らします。</translation>
+    </message>
+    <message>
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>推論精度は FP32 に固定されています。FP16 は数値と画質の検証に合格していないため、処理には使用されません。</translation>
     </message>
@@ -1702,6 +1710,14 @@ model.json を含む検証済みモデルパックを追加してください</t
     <message>
         <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
         <translation>FP32 のみ。FP16 は数値と画質の検証に合格していません。</translation>
+    </message>
+    <message>
+        <source>镜头切换阈值</source>
+        <translation>シーン切り替えしきい値</translation>
+    </message>
+    <message>
+        <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
+        <translation>値を低くすると、より多くの画面変化をカットとして扱い、カットをまたぐ補間を減らします。</translation>
     </message>
 </context>
 <context>

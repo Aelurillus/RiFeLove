@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QIcon>
 #include <QDebug>
 #include <QQmlApplicationEngine>
 #include <QUrl>
@@ -59,6 +60,7 @@ int main(int argc, char* argv[]) {
     QQuickStyle::setStyle("Material");
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("RifeLove");
+    app.setWindowIcon(QIcon(QStringLiteral(":/rifelove/assets/rifelove-icon.svg")));
     QCommandLineParser parser;
     parser.addHelpOption();
     const QCommandLineOption screenshot("smoke-screenshot","Render one startup frame for the local UI build check and exit.","path");

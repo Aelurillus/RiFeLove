@@ -13,7 +13,7 @@ QVariantMap validProfile() {
         {"runtime",QUrl::fromLocalFile("C:/runtime")},{"output",QUrl::fromLocalFile("C:/renders")},
         {"encoder",QStringLiteral("libopenh264")},{"container",QStringLiteral("mkv")},
         {"bitrateKbps",8000},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",120},
-        {"inferenceBackend",QStringLiteral("cuda")}};
+        {"inferenceBackend",QStringLiteral("cuda")},{"cutMeanDifference",0.41}};
 }
 }
 
@@ -36,6 +36,7 @@ TEST(LocalProfileStore, SavesListsAndRemovesPersistentNamedProfiles) {
         EXPECT_EQ(value.value("rate").toString(),QStringLiteral("60000/1001"));
         EXPECT_EQ(value.value("encoder").toString(),QStringLiteral("libopenh264"));
         EXPECT_EQ(value.value("inferenceBackend").toString(),QStringLiteral("cuda"));
+        EXPECT_NEAR(value.value("cutMeanDifference").toDouble(),0.41,1e-12);
         EXPECT_EQ(value.value("bitrateKbps").toInt(),8000);
     }
     {
@@ -63,6 +64,7 @@ TEST(LocalProfileStore, RejectsInvalidOrAmbiguousProfiles) {
     EXPECT_THROW((void)profiles.save(QStringLiteral("Bad Rate"),QVariantMap{{"rate",QStringLiteral("0")}}),std::invalid_argument);
     EXPECT_THROW((void)profiles.save(QStringLiteral("Web URL"),QVariantMap{{"model",QUrl("https://example.invalid/model")}}),std::invalid_argument);
     EXPECT_THROW((void)profiles.save(QStringLiteral("Bad Codec"),QVariantMap{{"encoder",QStringLiteral("unknown")}}),std::invalid_argument);
+    EXPECT_THROW((void)profiles.save(QStringLiteral("Bad Threshold"),QVariantMap{{"cutMeanDifference",1.01}}),std::invalid_argument);
 
     (void)profiles.save(QStringLiteral("Balanced"),validProfile());
     EXPECT_THROW((void)profiles.save(QStringLiteral("balanced"),validProfile()),std::invalid_argument);
@@ -99,6 +101,7 @@ TEST(LocalProfileStore, ExportsAndImportsOneLocalProfileWithoutItsDatabaseId) {
         EXPECT_EQ(imported.value("output").toUrl(),validProfile().value("output").toUrl());
         EXPECT_EQ(imported.value("encoder").toString(),QStringLiteral("libopenh264"));
         EXPECT_EQ(imported.value("inferenceBackend").toString(),QStringLiteral("cuda"));
+        EXPECT_NEAR(imported.value("cutMeanDifference").toDouble(),0.41,1e-12);
         EXPECT_EQ(imported.value("gopSize").toInt(),120);
     }
 }
@@ -114,7 +117,7 @@ TEST(LocalProfileStore, RejectsUnsupportedOrNonLocalProfileFilesWithoutChangingS
     const auto badVersionPath = temporary.filePath(QStringLiteral("bad-version.json"));
     QFile badVersion(badVersionPath);
     ASSERT_TRUE(badVersion.open(QIODevice::WriteOnly));
-    ASSERT_GT(badVersion.write(R"({"format":"rifelove-local-profile","version":3,"profile":{}})"),0);
+    ASSERT_GT(badVersion.write(R"({"format":"rifelove-local-profile","version":4,"profile":{}})"),0);
     badVersion.close();
     EXPECT_THROW((void)profiles.importFromFile(badVersionPath),std::invalid_argument);
     EXPECT_EQ(profiles.list().size(),1);
@@ -146,6 +149,27 @@ TEST(LocalProfileStore, ImportsVersionOneProfileWithAutomaticInferenceBackend) {
     ASSERT_EQ(entries.size(),1);
     EXPECT_TRUE(entries.front().toMap().value("valid").toBool());
     EXPECT_EQ(entries.front().toMap().value("inferenceBackend").toString(),QStringLiteral("auto"));
+    EXPECT_DOUBLE_EQ(entries.front().toMap().value("cutMeanDifference").toDouble(),0.25);
+}
+
+TEST(LocalProfileStore, ImportsVersionTwoProfileWithDefaultSceneCutThreshold) {
+    QTemporaryDir temporary;
+    ASSERT_TRUE(temporary.isValid());
+    QSettings settings(temporary.filePath(QStringLiteral("preferences.ini")),QSettings::IniFormat);
+    settings.setFallbacksEnabled(false);
+    rifelove::desktop::LocalProfileStore profiles(settings);
+    const auto profilePath = temporary.filePath(QStringLiteral("version-two.json"));
+    QFile profileFile(profilePath);
+    ASSERT_TRUE(profileFile.open(QIODevice::WriteOnly));
+    const QByteArray json = R"({"format":"rifelove-local-profile","version":2,"profile":{"name":"Version Two","rate":"60","modelUrl":"file:///C:/models/rife","runtimeUrl":"file:///C:/runtime","outputUrl":"","encoder":"auto","container":"mkv","bitrateKbps":8000,"qualityMode":"bitrate","quality":32,"gopSize":120,"inferenceBackend":"cuda"}})";
+    ASSERT_EQ(profileFile.write(json),json.size());
+    profileFile.close();
+    ASSERT_NO_THROW((void)profiles.importFromFile(profilePath));
+    const auto entries = profiles.list();
+    ASSERT_EQ(entries.size(),1);
+    EXPECT_TRUE(entries.front().toMap().value("valid").toBool());
+    EXPECT_EQ(entries.front().toMap().value("inferenceBackend").toString(),QStringLiteral("cuda"));
+    EXPECT_DOUBLE_EQ(entries.front().toMap().value("cutMeanDifference").toDouble(),0.25);
 }
 
 TEST(LocalProfileStore, RejectsImportNameCollisionsAndExportOfInvalidSelections) {
