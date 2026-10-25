@@ -86,7 +86,7 @@ foreach ($process in (Get-CimInstance Win32_Process -Filter "Name='RifeLove.exe'
 }
 
 $packages = @(Get-ChildItem -LiteralPath $root -Directory -Force | Where-Object {
-    $_.Name -match '^RifeLove-(local|offline)(-|$)' -and -not $activePackageRoots.Contains($_.FullName)
+    $_.Name -match '^RifeLove-(local|offline|portable)(-|$)' -and -not $activePackageRoots.Contains($_.FullName)
 })
 if ($activePackageRoots.Count) {
     Write-Output ("Protected running package(s): " + (($activePackageRoots | ForEach-Object { Split-Path -Leaf $_ }) -join ", "))
