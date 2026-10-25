@@ -186,3 +186,66 @@ function New-PackageChecksumManifest {
     foreach ($path in ($checksums.Keys | Sort-Object)) { $manifest += "$($checksums[$path])  $path" }
     return $manifest
 }
+
+function Assert-TensorRtQualificationEvidence {
+    param(
+        [Parameter(Mandatory=$true)][object]$Evidence,
+        [Parameter(Mandatory=$true)][object[]]$ModelPacks,
+        [Parameter(Mandatory=$true)][string]$OnnxRuntimeVersion,
+        [Parameter(Mandatory=$true)][string]$TensorRtVersion,
+        [Parameter(Mandatory=$true)][string]$TensorRtManifestSha256,
+        [Parameter(Mandatory=$true)][object[]]$GpuIdentities,
+        [int]$MaximumAgeDays = 30)
+
+    if ($Evidence.schemaVersion -ne 1) { throw "Cached TensorRT qualification has an unsupported schema." }
+    $generatedAt = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse([string]$Evidence.generatedAtUtc,[ref]$generatedAt)) {
+        throw "Cached TensorRT qualification has no valid generation timestamp."
+    }
+    $age = [DateTimeOffset]::UtcNow - $generatedAt.ToUniversalTime()
+    if ($age -lt [TimeSpan]::FromMinutes(-5) -or $age -gt [TimeSpan]::FromDays($MaximumAgeDays)) {
+        throw "Cached TensorRT qualification is outside its $MaximumAgeDays-day validity window."
+    }
+    if ($Evidence.runtime.onnxRuntimeVersion -cne $OnnxRuntimeVersion -or
+        $Evidence.runtime.tensorRtVersion -cne $TensorRtVersion -or
+        $Evidence.runtime.tensorRtManifestSha256 -cne $TensorRtManifestSha256) {
+        throw "Cached TensorRT qualification does not match the selected inference runtime."
+    }
+
+    $rows = @($Evidence.models)
+    if ($rows.Count -ne $ModelPacks.Count) { throw "Cached TensorRT qualification has a different model set." }
+    foreach ($pack in $ModelPacks) {
+        $matches = @($rows | Where-Object { $_.modelId -ceq [string]$pack.descriptor.id })
+        if ($matches.Count -ne 1) { throw "Cached TensorRT qualification does not contain exactly one result for $($pack.descriptor.id)." }
+        $row = $matches[0]
+        if ($row.modelVersion -cne [string]$pack.descriptor.version -or
+            $row.modelSha256 -cne [string]$pack.descriptor.sha256 -or
+            $row.precision -cne "fp32" -or
+            $row.backend -cne "onnxruntime_tensorrt_cuda" -or
+            [int]$row.referenceCasesPassed -ne 6 -or
+            [int]@($row.tensorrtImageOperators).Count -lt 1) {
+            throw "Cached TensorRT qualification does not prove the expected FP32 model checks for $($pack.descriptor.id)."
+        }
+        if ($null -eq $row.maxAbsError -or $null -eq $row.allowedMaxAbsError -or
+            $null -eq $row.minPsnrDb -or $null -eq $row.requiredMinPsnrDb) {
+            throw "Cached TensorRT qualification is missing numerical evidence for $($pack.descriptor.id)."
+        }
+        $maximumError = [double]$row.maxAbsError
+        $allowedError = [double]$row.allowedMaxAbsError
+        $minimumPsnr = [double]$row.minPsnrDb
+        $requiredPsnr = [double]$row.requiredMinPsnrDb
+        if ([double]::IsNaN($maximumError) -or [double]::IsInfinity($maximumError) -or
+            [double]::IsNaN($allowedError) -or [double]::IsInfinity($allowedError) -or
+            [double]::IsNaN($minimumPsnr) -or [double]::IsInfinity($minimumPsnr) -or
+            [double]::IsNaN($requiredPsnr) -or [double]::IsInfinity($requiredPsnr) -or
+            $maximumError -lt 0 -or $allowedError -le 0 -or
+            $maximumError -gt $allowedError -or $minimumPsnr -lt $requiredPsnr) {
+            throw "Cached TensorRT qualification does not meet the numerical gates for $($pack.descriptor.id)."
+        }
+        $matchingGpu = @($GpuIdentities | Where-Object {
+            $_.name -ceq [string]$row.device -and $_.computeCapability -ceq [string]$row.computeCapability
+        })
+        if ($matchingGpu.Count -lt 1) { throw "Cached TensorRT qualification was produced on a different GPU from the current device."
+        }
+    }
+}

@@ -20,6 +20,77 @@ $linkedTarget = Join-Path $testRoot "linked-target"
 $runtimeRoot = Join-Path $testRoot "runtime"
 
 try {
+    $modelHash = "a" * 64
+    $qualification = [pscustomobject]@{
+        schemaVersion = 1
+        generatedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+        runtime = [pscustomobject]@{
+            onnxRuntimeVersion = "ort-test"
+            tensorRtVersion = "trt-test"
+            tensorRtManifestSha256 = "b" * 64
+        }
+        models = @([pscustomobject]@{
+            modelId = "test-model"
+            modelVersion = "1.0"
+            modelSha256 = $modelHash
+            device = "NVIDIA Test GPU"
+            computeCapability = "7.5"
+            precision = "fp32"
+            backend = "onnxruntime_tensorrt_cuda"
+            referenceCasesPassed = 6
+            maxAbsError = 0.001
+            allowedMaxAbsError = 0.002
+            minPsnrDb = 81.0
+            requiredMinPsnrDb = 80.0
+            tensorrtImageOperators = @("TRTConvolution")
+        })
+    }
+    $modelPacks = @([pscustomobject]@{descriptor=[pscustomobject]@{id="test-model";version="1.0";sha256=$modelHash}})
+    $testGpus = @([pscustomobject]@{name="NVIDIA Test GPU";computeCapability="7.5"})
+    $qualificationArguments = @{
+        Evidence = $qualification
+        ModelPacks = $modelPacks
+        OnnxRuntimeVersion = "ort-test"
+        TensorRtVersion = "trt-test"
+        TensorRtManifestSha256 = "b" * 64
+        GpuIdentities = $testGpus
+    }
+    Assert-TensorRtQualificationEvidence @qualificationArguments
+
+    $differentGpuArguments = $qualificationArguments.Clone()
+    $differentGpuArguments.GpuIdentities = @([pscustomobject]@{name="Different GPU";computeCapability="7.5"})
+    $differentGpuRejected = $false
+    try { Assert-TensorRtQualificationEvidence @differentGpuArguments }
+    catch { $differentGpuRejected = $_.Exception.Message.Contains("different GPU") }
+    if (-not $differentGpuRejected) { throw "Cached qualification from another GPU must be rejected." }
+
+    $poorEvidence = $qualification | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $poorEvidence.models[0].maxAbsError = 0.01
+    $poorArguments = $qualificationArguments.Clone()
+    $poorArguments.Evidence = $poorEvidence
+    $poorNumericsRejected = $false
+    try { Assert-TensorRtQualificationEvidence @poorArguments }
+    catch { $poorNumericsRejected = $_.Exception.Message.Contains("numerical gates") }
+    if (-not $poorNumericsRejected) { throw "Cached qualification that misses numerical gates must be rejected." }
+
+    $missingEvidence = $qualification | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $missingEvidence.models[0].minPsnrDb = $null
+    $missingArguments = $qualificationArguments.Clone()
+    $missingArguments.Evidence = $missingEvidence
+    $missingNumericsRejected = $false
+    try { Assert-TensorRtQualificationEvidence @missingArguments }
+    catch { $missingNumericsRejected = $_.Exception.Message.Contains("missing numerical evidence") }
+    if (-not $missingNumericsRejected) { throw "Cached qualification without numeric measurements must be rejected." }
+
+    $staleEvidence = $qualification | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $staleEvidence.generatedAtUtc = [DateTimeOffset]::UtcNow.AddDays(-31).ToString("o")
+    $staleArguments = $qualificationArguments.Clone()
+    $staleArguments.Evidence = $staleEvidence
+    $staleEvidenceRejected = $false
+    try { Assert-TensorRtQualificationEvidence @staleArguments }
+    catch { $staleEvidenceRejected = $_.Exception.Message.Contains("validity window") }
+    if (-not $staleEvidenceRejected) { throw "Stale cached qualification must be rejected." }
+
     New-Item -ItemType Directory -Path (Join-Path $newRoot "data") -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $newRoot "models/balanced") -Force | Out-Null
     Write-TestFile (Join-Path $newRoot "data/preferences.ini") "fresh-defaults"

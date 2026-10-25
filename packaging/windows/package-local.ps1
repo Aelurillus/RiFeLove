@@ -7,6 +7,7 @@ param(
     [string]$InferenceRuntimeDirectory = "",
     [string]$ModelPackRoot = "",
     [string[]]$AdditionalModelPackRoots = @(),
+    [string]$ReuseQualificationEvidencePath = "",
     [string]$OutputDirectory = ""
 )
 
@@ -90,6 +91,7 @@ if (Test-Path -LiteralPath $target) {
 Assert-PackageNotRunning -TargetPath $target
 if (Test-Path -LiteralPath $packageRoot) { throw "The unique package staging path already exists: $packageRoot" }
 New-Item -ItemType Directory -Path $packageRoot | Out-Null
+try {
 Copy-Item -LiteralPath $executable -Destination $packageRoot
 Copy-Item -LiteralPath $cliExecutable -Destination $packageRoot
 $savedPath = $env:PATH
@@ -205,67 +207,111 @@ foreach ($pack in $modelPacks) {
     }
 }
 
-$qualificationDirectory = Join-Path $packageRoot "data/tensorrt-qualification"
-New-Item -ItemType Directory -Path $qualificationDirectory -Force | Out-Null
-$savedPath = $env:PATH
-$qualificationSummaries = @()
-try {
-    $mingwRuntime = Join-Path $qt "Tools/mingw1510_64/mingw64/bin"
-    $env:PATH = "$build;$packageRoot;$qt/bin;$ffmpeg/bin;$inferenceRuntime;$mingwRuntime;$savedPath"
-    foreach ($pack in $modelPacks) {
-        $reportPath = Join-Path $qualificationDirectory ("{0}.json" -f $pack.descriptor.id)
-        $validationOutput = & $validatorExecutable $pack.root $runtimeTarget $reportPath tensorrt 2>&1
-        $validationExitCode = $LASTEXITCODE
-        if ($validationExitCode -ne 0) {
-            throw "Native TensorRT FP32 qualification failed for $($pack.descriptor.id): $($validationOutput -join "`n")"
-        }
-        $validation = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-        if ($validation.status -ne "passed_native_tensorrt_reference" -or
-            $validation.backend -ne "onnxruntime_tensorrt_cuda" -or
-            $validation.requested_precision -ne "fp32" -or
-            $validation.fp16_enabled -or
-            $validation.model_sha256 -ne $pack.descriptor.sha256 -or
-            $validation.cases.Count -ne 6 -or
-            $validation.tensorrt_heavy_operators.Count -lt 1) {
-            throw "TensorRT FP32 report did not prove the requested runtime, model or six image-compute reference cases for $($pack.descriptor.id)."
-        }
-        $maximumError = [double](($validation.cases | Measure-Object -Property max_abs_error -Maximum).Maximum)
-        $minimumPsnr = [double](($validation.cases | Measure-Object -Property psnr_db -Minimum).Minimum)
-        if ($maximumError -gt [double]$validation.max_abs_error_limit -or $minimumPsnr -lt [double]$validation.minimum_psnr_db) {
-            throw "TensorRT FP32 numerical thresholds were not met for $($pack.descriptor.id)."
-        }
-        $qualificationSummaries += [ordered]@{
-            modelId = [string]$pack.descriptor.id
-            modelVersion = [string]$pack.descriptor.version
-            modelSha256 = [string]$validation.model_sha256
-            device = [string]$validation.device
-            computeCapability = [string]$validation.compute_capability
-            precision = "fp32"
-            backend = [string]$validation.backend
-            referenceCasesPassed = $validation.cases.Count
-            maxAbsError = $maximumError
-            allowedMaxAbsError = [double]$validation.max_abs_error_limit
-            minPsnrDb = $minimumPsnr
-            requiredMinPsnrDb = [double]$validation.minimum_psnr_db
-            tensorrtImageOperators = @($validation.tensorrt_heavy_operators)
-        }
-    }
-} finally {
-    $env:PATH = $savedPath
-}
-$qualificationEvidence = [ordered]@{
-    schemaVersion = 1
-    generatedAtUtc = [DateTime]::UtcNow.ToString("o")
-    runtime = [ordered]@{
-        onnxRuntimeVersion = $ortRuntimeVersion
-        tensorRtVersion = [string]$runtimeVersionLines[0]
-        tensorRtManifestSha256 = [string]$runtimeVersionLines[1]
-    }
-    models = @($qualificationSummaries)
-}
 $qualificationEvidencePath = Join-Path $packageRoot "data/tensorrt-validation.json"
+$qualificationEvidence = $null
+if (-not [string]::IsNullOrWhiteSpace($ReuseQualificationEvidencePath)) {
+    $sourceEvidencePath = (Resolve-Path -LiteralPath $ReuseQualificationEvidencePath).Path
+    if ((Split-Path -Path $sourceEvidencePath -Leaf) -cne "tensorrt-validation.json" -or
+        (Split-Path -Path (Split-Path -Path $sourceEvidencePath -Parent) -Leaf) -cne "data") {
+        throw "Reusable TensorRT evidence must be data/tensorrt-validation.json inside a qualified local package."
+    }
+    $sourcePackageRoot = Split-Path -Path (Split-Path -Path $sourceEvidencePath -Parent) -Parent
+    $sourceManifestPath = Join-Path $sourcePackageRoot "SHA256SUMS.txt"
+    if (-not (Test-Path -LiteralPath $sourceManifestPath -PathType Leaf)) {
+        throw "Reusable TensorRT evidence has no package checksum manifest."
+    }
+    $manifestMatch = [regex]::Match((Get-Content -LiteralPath $sourceManifestPath -Raw),
+        '(?m)^([0-9a-fA-F]{64})  data/tensorrt-validation\.json\r?$')
+    if (-not $manifestMatch.Success) { throw "The source package manifest does not bind its TensorRT evidence." }
+    $sourceEvidenceHash = (Get-FileHash -LiteralPath $sourceEvidencePath -Algorithm SHA256).Hash
+    if ($sourceEvidenceHash -ine $manifestMatch.Groups[1].Value) {
+        throw "The source package TensorRT evidence does not match its recorded SHA-256."
+    }
+    $cachedEvidence = Get-Content -LiteralPath $sourceEvidencePath -Raw | ConvertFrom-Json
+    $gpuOutput = & nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>&1
+    $gpuExitCode = $LASTEXITCODE
+    if ($gpuExitCode -ne 0) { throw "Could not verify the current NVIDIA device for cached TensorRT evidence: $($gpuOutput -join "`n")" }
+    $gpuIdentities = @(
+        foreach ($line in $gpuOutput) {
+            $fields = ([string]$line).Split(',',2)
+            if ($fields.Count -eq 2) {
+                [pscustomobject]@{name=$fields[0].Trim();computeCapability=$fields[1].Trim()}
+            }
+        }
+    )
+    Assert-TensorRtQualificationEvidence -Evidence $cachedEvidence -ModelPacks $modelPacks `
+        -OnnxRuntimeVersion $ortRuntimeVersion -TensorRtVersion ([string]$runtimeVersionLines[0]) `
+        -TensorRtManifestSha256 ([string]$runtimeVersionLines[1]) -GpuIdentities $gpuIdentities
+    $qualificationEvidence = [ordered]@{
+        schemaVersion = 1
+        generatedAtUtc = [string]$cachedEvidence.generatedAtUtc
+        reusedAtUtc = [DateTime]::UtcNow.ToString("o")
+        reusedFromPackage = Split-Path -Path $sourcePackageRoot -Leaf
+        runtime = $cachedEvidence.runtime
+        models = @($cachedEvidence.models)
+    }
+} else {
+    $qualificationDirectory = Join-Path $packageRoot "data/tensorrt-qualification"
+    New-Item -ItemType Directory -Path $qualificationDirectory -Force | Out-Null
+    $savedPath = $env:PATH
+    $qualificationSummaries = @()
+    try {
+        $mingwRuntime = Join-Path $qt "Tools/mingw1510_64/mingw64/bin"
+        $env:PATH = "$build;$packageRoot;$qt/bin;$ffmpeg/bin;$inferenceRuntime;$mingwRuntime;$savedPath"
+        foreach ($pack in $modelPacks) {
+            $reportPath = Join-Path $qualificationDirectory ("{0}.json" -f $pack.descriptor.id)
+            $validationOutput = & $validatorExecutable $pack.root $runtimeTarget $reportPath tensorrt 2>&1
+            $validationExitCode = $LASTEXITCODE
+            if ($validationExitCode -ne 0) {
+                throw "Native TensorRT FP32 qualification failed for $($pack.descriptor.id): $($validationOutput -join "`n")"
+            }
+            $validation = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+            if ($validation.status -ne "passed_native_tensorrt_reference" -or
+                $validation.backend -ne "onnxruntime_tensorrt_cuda" -or
+                $validation.requested_precision -ne "fp32" -or
+                $validation.fp16_enabled -or
+                $validation.model_sha256 -ne $pack.descriptor.sha256 -or
+                $validation.cases.Count -ne 6 -or
+                $validation.tensorrt_heavy_operators.Count -lt 1) {
+                throw "TensorRT FP32 report did not prove the requested runtime, model or six image-compute reference cases for $($pack.descriptor.id)."
+            }
+            $maximumError = [double](($validation.cases | Measure-Object -Property max_abs_error -Maximum).Maximum)
+            $minimumPsnr = [double](($validation.cases | Measure-Object -Property psnr_db -Minimum).Minimum)
+            if ($maximumError -gt [double]$validation.max_abs_error_limit -or $minimumPsnr -lt [double]$validation.minimum_psnr_db) {
+                throw "TensorRT FP32 numerical thresholds were not met for $($pack.descriptor.id)."
+            }
+            $qualificationSummaries += [ordered]@{
+                modelId = [string]$pack.descriptor.id
+                modelVersion = [string]$pack.descriptor.version
+                modelSha256 = [string]$validation.model_sha256
+                device = [string]$validation.device
+                computeCapability = [string]$validation.compute_capability
+                precision = "fp32"
+                backend = [string]$validation.backend
+                referenceCasesPassed = $validation.cases.Count
+                maxAbsError = $maximumError
+                allowedMaxAbsError = [double]$validation.max_abs_error_limit
+                minPsnrDb = $minimumPsnr
+                requiredMinPsnrDb = [double]$validation.minimum_psnr_db
+                tensorrtImageOperators = @($validation.tensorrt_heavy_operators)
+            }
+        }
+    } finally {
+        $env:PATH = $savedPath
+    }
+    $qualificationEvidence = [ordered]@{
+        schemaVersion = 1
+        generatedAtUtc = [DateTime]::UtcNow.ToString("o")
+        runtime = [ordered]@{
+            onnxRuntimeVersion = $ortRuntimeVersion
+            tensorRtVersion = [string]$runtimeVersionLines[0]
+            tensorRtManifestSha256 = [string]$runtimeVersionLines[1]
+        }
+        models = @($qualificationSummaries)
+    }
+    Remove-Item -LiteralPath $qualificationDirectory -Recurse -Force
+}
 $qualificationEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $qualificationEvidencePath -Encoding UTF8
-Remove-Item -LiteralPath $qualificationDirectory -Recurse -Force
 
 Assert-PackageNotRunning -TargetPath $target
 Preserve-PackageUserState -OldRoot $target -NewRoot $packageRoot
@@ -278,3 +324,10 @@ Set-Content -LiteralPath (Join-Path $packageRoot "SHA256SUMS.txt") -Value $manif
 # loaded files remain stable throughout the upgrade.
 Promote-PackageDirectory -StagingPath $packageRoot -TargetPath $target
 Write-Output "Packaged local RifeLove build: $target"
+} catch {
+    if (Test-Path -LiteralPath $packageRoot) {
+        try { Remove-PackagePath -Path $packageRoot }
+        catch { Write-Warning "Could not clean failed package staging directory $packageRoot`: $($_.Exception.Message)" }
+    }
+    throw
+}
