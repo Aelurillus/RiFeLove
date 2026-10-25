@@ -97,7 +97,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
   - Desktop workflow verifies source/result loading, timestamp stepping, playback synchronization within the test tolerance and pause. The comparison page shows FFmpeg-decoded still frames while paused, steps by actual previous/next presentation timestamps for CFR and VFR clips, and opens the local source/result containing folders. The Qt workflow test verifies both folder targets through an injected opener and rejects non-local URLs; HDR/unknown-color exact preview remains open.
 - [ ] Complete model lifecycle with provenance-rich model profiles, qualified presets and expert controls.
   - The desktop Model Center verifies locally installed packs, lists SHA-256 and selects a persistent default without network access. The local workstation bundle includes two pinned RIFE packs, starter settings and source-compatible software fallback messaging when NVENC fails preflight; model downloads, quality-ranked profiles and several expert controls remain open.
-- [ ] Localize zh-CN, zh-TW, en and ja; verify accessibility and keyboard use.
+- [x] Add offline zh-CN, zh-TW, en and ja desktop catalogs with a locally persisted language selector; verify embedded catalog loading in the real QML startup smoke test.
+- [ ] Complete broader keyboard and accessibility review.
 
 ## Phase 7 — reliability/pro
 

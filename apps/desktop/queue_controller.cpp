@@ -61,6 +61,7 @@ UiTaskRow uiRow(const ConfiguredTask& source) {
 }
 
 class QueueWorker final : public QObject {
+    Q_OBJECT
 public:
     QueueWorker(QueueController* target, QString database) : target_(target), database_(std::move(database)) {}
     void initialize() {
@@ -486,3 +487,5 @@ bool QueueController::supportsModelInputProfile(const QUrl& directory, const QSt
     }
     return false;
 }
+
+#include "queue_controller.moc"

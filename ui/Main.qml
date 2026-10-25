@@ -298,6 +298,7 @@ ApplicationWindow {
                 queueController: window.backendAvailable ? taskQueue : null
                 processingAvailable: window.backendAvailable
                 deviceInfo: window.backendAvailable ? studio.deviceInfo : ({})
+                languageSettings: appLanguage
                 modelName: window.selectedModelDisplayName
                 modelVerified: window.selectedModelVerified
                 encoderHint: window.encoderHint()

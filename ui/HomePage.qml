@@ -8,6 +8,7 @@ Item {
     required property var queueController
     required property bool processingAvailable
     required property var deviceInfo
+    required property var languageSettings
     required property string modelName
     required property bool modelVerified
     required property string encoderHint
@@ -20,6 +21,7 @@ Item {
 
     readonly property var counts: queueController ? queueController.counts : ({})
     readonly property var recentTasks: queueController ? queueController.recentTasks : []
+    property string languageSaveError: ""
 
     function taskState(value) {
         const labels = {queued: qsTr("等待处理"), running: qsTr("正在处理"), paused: qsTr("已暂停"),
@@ -224,6 +226,54 @@ Item {
                             spacing: 10
                             Label { text: page.encoderHint; color: "#91a1b4"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             ActionButton { text: qsTr("模型中心"); flat: true; onClicked: page.openModelCenter() }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    objectName: "homeLanguageCard"
+                    Layout.fillWidth: true
+                    radius: 14
+                    color: "#121b27"
+                    border.color: "#263548"
+                    implicitHeight: languageContent.implicitHeight + 28
+                    ColumnLayout {
+                        id: languageContent
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: qsTr("界面语言"); font.bold: true; Layout.fillWidth: true }
+                            ComboBox {
+                                id: languageSelector
+                                objectName: "languageSelector"
+                                textRole: "label"
+                                valueRole: "code"
+                                model: [
+                                    {code: "zh_CN", label: "简体中文"},
+                                    {code: "zh_TW", label: "繁體中文"},
+                                    {code: "en", label: "English"},
+                                    {code: "ja", label: "日本語"}
+                                ]
+                                currentIndex: {
+                                    const index = indexOfValue(page.languageSettings.language)
+                                    return index < 0 ? 0 : index
+                                }
+                                onActivated: function(index) {
+                                    page.languageSaveError = page.languageSettings.selectLanguage(currentValue)
+                                        ? "" : qsTr("无法保存界面语言设置。")
+                                }
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: page.languageSaveError || (page.languageSettings.restartRequired
+                                ? qsTr("界面语言已保存；关闭并重新启动 RifeLove 后生效。")
+                                : qsTr("界面语言设置只保存在本机。"))
+                            color: page.languageSaveError ? "#ffb3ad" : "#91a1b4"
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }

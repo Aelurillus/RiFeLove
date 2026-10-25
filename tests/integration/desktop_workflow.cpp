@@ -1,6 +1,7 @@
 #include "studio_controller.hpp"
 #include "queue_controller.hpp"
 #include "encoding_settings.hpp"
+#include "language_settings.hpp"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -91,6 +92,11 @@ int main(int argc, char** argv) {
         const auto queueFolder = QDir(QFileInfo(arguments[2]).absolutePath()).filePath("queue-output");
         require(QDir().mkpath(queueFolder), "Could not create isolated queue output folder");
         const auto queueDatabase = QDir(QFileInfo(arguments[2]).absolutePath()).filePath("desktop-queue.sqlite");
+        const auto languageSettingsPath = QDir(QFileInfo(queueDatabase).absolutePath()).filePath("desktop-language.ini");
+        QFile::remove(languageSettingsPath);
+        LanguageSettings appLanguage(languageSettingsPath, QStringLiteral("zh_CN"));
+        require(appLanguage.language() == QStringLiteral("zh_CN") && !appLanguage.restartRequired(),
+            "The desktop language setting did not initialize in the selected local language");
         QSettings initialSettings(QFileInfo(queueDatabase).dir().filePath("preferences.ini"),QSettings::IniFormat);
         initialSettings.setFallbacksEnabled(false);
         initialSettings.setValue("rate","240"); initialSettings.setValue("encoder","libopenh264"); initialSettings.setValue("container","mp4");
@@ -106,6 +112,7 @@ int main(int argc, char** argv) {
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("studio", &studio);
         engine.rootContext()->setContextProperty("taskQueue", &taskQueue);
+        engine.rootContext()->setContextProperty("appLanguage", &appLanguage);
         engine.rootContext()->setContextProperty("processingAvailable", true);
         engine.load(QUrl::fromLocalFile(arguments[5]));
         require(!engine.rootObjects().isEmpty(), "QML application did not load");
@@ -115,8 +122,17 @@ int main(int argc, char** argv) {
         auto* homeGpuValue = root->findChild<QObject*>("homeGpuNameValue");
         auto* homeModelValue = root->findChild<QObject*>("homeModelNameValue");
         auto* homeQueueCount = root->findChild<QObject*>("homeQueueCountValue");
+        auto* languageSelector = root->findChild<QObject*>("languageSelector");
         require(homePage && homeStudio && root->property("currentPage").toInt() == 0,
             "The desktop did not open its Home workspace first");
+        require(languageSelector && languageSelector->property("currentIndex").toInt() == 0,
+            "Home did not show the persisted local interface language");
+        require(appLanguage.selectLanguage(QStringLiteral("ja_JP")) && appLanguage.restartRequired() &&
+                languageSelector->property("currentIndex").toInt() == 3,
+            "The Home language control did not persist a restart-required language selection");
+        require(appLanguage.selectLanguage(QStringLiteral("zh_CN")) && !appLanguage.restartRequired() &&
+                languageSelector->property("currentIndex").toInt() == 0,
+            "The Home language control did not restore the active language");
         require(homeGpuValue && homeModelValue && homeQueueCount && studio.deviceInfo().value("available").toBool() &&
                 homeGpuValue->property("text").toString() == studio.deviceInfo().value("name").toString() &&
                 homePage->property("deviceInfo").toMap().value("name").toString() == studio.deviceInfo().value("name").toString(),

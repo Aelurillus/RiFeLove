@@ -2,10 +2,12 @@
 
 import io
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
 from unittest import mock
+import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +87,39 @@ class ModelSourceIntegrity(unittest.TestCase):
             export_pack(destination, self.root / "output-pack", self.manifest)
         self.assertFalse(marker.exists())
         self.assertFalse((self.root / "output-pack").exists())
+
+
+class UiTranslationIntegrity(unittest.TestCase):
+    def test_desktop_translation_catalogs_are_complete_and_preserve_placeholders(self):
+        translations = ROOT / "ui/translations"
+        catalogs = {
+            "en_US": translations / "rifelove_en.ts",
+            "zh_TW": translations / "rifelove_zh_TW.ts",
+            "ja_JP": translations / "rifelove_ja.ts",
+        }
+        source_keys = None
+        placeholders = re.compile(r"%L?\d+")
+        for locale, catalog in catalogs.items():
+            tree = ET.parse(catalog)
+            self.assertEqual(tree.getroot().get("language"), locale)
+            keys = set()
+            messages = tree.findall(".//message")
+            for context in tree.findall("context"):
+                name = context.findtext("name")
+                for message in context.findall("message"):
+                    source = message.findtext("source", default="")
+                    translated = message.find("translation")
+                    value = "" if translated is None else "".join(translated.itertext())
+                    self.assertTrue(value.strip(), f"{locale} has an empty translation for {name}: {source!r}")
+                    self.assertNotEqual(translated.get("type"), "unfinished", f"{locale} has an unfinished translation for {source!r}")
+                    self.assertEqual(sorted(placeholders.findall(source)), sorted(placeholders.findall(value)),
+                        f"{locale} changed a formatted placeholder in {source!r}")
+                    keys.add((name, source))
+            self.assertGreaterEqual(len(messages), 360)
+            if source_keys is None:
+                source_keys = keys
+            else:
+                self.assertEqual(keys, source_keys, f"{locale} catalog is missing source strings")
 
 
 if __name__ == "__main__":

@@ -192,9 +192,36 @@ if(RIFELOVE_BUILD_DESKTOP)
   find_package(Qt6 QUIET COMPONENTS Quick QuickControls2 Multimedia)
   if(Qt6_FOUND)
     qt_standard_project_setup(REQUIRES 6.8)
+    add_library(rifelove_localization apps/desktop/language_settings.cpp apps/desktop/language_settings.hpp)
+    target_include_directories(rifelove_localization PUBLIC apps/desktop)
+    target_link_libraries(rifelove_localization PUBLIC Qt6::Core)
     qt_add_executable(rifelove-desktop WIN32 apps/desktop/main.cpp)
     set_target_properties(rifelove-desktop PROPERTIES OUTPUT_NAME "RifeLove")
     qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/ProgressEstimate.js ui/ActionButton.qml)
+    get_filename_component(rifelove_qt_root "${Qt6_DIR}/../../../" ABSOLUTE)
+    find_program(RIFELOVE_LRELEASE_EXECUTABLE NAMES lrelease.exe lrelease HINTS "${rifelove_qt_root}/bin" REQUIRED)
+    set(rifelove_translation_sources
+      "${CMAKE_CURRENT_SOURCE_DIR}/ui/translations/rifelove_en.ts"
+      "${CMAKE_CURRENT_SOURCE_DIR}/ui/translations/rifelove_zh_TW.ts"
+      "${CMAKE_CURRENT_SOURCE_DIR}/ui/translations/rifelove_ja.ts")
+    set(rifelove_translation_outputs)
+    foreach(rifelove_translation_source IN LISTS rifelove_translation_sources)
+      get_filename_component(rifelove_translation_name "${rifelove_translation_source}" NAME_WE)
+      set(rifelove_translation_output "${CMAKE_CURRENT_BINARY_DIR}/translations/${rifelove_translation_name}.qm")
+      add_custom_command(OUTPUT "${rifelove_translation_output}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/translations"
+        COMMAND "${RIFELOVE_LRELEASE_EXECUTABLE}" "${rifelove_translation_source}" -qm "${rifelove_translation_output}"
+        DEPENDS "${rifelove_translation_source}"
+        VERBATIM)
+      set_source_files_properties("${rifelove_translation_output}" PROPERTIES GENERATED TRUE QT_RESOURCE_ALIAS "${rifelove_translation_name}.qm")
+      list(APPEND rifelove_translation_outputs "${rifelove_translation_output}")
+    endforeach()
+    add_custom_target(rifelove-translations DEPENDS ${rifelove_translation_outputs})
+    add_dependencies(rifelove-desktop rifelove-translations)
+    qt_add_resources(rifelove-desktop rifelove_translation_resources
+      PREFIX "/rifelove/i18n"
+      FILES ${rifelove_translation_outputs})
+    target_link_libraries(rifelove-desktop PRIVATE rifelove_localization)
     target_link_libraries(rifelove-desktop PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia rifelove_core)
     if(TARGET rifelove_application)
       add_library(rifelove_studio apps/desktop/studio_controller.cpp apps/desktop/studio_controller.hpp
@@ -272,6 +299,16 @@ if(RIFELOVE_BUILD_TESTS)
     target_include_directories(rifelove-tests PRIVATE apps/desktop)
     target_link_libraries(rifelove-tests PRIVATE Qt6::Core)
   endif()
+  if(TARGET rifelove-desktop)
+    target_sources(rifelove-tests PRIVATE tests/unit/language_settings_test.cpp)
+    target_include_directories(rifelove-tests PRIVATE apps/desktop)
+    target_link_libraries(rifelove-tests PRIVATE rifelove_localization)
+
+    add_executable(rifelove-translation-check tests/integration/translation_catalog.cpp)
+    target_link_libraries(rifelove-translation-check PRIVATE Qt6::Core)
+    add_dependencies(rifelove-translation-check rifelove-translations)
+    add_test(NAME Desktop.Translations COMMAND rifelove-translation-check ${rifelove_translation_outputs})
+  endif()
   include(GoogleTest)
   set(rifelove_test_runtime_dirs "${CMAKE_CURRENT_BINARY_DIR}")
   if(TARGET rifelove-desktop)
@@ -299,6 +336,13 @@ if(RIFELOVE_BUILD_TESTS)
   if(TARGET rifelove-desktop)
     add_test(NAME Desktop.Smoke COMMAND rifelove-desktop --smoke-screenshot "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke.png" --data-dir "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke-data")
     set_tests_properties(Desktop.Smoke PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
+    if(Python3_Interpreter_FOUND)
+      add_test(NAME Desktop.LocalizationSmoke
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/localization_smoke.py
+          $<TARGET_FILE:rifelove-desktop> "${CMAKE_CURRENT_BINARY_DIR}")
+      set_tests_properties(Desktop.LocalizationSmoke PROPERTIES TIMEOUT 90
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
+    endif()
   endif()
   if(TARGET rifelove_studio)
     add_executable(rifelove-comparison-preview-check tests/integration/comparison_preview_test.cpp)
@@ -351,7 +395,7 @@ if(RIFELOVE_BUILD_TESTS)
         set_tests_properties(Queue.Integration PROPERTIES TIMEOUT 240)
         if(TARGET rifelove_studio)
           add_executable(rifelove-desktop-check tests/integration/desktop_workflow.cpp)
-          target_link_libraries(rifelove-desktop-check PRIVATE rifelove_studio Qt6::QuickControls2)
+          target_link_libraries(rifelove-desktop-check PRIVATE rifelove_studio rifelove_localization Qt6::QuickControls2)
           add_test(NAME Desktop.Workflow COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/desktop_test.py"
             $<TARGET_FILE:rifelove-desktop-check> ${RIFELOVE_FFMPEG_TOOL} ${RIFELOVE_FFPROBE_TOOL}
             "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_ONNX_ROOT}/lib" "${CMAKE_CURRENT_SOURCE_DIR}/ui/Main.qml" "${CMAKE_CURRENT_BINARY_DIR}")

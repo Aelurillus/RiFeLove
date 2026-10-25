@@ -8,6 +8,8 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QStandardPaths>
+#include <QLocale>
+#include <QTranslator>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -17,6 +19,7 @@
 #include <string>
 #include <vector>
 #include "common/logging.hpp"
+#include "language_settings.hpp"
 #ifdef RIFELOVE_DESKTOP_PROCESSING
 #include "studio_controller.hpp"
 #include "queue_controller.hpp"
@@ -63,9 +66,30 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption dataDirectory("data-dir","Store local task history and preferences in this directory.","path");
     parser.addOption(dataDirectory);
     parser.process(app);
+    const QDir applicationDirectory(QCoreApplication::applicationDirPath());
+    const bool portable = QFileInfo(applicationDirectory.filePath("portable.flag")).isFile();
+    const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
+        applicationDirectory.filePath("data") : QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (!QDir().mkpath(dataRoot)) return 2;
+
+    LanguageSettings appLanguage(QDir(dataRoot).filePath("language.ini"), QLocale::system().name(), &app);
+    const auto languageCode = appLanguage.language();
+    const auto locale = languageCode == QStringLiteral("en") ? QLocale(QLocale::English, QLocale::UnitedStates)
+        : languageCode == QStringLiteral("ja") ? QLocale(QLocale::Japanese, QLocale::Japan)
+        : languageCode == QStringLiteral("zh_TW") ? QLocale(QLocale::Chinese, QLocale::Taiwan)
+        : QLocale(QLocale::Chinese, QLocale::China);
+    QLocale::setDefault(locale);
+    QTranslator translator;
+    if (languageCode != QStringLiteral("zh_CN")) {
+        const auto translationPath = QStringLiteral(":/rifelove/i18n/rifelove_%1.qm").arg(languageCode);
+        if (!translator.load(translationPath)) {
+            qCritical().noquote() << "Could not load local translation catalog" << translationPath;
+            return 2;
+        }
+        app.installTranslator(&translator);
+    }
 #ifdef RIFELOVE_DESKTOP_PROCESSING
     StudioController studio;
-    const QDir applicationDirectory(QCoreApplication::applicationDirPath());
     const QDir bundledModels(applicationDirectory.filePath("models"));
     QStringList bundledModelPaths;
     const auto modelDirectories = bundledModels.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
@@ -85,10 +109,6 @@ int main(int argc, char* argv[]) {
     }
     if (bundledModel.isEmpty() && bundledModelPaths.size() == 1) bundledModel = bundledModelPaths.front();
     const auto bundledRuntime = applicationDirectory.filePath("runtime");
-    const bool portable = QFileInfo(applicationDirectory.filePath("portable.flag")).isFile();
-    const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
-        applicationDirectory.filePath("data") : QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    if (!QDir().mkpath(dataRoot)) return 2;
     const auto logPath = nativePath(QDir(dataRoot).filePath(QStringLiteral("logs/rifelove.jsonl")));
     if (rifelove::logging::initialize(logPath)) {
         qInstallMessageHandler(qtMessageHandler);
@@ -144,11 +164,13 @@ int main(int argc, char* argv[]) {
     engine.rootContext()->setContextProperty("studio", &studio);
     engine.rootContext()->setContextProperty("taskQueue", &taskQueue);
     engine.rootContext()->setContextProperty("comparisonPreview", &comparisonPreview);
+    engine.rootContext()->setContextProperty("appLanguage", &appLanguage);
     engine.rootContext()->setContextProperty("processingAvailable", true);
 #else
     engine.rootContext()->setContextProperty("studio", QVariant());
     engine.rootContext()->setContextProperty("taskQueue", QVariant());
     engine.rootContext()->setContextProperty("comparisonPreview", QVariant());
+    engine.rootContext()->setContextProperty("appLanguage", &appLanguage);
     engine.rootContext()->setContextProperty("processingAvailable", false);
 #endif
     engine.loadFromModule("RifeLove", "Main");
