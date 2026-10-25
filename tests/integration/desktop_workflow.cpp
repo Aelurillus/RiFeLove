@@ -144,9 +144,10 @@ int main(int argc, char** argv) {
         auto* button = root->findChild<QObject*>("startButton");
         auto* statusLabel = root->findChild<QObject*>("studioStatusLabel");
         auto* mediaDetailsToggle = root->findChild<QObject*>("studioMediaDetailsToggle");
+        auto* mediaStreamDetailsRepeater = root->findChild<QObject*>("studioMediaStreamDetailsRepeater");
         auto* targetRate = root->findChild<QObject*>("targetRate");
         auto* studioEncoder = root->findChild<QObject*>("studioEncoder");
-        require(mediaDetailsToggle,"Studio media details control is unavailable");
+        require(mediaDetailsToggle && mediaStreamDetailsRepeater,"Studio media details controls are unavailable");
         waitUntil([&] {
             return !taskQueue.verifyingModels() && taskQueue.models().size() == 1 &&
                 taskQueue.models().front().toMap().value("valid").toBool();
@@ -257,15 +258,16 @@ int main(int argc, char** argv) {
             "Studio did not present both the video stream and audio sample details");
         require(root->property("mediaDetailsOpen").toBool() == false,"Media details should start collapsed");
         click(mediaDetailsToggle,"open source media details");
+        waitUntil([&] { return root->property("mediaDetailsOpen").toBool(); },
+            "Studio did not open its inspected media details");
         waitUntil([&] {
-            return root->property("mediaDetailsOpen").toBool() &&
-                root->findChildren<QObject*>("studioMediaStreamDetail").size() == streamDetails.size();
+            return mediaStreamDetailsRepeater->property("count").toInt() == streamDetails.size();
         }, "Studio did not display its inspected media streams");
         click(mediaDetailsToggle,"collapse source media details");
-        waitUntil([&] {
-            return !root->property("mediaDetailsOpen").toBool() &&
-                root->findChildren<QObject*>("studioMediaStreamDetail").isEmpty();
-        }, "Studio did not collapse the inspected media streams");
+        waitUntil([&] { return !root->property("mediaDetailsOpen").toBool(); },
+            "Studio did not collapse its inspected media details");
+        waitUntil([&] { return mediaStreamDetailsRepeater->property("count").toInt() == 0; },
+            "Studio did not collapse the inspected media streams");
         require(studio.media().value("color").toString().contains("bt470bg") && studio.media().value("color").toString().contains("smpte170m"), "Legacy SDR color tags were not detected");
         const auto encoderCapabilities = studio.media().value("encoders").toMap();
         const bool preflightSoftwareFallback = !studio.media().value("nvencContextOpened").toBool() &&

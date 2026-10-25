@@ -402,6 +402,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                             }
                             Repeater {
+                                objectName: "studioMediaStreamDetailsRepeater"
                                 model: window.mediaDetailsOpen ? window.info.streamDetails || [] : []
                                 delegate: Rectangle {
                                     required property var modelData
