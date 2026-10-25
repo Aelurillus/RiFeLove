@@ -55,6 +55,7 @@ rifelove::media::VideoSegmentInput createSegment(const CheckpointFixture& fixtur
     contract.width = 2;
     contract.height = 2;
     contract.codec = "ffv1";
+    contract.encoder = "ffv1";
     contract.pixelFormat = "bgr0";
     contract.bitDepth = 8;
     return {path.string(),contract};
@@ -71,6 +72,7 @@ TEST(CheckpointArtifacts, ContractRoundTripsExactRationalsAndColorExpectations) 
     contract.width = 1920;
     contract.height = 1080;
     contract.codec = "h264";
+    contract.encoder = "h264_nvenc";
     contract.pixelFormat = "yuv420p10le";
     contract.bitDepth = 10;
     contract.primaries = "bt709";
@@ -85,6 +87,7 @@ TEST(CheckpointArtifacts, ContractRoundTripsExactRationalsAndColorExpectations) 
     EXPECT_EQ(restored.endExclusive,contract.endExclusive);
     EXPECT_EQ(restored.width,contract.width);
     EXPECT_EQ(restored.pixelFormat,contract.pixelFormat);
+    EXPECT_EQ(restored.encoder,contract.encoder);
     EXPECT_EQ(restored.primaries,contract.primaries);
     EXPECT_EQ(restored.range,contract.range);
     EXPECT_THROW((void)rifelove::application::CheckpointArtifacts::parseContract("{\"schemaVersion\":2}"),std::invalid_argument);

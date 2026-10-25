@@ -43,6 +43,7 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void cancelTask(const QString& id);
     Q_INVOKABLE void retryTask(const QString& id);
+    Q_INVOKABLE void resumeTask(const QString& id);
     Q_INVOKABLE void restartTask(const QString& id);
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void openOutputFolder(const QString& id);

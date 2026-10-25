@@ -1,6 +1,6 @@
 # Persistent local processing queue
 
-The application layer and Qt desktop now expose an ordered SQLite-backed processing queue. It persists the complete versioned job configuration, verified source/model/device identity, progress and terminal result. It runs real RIFE jobs sequentially, isolates individual failures, and supports cooperative pause/resume/cancel, failed retries and explicit restart from frame zero. Desktop import accepts multiple files or folders, optional recursion, duplicate-source elimination, model color screening and collision-safe new outputs. Unsupported or unreadable inputs are reported rather than relabeled. The desktop and CLI use the same application import rules; the Studio remains available for a one-off job.
+The application layer and Qt desktop expose an ordered SQLite-backed processing queue. It persists the complete versioned job configuration, verified source/model/device identity, progress and terminal result. It runs real RIFE jobs sequentially, isolates individual failures, and supports cooperative pause/resume/cancel, failed retries, restart from frame zero, and explicit resume from verified video segments after a process interruption. Desktop import accepts multiple files or folders, optional recursion, duplicate-source elimination, model color screening and collision-safe new outputs. Unsupported or unreadable inputs are reported rather than relabeled. The desktop and CLI use the same application import rules; the Studio remains available for a one-off job.
 
 The desktop database defaults to `QStandardPaths::AppLocalDataLocation/queue.sqlite`; `--data-dir PATH` selects an isolated/local data directory. The adjacent `preferences.ini` stores only last-used local paths and encoding/FPS defaults. It does not store video contents or download models. Queue smoke tests use their own build-local data directory.
 
@@ -16,6 +16,8 @@ The desktop database defaults to `QStandardPaths::AppLocalDataLocation/queue.sql
 .\build\windows-dev\rifelove-cli.exe queue-list work/jobs.sqlite
 .\build\windows-dev\rifelove-cli.exe queue-run work/jobs.sqlite --progress
 ```
+
+For an interrupted task with a verified checkpoint, use `queue-resume DATABASE INTERRUPTED_ID` and then run `queue-run` again. This preserves the existing task and output path. In the desktop queue, select **从检查点继续** for an interrupted task. **从头重启** creates a separate task and new output from frame zero.
 
 Repeat `queue-add` to append jobs. Its encoding options include `--pixel-format`, `--bitrate`, `--bframes`, repeated `--option KEY=VALUE`, `--gpu`, `--stream` and `--cut-threshold`. These are validated and persisted, not reconstructed from whichever settings happen to be selected later. Each model's descriptor ID/version/SHA-256 is pinned when queued; graph bytes, license metadata and tensor contract are fully verified by the executor.
 
@@ -39,17 +41,24 @@ Pause is acknowledged at cooperative source-check/model/pipeline boundaries, wit
 
 After obtaining ownership, recovery marks configured `running` and `paused` tasks `interrupted`. It leaves legacy task records and queued/terminal work unchanged. It does not start queued work automatically.
 
+An interrupted task can use either of these paths:
+
 ```powershell
-.\build\windows-dev\rifelove-cli.exe queue-restart work/jobs.sqlite INTERRUPTED_ID new-output.mkv
+.\build\windows-dev\rifelove-cli.exe queue-resume work/jobs.sqlite INTERRUPTED_ID
 .\build\windows-dev\rifelove-cli.exe queue-run work/jobs.sqlite --progress
+
+# Or create a separate task that starts at frame zero:
+.\build\windows-dev\rifelove-cli.exe queue-restart work/jobs.sqlite INTERRUPTED_ID new-output.mkv
 ```
 
-Restart creates a separate task from frame zero under a new output name and preserves the original interrupted record. It is not segment checkpoint recovery. A crash may leave a temporary file, and a crash between final output publication and the SQLite terminal commit may leave a valid output associated with an interrupted task. Existing files are preserved; no published or orphaned output is deleted to make a retry pass. Owned-artifact tracking, safe stale-partial cleanup, segment checkpoints and stitching remain required.
+Checkpoint resume is allowed only when the saved manifest matches the current local job, source/model identity and media runtime, the requested output does not already exist, and every committed segment passes its stored hash and full media/timeline verification. The production queue commits a video-only segment every 256 output frames. It decodes from the source beginning to rebuild RIFE context, skips inference for the committed output prefix, generates the rest, then validates and stream-copies the segments into the final file with source audio and supported auxiliary streams. The desktop offers **从检查点继续** for interrupted tasks and keeps **从头重启** as a separate action.
+
+Committed segments and uncommitted `.partial` files are preserved if a process is killed. Recovery never treats partial files as complete checkpoints and does not automatically delete or reconcile an orphan published before its SQLite journal commit. A crash after final output publication but before the task completion commit leaves that output untouched; checkpoint resume refuses to overwrite it and currently requires manual handling or a new output path. Cooperative cancellation removes its own live partial output; process termination does not.
 
 ## Evidence and remaining scope
 
-`Queue.Integration` generates local fixtures and runs actual GPU/native jobs. It covers ordered batch completion, isolated failure and retry, queued/active/waiting cancellation, pause/resume, source write protection and changed-source rejection, atomic import, export, durable identities/results, second-owner/hard-link protection, and termination of a writer after nonempty Matroska data reached disk. Reopening detects interruption; restarting produces 360 correctly timed frames with bit-identical decoded audio and unchanged source content. Old temporary bytes remain untouched.
+`Queue.Integration` generates local fixtures and runs actual GPU/native jobs. It covers ordered batch completion, isolated failure and retry, queued/active/waiting cancellation, pause/resume, source write protection and changed-source rejection, atomic import/export, durable identities/results, second-owner/hard-link protection, and process termination with one verified checkpoint plus a live partial segment. Reopening detects interruption; checkpoint resume validates/reuses the committed segment, preserves the stale partial, and produces the complete 66-frame output with bit-identical decoded audio and unchanged source content. A second crash occurs after all 64 expected frames have been committed but before final assembly; resume assembles the saved segments without an in-memory pending frame and produces exactly 64 frames with bit-identical audio. These tests use 16-frame segments to reach crash points quickly; the application default is 256 frames. This is bounded local evidence, not a multi-hour or broad hardware/content qualification.
 
 A repeated-session regression executes 20 separate native inference sessions in one process and independently checks identical decoded pixels/timing. This was added after a recorded intermittent `cudnn_heuristic64_9.dll` access violation during repeated session/runtime creation; the shared runtime/environment lifetime policy is exercised by the regression. It is a bounded local stability result, not a multi-hour or supported-hardware claim. Queue and repeated-session evidence is written to local `queue-workflow.json` / `queue-stress.json` reports.
 
-The actual QML desktop workflow test covers recursive folder import, duplicate selections, same-basename collision-safe outputs, visible HDR rejection, sequential native processing, UI pause/resume, a deterministic output-collision failure and controller retry, queued-task cancellation and preference reload. Independent FFmpeg/ffprobe checks inspect all completed queue outputs, frame counts, audio samples and source integrity. The remaining work includes audit/history pagination, cross-process live control, safe artifact/checkpoint ownership, true segment resume/stitching, disk-full/OOM/fault injection and multi-hour/hardware/content qualification. The complete Master Plan remains the acceptance baseline.
+The actual QML desktop workflow test covers recursive folder import, duplicate selections, same-basename collision-safe outputs, visible HDR rejection, sequential native processing, UI pause/resume, a deterministic output-collision failure and controller retry, queued-task cancellation and preference reload. Independent FFmpeg/ffprobe checks inspect completed queue outputs, frame counts, audio samples and source integrity. Remaining work includes audit/history pagination, cross-process live control, orphan cleanup/reconciliation, fault injection at all crash boundaries, disk-full/OOM coverage and multi-hour/hardware/content qualification. The complete Master Plan remains the acceptance baseline.

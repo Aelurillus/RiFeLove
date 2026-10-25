@@ -15,14 +15,6 @@ using namespace rifelove::application;
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 std::filesystem::path path(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(),value.end())); }
 std::string utf8(const std::filesystem::path& path) { const auto value = path.u8string(); return {value.begin(),value.end()}; }
-bool hasWrittenBytes(const std::filesystem::path& path) {
-    // Directory-entry sizes can remain stale while a Windows writer is open.
-    // Query the live file object, as the crash test needs an encoded prefix.
-    // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-findfirstfileexw
-    const auto file = CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
-    if (file == INVALID_HANDLE_VALUE) return false;
-    LARGE_INTEGER length{}; const bool ready = GetFileSizeEx(file,&length) && length.QuadPart > 0; CloseHandle(file); return ready;
-}
 struct Events {
     std::mutex mutex; std::condition_variable condition;
     bool paused = false, drained = false, waiting = false;
@@ -47,7 +39,7 @@ int wmain(int argc, wchar_t** wide) {
         require(argc == 7,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER");
         const std::string mode = argv[1]; const auto root = path(argv[2]);
         const auto database = root / "native-queue.sqlite";
-        TaskQueue queue(database);
+        TaskQueue queue(database,(mode == "hold" || mode == "hold-complete" || mode == "recover") ? 16 : 256);
         if (mode == "owner") { std::cout << "ownership acquired\n"; return 0; }
         if (mode == "stress") {
             std::vector<ProcessingJob> jobs;
@@ -67,32 +59,48 @@ int wmain(int argc, wchar_t** wide) {
             const auto rows = queue.list(); require(rows.size() == 1 && rows[0].task.state == TaskState::interrupted,"Crash task is not interrupted");
             bool rejected = false; try { queue.retry(rows[0].task.id); } catch (const std::logic_error&) { rejected = true; }
             require(rejected,"Interrupted task was incorrectly treated as a retry/checkpoint");
-            const auto id = queue.restart(rows[0].task.id,utf8(root / "restarted-from-zero.mkv"));
+            bool resumedCheckpoint = false;
+            try { queue.resumeCheckpoint(rows[0].task.id); resumedCheckpoint = true; } catch (const std::logic_error&) {}
+            require(resumedCheckpoint,"Interrupted task with a committed segment could not be resumed");
             Events events;
             require(queue.start([&](QueueEvent event) { if (event.drained) { std::lock_guard lock(events.mutex); events.error = event.queueError; events.drained = true; events.condition.notify_one(); } }),"Recovery queue did not start");
-            events.waitFor(events.drained); queue.wait(); require(events.error.empty(),"Recovery queue errored");
-            const auto after = queue.list(); require(after.size() == 2 && after[0].task.state == TaskState::interrupted && after[1].task.id == id && after[1].task.state == TaskState::completed,"Restart failed or rewrote interrupted history");
+            events.waitFor(events.drained); queue.wait(); require(events.error.empty(),"Checkpoint recovery queue errored");
+            const auto after = queue.list(); require(after.size() == 1 && after[0].task.id == rows[0].task.id && after[0].task.state == TaskState::completed,"Checkpoint resume failed or rewrote task history");
+            require(std::filesystem::is_regular_file(path(after[0].task.outputPath)),"Checkpoint resume did not publish the requested output");
             return 0;
         }
-        if (mode == "hold") {
+        if (mode == "hold" || mode == "hold-complete") {
             auto task = job(argv[3],root / "crash-output.mkv",argv[4],argv[5]);
+            task.settings.targetRate = mode == "hold-complete" ? Rational(64,11) : Rational(6);
             const auto id = queue.enqueue({task}).front();
             Events events;
             require(queue.start([&](QueueEvent event) {
-                if (event.processing.stage == "processing" && event.processing.outputFrames >= 20) {
-                    // Matroska buffers a cluster. Wait for a real on-disk
-                    // encoded prefix rather than killing an empty reservation.
-                    for (const auto& file : std::filesystem::directory_iterator(root)) {
-                        if (file.path().extension() == ".partial" && hasWrittenBytes(file.path())) { queue.pause(); break; }
+                if (event.processing.stage == "processing") {
+                    std::ofstream status(root / "hold-progress.txt"); status << event.processing.outputFrames;
+                }
+                if (mode == "hold" && event.processing.stage == "processing" && event.processing.outputFrames >= 18) {
+                    // Frame 17 is reported only after the first 16-frame
+                    // checkpoint is committed; frame 18 has opened the next
+                    // live segment writer, so the crash tests both artifacts.
+                    for (const auto& file : std::filesystem::recursive_directory_iterator(root)) {
+                        const auto name = file.path().filename().wstring();
+                        if (file.path().extension() == ".mkv" && name.starts_with(L"segment-")) { queue.pause(); break; }
                     }
                 }
+                if (mode == "hold-complete" && event.processing.stage == "validating")
+                    queue.pause(); // All output segments are committed before final validation starts.
                 if (event.processing.stage == "paused") {
                     std::ofstream marker(path(argv[6])); marker << id; marker.close();
                     std::lock_guard lock(events.mutex); events.paused = true; events.condition.notify_one();
                 }
-                if (event.drained) { std::lock_guard lock(events.mutex); events.drained = true; events.condition.notify_one(); }
+                if (event.drained) { std::lock_guard lock(events.mutex); events.error = event.queueError; events.drained = true; if (!events.paused) events.paused = true; events.condition.notify_one(); }
             }),"Hold queue did not start");
             events.waitFor(events.paused);
+            if (!queue.list().empty() && queue.list()[0].task.state != TaskState::paused) {
+                const auto row = queue.list()[0];
+                throw std::runtime_error("Hold task failed before reaching its checkpoint: state=" + toString(row.task.state) +
+                    "; error=" + row.task.error + "; queue=" + events.error);
+            }
             // The harness terminates this process while a real writer and
             // source lease are open, exercising kernel lock release and WAL.
             events.waitFor(events.drained); queue.wait(); return 0;
@@ -132,6 +140,8 @@ int wmain(int argc, wchar_t** wide) {
         queue.resume(); events.waitFor(events.drained); queue.wait();
         require(events.error.empty(),"Queue aborted instead of isolating a task failure");
         auto rows = queue.list();
+        if (rows.size() == 4 && !(rows[0].task.state == TaskState::completed && rows[1].task.state == TaskState::failed && rows[2].task.state == TaskState::completed && rows[3].task.state == TaskState::cancelled))
+            for (const auto& row : rows) std::cerr << "task " << row.task.id << " state=" << toString(row.task.state) << " error=" << row.task.error << '\n';
         require(rows.size() == 4 && rows[0].task.state == TaskState::completed && rows[1].task.state == TaskState::failed && rows[2].task.state == TaskState::completed && rows[3].task.state == TaskState::cancelled,"Wrong ordered batch terminal states");
         require(!rows[0].identity.empty() && !rows[0].result.empty(),"Identity/result evidence was not persisted");
         { std::ifstream sentinel(path(second.output)); std::string value; std::getline(sentinel,value); require(value == "keep this file","Failed task overwrote its output"); }

@@ -100,9 +100,10 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
         throw std::runtime_error("checkpoint segment frame count does not match its contract");
     if (!actualFirst || !withinTick(*actualFirst, contract.firstTimestamp, tick))
         throw std::runtime_error("checkpoint segment first timestamp does not match its contract");
-    if (actualEnd && !withinTick(*actualEnd, expectedEnd, tick))
-        throw std::runtime_error("checkpoint segment final frame duration does not match its contract");
-    if (stream.declaredEnd && !withinTick(*stream.declaredEnd, expectedEnd, tick))
+    if (actualEnd && absolute(*actualEnd - expectedEnd) > tick)
+        throw std::runtime_error("checkpoint segment final frame duration " + actualEnd->toString() +
+            " does not match its contract boundary " + expectedEnd.toString() + " (container tick " + tick.toString() + ")");
+    if (stream.declaredEnd && absolute(*stream.declaredEnd - expectedEnd) > tick)
         throw std::runtime_error("checkpoint segment declared end does not match its contract");
     if (!actualEnd && !stream.declaredEnd)
         throw std::runtime_error("checkpoint segment end boundary cannot be verified from the media container");

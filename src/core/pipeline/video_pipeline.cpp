@@ -87,6 +87,10 @@ OutputTimingValidation validateOutput(const std::string& path, int selected, Rat
     result.quantized = result.maximumTimestampError != Rational(0) || result.durationError != Rational(0) || result.auxiliaryMaximumEndError != Rational(0);
     return result;
 }
+std::optional<std::string> knownColorTag(const std::string& value) {
+    if (value.empty() || value == "unknown" || value == "unspecified") return {};
+    return value;
+}
 }
 
 PipelineResult interpolateVideo(const std::string& source, const std::string& destination, const PipelineSettings& settings,
@@ -118,13 +122,56 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         throw std::invalid_argument("Selected RIFE model does not declare support for input profile " + inputProfile);
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
     encoding.frameRate = settings.targetRate;
+    const bool checkpointMode = settings.checkpoint.has_value();
+    std::vector<media::VideoSegmentInput> segments;
+    std::uint64_t completedOutputFrames = 0;
+    std::uint64_t nextSegmentIndex = 0;
+    if (checkpointMode) {
+        const auto& checkpoint = *settings.checkpoint;
+        if (checkpoint.framesPerSegment == 0 || !checkpoint.segmentPath || !checkpoint.commitSegment)
+            throw std::invalid_argument("Checkpoint mode requires a positive segment size and artifact callbacks");
+        segments = checkpoint.completedSegments;
+        nextSegmentIndex = segments.size();
+        std::optional<std::string> savedEncoder;
+        for (std::size_t index = 0; index < segments.size(); ++index) {
+            const auto& segment = segments[index];
+            const auto count = segment.contract.frameCount;
+            if (count == 0 || count > checkpoint.framesPerSegment ||
+                (index + 1 < segments.size() && count != checkpoint.framesPerSegment))
+                throw std::invalid_argument("Checkpoint segments do not form complete fixed-size boundaries");
+            if (segment.contract.frameDuration != Rational(1) / settings.targetRate || segment.contract.encoder.empty())
+                throw std::invalid_argument("Checkpoint segment frame rate or encoder identity differs from this task");
+            if (segment.contract.frameCount > std::numeric_limits<std::uint64_t>::max() - completedOutputFrames)
+                throw std::invalid_argument("Checkpoint output frame count exceeds the supported range");
+            if (completedOutputFrames > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                throw std::invalid_argument("Checkpoint output frame count exceeds exact timestamp range");
+            const auto expectedFirst = segments.front().contract.firstTimestamp +
+                Rational(static_cast<std::int64_t>(completedOutputFrames)) / settings.targetRate;
+            if (segment.contract.firstTimestamp != expectedFirst)
+                throw std::invalid_argument("Checkpoint segment timestamp does not match its contiguous output-frame range");
+            if (savedEncoder && *savedEncoder != segment.contract.encoder)
+                throw std::invalid_argument("Checkpoint segments were produced by different encoders and cannot be safely joined");
+            savedEncoder = segment.contract.encoder;
+            completedOutputFrames += static_cast<std::uint64_t>(count);
+        }
+        if (savedEncoder) {
+            if (encoding.encoder != "auto" && encoding.encoder != *savedEncoder)
+                throw std::invalid_argument("Selected encoder differs from the encoder used by committed checkpoint segments");
+            encoding.encoder = *savedEncoder;
+        }
+        encoding.copyAuxiliaryStreams = false;
+        encoding.requireFirstPacketKeyframe = true;
+    }
     std::string fallback;
     std::unique_ptr<media::VideoMuxWriter> writer;
+    std::string activeSegmentPath;
+    if (checkpointMode) activeSegmentPath = settings.checkpoint->segmentPath(nextSegmentIndex);
+    const auto initialWriterPath = checkpointMode ? activeSegmentPath : destination;
     const auto encoderSetupStarted = std::chrono::steady_clock::now();
     if (encoding.encoder == "auto") {
         encoding.encoder = "h264_nvenc";
         if (media::MediaEngine::hasEncoder(encoding.encoder)) {
-            try { writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop); }
+            try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop); }
             catch (const media::MediaError& error) {
                 if (error.operation() != "open video encoder h264_nvenc" || stop.stop_requested()) throw;
                 fallback = error.what();
@@ -146,7 +193,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                     continue;
                 }
                 encoding.encoder = candidate;
-                try { writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop); }
+                try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop); }
                 catch (const media::MediaError& error) {
                     if (error.operation() != "open video encoder " + encoding.encoder || stop.stop_requested()) throw;
                     if (!attempts.empty()) attempts += "; ";
@@ -168,7 +215,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             }
         }
     }
-    if (!writer) writer = std::make_unique<media::VideoMuxWriter>(source,destination,encoding,stop);
+    if (!writer) writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop);
     result.timings.encoderSetupSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - encoderSetupStarted).count();
     result.modelId = capabilities.modelId; result.backend = capabilities.backend;
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
@@ -188,9 +235,65 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             progress(event);
         }
     };
+    std::size_t segmentFrameCount = 0;
+    std::uint64_t segmentFirstFrame = completedOutputFrames;
+    std::uint64_t segmentEndFrame = completedOutputFrames;
+    Rational segmentFirstTimestamp;
+    Rational segmentEndExclusive;
+    const auto openNextSegment = [&] {
+        if (!checkpointMode || writer) return;
+        activeSegmentPath = settings.checkpoint->segmentPath(nextSegmentIndex);
+        writer = std::make_unique<media::VideoMuxWriter>(source,activeSegmentPath,encoding,stop);
+    };
+    const auto finalizeSegment = [&] {
+        if (!checkpointMode || !writer || segmentFrameCount == 0)
+            throw std::logic_error("Checkpoint segment cannot be finalized before it receives frames");
+        std::optional<media::VideoSegmentContract> verifiedContract;
+        (void)writer->finish([&](const std::string& temporary) {
+            const auto segmentInfo = media::MediaEngine::probe(temporary,stop);
+            const auto stream = std::find_if(segmentInfo.streams.begin(),segmentInfo.streams.end(),
+                [](const media::StreamInfo& item) { return item.type == "video"; });
+            if (stream == segmentInfo.streams.end()) throw std::runtime_error("Encoded checkpoint segment has no video stream");
+            media::VideoSegmentContract contract;
+            contract.frameCount = segmentFrameCount;
+            contract.firstTimestamp = segmentFirstTimestamp;
+            contract.frameDuration = Rational(1) / settings.targetRate;
+            contract.endExclusive = segmentEndExclusive;
+            contract.width = stream->width; contract.height = stream->height;
+            contract.codec = stream->codec; contract.encoder = encoding.encoder;
+            contract.pixelFormat = stream->color.pixelFormat; contract.bitDepth = stream->color.bitDepth;
+            contract.primaries = knownColorTag(stream->color.primaries);
+            contract.transfer = knownColorTag(stream->color.transfer);
+            contract.matrix = knownColorTag(stream->color.matrix);
+            contract.range = knownColorTag(stream->color.range);
+            (void)media::MediaEngine::verifyVideoSegment(temporary,contract,stop);
+            verifiedContract = std::move(contract);
+        });
+        writer.reset();
+        if (!verifiedContract) throw std::runtime_error("Checkpoint segment validation did not produce a media contract");
+        media::VideoSegmentInput segment{activeSegmentPath,std::move(*verifiedContract)};
+        settings.checkpoint->commitSegment(nextSegmentIndex,segmentFirstFrame,segmentEndFrame,segment);
+        segments.push_back(std::move(segment));
+        ++nextSegmentIndex;
+        segmentFirstFrame = segmentEndFrame;
+        segmentFrameCount = 0;
+    };
+    const auto writePending = [&](const media::DecodedFrame& frame, Rational timestamp, Rational duration) {
+        if (!checkpointMode) {
+            writer->writeFrame(frame,timestamp,duration);
+            return;
+        }
+        openNextSegment();
+        if (segmentFrameCount == 0) segmentFirstTimestamp = timestamp;
+        writer->writeFrame(frame,timestamp,duration);
+        ++segmentFrameCount;
+        ++segmentEndFrame;
+        segmentEndExclusive = timestamp + duration;
+        if (segmentFrameCount == settings.checkpoint->framesPerSegment) finalizeSegment();
+    };
     const auto emit = [&](media::DecodedFrame frame) {
         const auto time = clock->timestamp();
-        if (pending) measure(result.timings.frameEncodeSeconds,[&] { writer->writeFrame(*pending,*pendingTime,time - *pendingTime); });
+        if (pending) measure(result.timings.frameEncodeSeconds,[&] { writePending(*pending,*pendingTime,time - *pendingTime); });
         pending = std::move(frame); pendingTime = time;
         clock->advance();
         notify("processing",time);
@@ -220,6 +323,12 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         if (analysis.action != quality::PairAction::interpolate) notify("quality",right.source.timestamp,std::string(quality::toString(analysis.action)));
         while (clock->timestamp() < *right.source.timestamp) {
             checkStop(stop);
+            if (checkpointMode && clock->index() < completedOutputFrames) {
+                const auto timestamp = clock->timestamp();
+                clock->advance();
+                notify("resuming",timestamp,"Reusing a verified checkpoint segment");
+                continue;
+            }
             if (clock->timestamp() == *left.source.timestamp) { emit(left.source); ++result.originalFrames; }
             else if (analysis.action != quality::PairAction::interpolate) { emit(left.source); ++result.heldFrames; }
             else {
@@ -252,7 +361,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         if (!frame.timestamp) throw std::runtime_error("Interpolation requires a known timestamp for every source frame");
         auto prepared = measure(result.timings.sourcePreparationSeconds,[&] { return media::prepareRifeSdr(frame,settings.hostFloatBufferLimit,stop); });
         CachedFrame current{frame,std::move(prepared),{}};
-        if (!clock) { origin = frame.timestamp; clock.emplace(*origin,settings.targetRate); }
+        if (!clock) {
+            origin = frame.timestamp; clock.emplace(*origin,settings.targetRate);
+            if (!segments.empty() && segments.front().contract.firstTimestamp != *origin)
+                throw std::runtime_error("Checkpoint source start timestamp changed; committed segments cannot be resumed");
+        }
         if (previous) pair(*previous,current);
         previous = std::move(current);
     },encoding.videoStreamIndex,stop);
@@ -271,14 +384,23 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto end = *boundary;
     while (clock->timestamp() < end) {
         checkStop(stop);
+        if (checkpointMode && clock->index() < completedOutputFrames) {
+            const auto timestamp = clock->timestamp();
+            clock->advance();
+            notify("resuming",timestamp,"Reusing a verified checkpoint segment");
+            continue;
+        }
         if (clock->timestamp() == *previous->source.timestamp) ++result.originalFrames; else ++result.heldFrames;
         emit(previous->source);
     }
-    if (!pending || !pendingTime || end <= *pendingTime) throw std::runtime_error("No valid final output frame boundary");
-    measure(result.timings.frameEncodeSeconds,[&] { writer->writeFrame(*pending,*pendingTime,end - *pendingTime); });
-    notify("validating",*pendingTime);
+    if (!origin || end <= *origin) throw std::runtime_error("No valid final output frame boundary");
+    if (!checkpointMode && (!pending || !pendingTime || end <= *pendingTime))
+        throw std::runtime_error("No valid final output frame boundary");
+    if (pending && pendingTime)
+        measure(result.timings.frameEncodeSeconds,[&] { writePending(*pending,*pendingTime,end - *pendingTime); });
+    notify("validating",pendingTime.value_or(end));
     const auto finishStarted = std::chrono::steady_clock::now();
-    result.video = writer->finish([&](const std::string& temporary) {
+    const auto validateTemporary = [&](const std::string& temporary) {
         result.validation = measure(result.timings.outputValidationSeconds,[&] {
             const auto validationStarted = std::chrono::steady_clock::now();
             const auto validationProgress = [&](const PipelineProgress& sourceProgress) {
@@ -290,7 +412,30 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             };
             return validateOutput(temporary,encoding.videoStreamIndex,*origin,end,settings.targetRate,clock->index(),info,validationProgress,stop);
         });
-    });
+    };
+    if (checkpointMode) {
+        if (segmentFrameCount > 0) finalizeSegment();
+        else if (writer) writer.reset(); // discard the empty preflight writer when all frames were already checkpointed
+        if (completedOutputFrames > clock->index())
+            throw std::runtime_error("Verified checkpoint contains more frames than the source timeline");
+        std::uint64_t assembledFrames = 0;
+        for (const auto& segment : segments) {
+            if (segment.contract.frameCount > std::numeric_limits<std::uint64_t>::max() - assembledFrames)
+                throw std::runtime_error("Checkpoint frame count exceeds the supported range");
+            assembledFrames += static_cast<std::uint64_t>(segment.contract.frameCount);
+        }
+        if (assembledFrames != clock->index() || segments.empty())
+            throw std::runtime_error("Checkpoint segments do not cover the complete output timeline");
+        if (!segments.back().contract.endExclusive || absolute(*segments.back().contract.endExclusive - end) > video->timeBase)
+            throw std::runtime_error("Final checkpoint segment does not end at the verified source boundary");
+        const auto assembly = media::MediaEngine::assembleVideoSegments(source,destination,encoding.videoStreamIndex,segments,stop,validateTemporary);
+        const auto assemblySeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - finishStarted).count();
+        result.video = {encoding.encoder,static_cast<std::size_t>(clock->index()),assembly.videoPackets,assembly.auxiliaryPackets,
+            assembly.firstTimestamp,assembly.endExclusive,assemblySeconds,
+            assemblySeconds > 0 ? static_cast<double>(clock->index()) / assemblySeconds : 0};
+    } else {
+        result.video = writer->finish(validateTemporary);
+    }
     const auto finishWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - finishStarted).count();
     result.timings.outputFinalizeSeconds = std::max(0.0,finishWallSeconds - result.timings.outputValidationSeconds);
     result.sourceFrames = decoded.frameCount;

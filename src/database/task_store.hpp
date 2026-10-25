@@ -53,6 +53,9 @@ public:
 
     [[nodiscard]] std::string create(const std::string& sourcePath, const std::string& outputPath);
     void transition(const std::string& id, TaskState next, const std::string& error = {});
+    // Narrow transition for the queue after it has verified immutable identity
+    // and all local checkpoint artifacts.
+    void resumeCheckpointed(const std::string& id);
     [[nodiscard]] std::size_t recoverInterrupted();
     [[nodiscard]] std::vector<TaskRecord> list() const;
     // Payloads are versioned JSON owned/validated by application services.

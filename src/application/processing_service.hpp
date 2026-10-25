@@ -49,7 +49,8 @@ struct ProcessingEvent {
     bool sourceColorSupported = false;
 };
 [[nodiscard]] PipelineResult executeProcessingJob(const ProcessingJob& job, const std::function<void(ProcessingEvent)>& progress,
-    std::stop_token stop, PauseGate& pause);
+    std::stop_token stop, PauseGate& pause,
+    const std::function<void(const ProcessingIdentity&,PipelineSettings&)>& configurePipeline = {});
 // One bounded worker per service. Call submit/cancel from one owner thread;
 // callbacks run on the worker and must marshal owned values to their UI thread.
 // Destruction requests cancellation and waits for safe resource cleanup.

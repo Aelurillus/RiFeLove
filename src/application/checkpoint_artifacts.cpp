@@ -185,9 +185,9 @@ TaskCheckpointSegment CheckpointArtifacts::commit(std::uint64_t index, std::uint
 }
 
 std::string CheckpointArtifacts::serializeContract(const media::VideoSegmentContract& contract) {
-    Json value{{"schemaVersion",1},{"frameCount",contract.frameCount},{"firstTimestamp",contract.firstTimestamp.toString()},
+    Json value{{"schemaVersion",2},{"frameCount",contract.frameCount},{"firstTimestamp",contract.firstTimestamp.toString()},
         {"frameDuration",contract.frameDuration.toString()},{"endExclusive",contract.endExclusive ? Json(contract.endExclusive->toString()) : Json(nullptr)},
-        {"width",contract.width},{"height",contract.height},{"codec",contract.codec},{"pixelFormat",contract.pixelFormat},
+        {"width",contract.width},{"height",contract.height},{"codec",contract.codec},{"encoder",contract.encoder},{"pixelFormat",contract.pixelFormat},
         {"bitDepth",contract.bitDepth},{"primaries",contract.primaries ? Json(*contract.primaries) : Json(nullptr)},
         {"transfer",contract.transfer ? Json(*contract.transfer) : Json(nullptr)},
         {"matrix",contract.matrix ? Json(*contract.matrix) : Json(nullptr)},
@@ -198,8 +198,9 @@ std::string CheckpointArtifacts::serializeContract(const media::VideoSegmentCont
 media::VideoSegmentContract CheckpointArtifacts::parseContract(const std::string& text) {
     try {
         const auto value = Json::parse(text);
-        if (!value.is_object() || value.at("schemaVersion").get<int>() != 1)
+        if (!value.is_object() || (value.at("schemaVersion").get<int>() != 1 && value.at("schemaVersion").get<int>() != 2))
             throw std::invalid_argument("unsupported checkpoint segment contract version");
+        const auto schemaVersion = value.at("schemaVersion").get<int>();
         media::VideoSegmentContract contract;
         const auto count = value.at("frameCount").get<std::uint64_t>();
         if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
@@ -211,6 +212,7 @@ media::VideoSegmentContract CheckpointArtifacts::parseContract(const std::string
         contract.width = value.at("width").get<int>();
         contract.height = value.at("height").get<int>();
         contract.codec = value.at("codec").get<std::string>();
+        if (schemaVersion >= 2) contract.encoder = value.at("encoder").get<std::string>();
         contract.pixelFormat = value.at("pixelFormat").get<std::string>();
         contract.bitDepth = value.at("bitDepth").get<int>();
         contract.primaries = optionalString(value,"primaries");

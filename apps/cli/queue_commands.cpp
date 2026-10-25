@@ -25,7 +25,7 @@ int runQueueCommand(const std::vector<std::string>& args) {
     using namespace rifelove; using namespace rifelove::application;
     if (args.size() < 3) throw std::invalid_argument("Queue command requires DATABASE");
     const auto& command = args[1];
-    if (command != "queue-list" && command != "queue-export" && command != "queue-add" && command != "queue-import" && command != "queue-run" && command != "queue-retry" && command != "queue-cancel" && command != "queue-restart")
+    if (command != "queue-list" && command != "queue-export" && command != "queue-add" && command != "queue-import" && command != "queue-run" && command != "queue-retry" && command != "queue-cancel" && command != "queue-restart" && command != "queue-resume")
         throw std::invalid_argument("Unknown queue command");
     if (command == "queue-list" || command == "queue-export") {
         if (args.size() != 3) throw std::invalid_argument("Read-only queue command accepts DATABASE only");
@@ -85,6 +85,11 @@ int runQueueCommand(const std::vector<std::string>& args) {
     if (command == "queue-restart") {
         if (args.size() != 5) throw std::invalid_argument("queue-restart DATABASE INTERRUPTED_ID NEW_OUTPUT");
         emit({{"event","restart_from_zero_queued"},{"id",queue.restart(args[3],args[4])}}); return 0;
+    }
+    if (command == "queue-resume") {
+        if (args.size() != 4) throw std::invalid_argument("queue-resume DATABASE INTERRUPTED_ID");
+        queue.resumeCheckpoint(args[3]);
+        emit({{"event","checkpoint_resume_queued"},{"id",args[3]}}); return 0;
     }
     if (command != "queue-run" || args.size() > 4 || (args.size() == 4 && args[3] != "--progress")) throw std::invalid_argument("Unknown or invalid queue command");
     const bool showProgress = args.size() == 4;

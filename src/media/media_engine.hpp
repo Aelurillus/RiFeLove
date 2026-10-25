@@ -134,6 +134,9 @@ struct VideoSegmentContract {
     int width = 0;
     int height = 0;
     std::string codec;
+    // Encoder identity is recorded separately from the media codec so a
+    // resumed job can keep every segment byte-stream compatible.
+    std::string encoder;
     std::string pixelFormat;
     int bitDepth = 0;
     std::optional<std::string> primaries;

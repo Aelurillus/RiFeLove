@@ -84,7 +84,8 @@ void usage(std::ostream& out) {
         << "  rifelove-cli queue-list|queue-export DATABASE\n"
         << "  rifelove-cli queue-import DATABASE PLAN_JSON\n"
         << "  rifelove-cli queue-retry|queue-cancel DATABASE ID\n"
-        << "  rifelove-cli queue-restart DATABASE INTERRUPTED_ID NEW_OUTPUT\n";
+        << "  rifelove-cli queue-restart DATABASE INTERRUPTED_ID NEW_OUTPUT\n"
+        << "  rifelove-cli queue-resume DATABASE INTERRUPTED_ID\n";
 #endif
 #ifdef RIFELOVE_HAS_MEDIA
     out << "  rifelove-cli media-probe INPUT\n"

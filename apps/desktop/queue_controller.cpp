@@ -71,7 +71,7 @@ public:
             const auto defaults = readDefaults(); const auto recovered = queue_->recoveredCount();
             post([defaults,recovered](QueueController& c) {
                 c.available_ = true; c.defaults_ = defaults; c.state_ = "ready";
-                c.detail_ = recovered ? tr("发现 %1 个中断任务。可选择新文件名从头生成；分段续传仍在开发中。").arg(recovered) : QString();
+                c.detail_ = recovered ? tr("发现 %1 个中断任务。可校验已完成片段后继续，也可选择新文件名从头生成。").arg(recovered) : QString();
                 emit c.defaultsChanged(); emit c.changed(); emit c.operationFinished("ready");
             });
             snapshot();
@@ -95,6 +95,7 @@ public:
     void stop() { if (queue_) queue_->stop(); }
     void cancel(const QString& id) { perform([&] { requireQueue(); queue_->cancel(utf8(id)); snapshot(); }); }
     void retry(const QString& id) { perform([&] { requireQueue(); queue_->retry(utf8(id)); snapshot(); post([](QueueController& c) { c.state_ = "ready"; c.detail_ = tr("任务已重新加入队列。"); emit c.changed(); }); }); }
+    void resumeCheckpoint(const QString& id) { perform([&] { requireQueue(); queue_->resumeCheckpoint(utf8(id)); snapshot(); post([](QueueController& c) { c.state_ = "ready"; c.detail_ = tr("已校验检查点并加入队列。开始后会从未完成片段继续。"); emit c.changed(); }); }); }
     void restart(const QString& id) { perform([&] {
         requireQueue();
         const auto rows = queue_->list();
@@ -296,7 +297,7 @@ private:
             post([error=text(event.queueError)](QueueController& c) {
                 c.busy_ = false;
                 if (!error.isEmpty()) { c.setError(error); return; }
-                c.state_ = "idle"; c.detail_ = tr("队列已停止。已排队但未运行的任务会保留。中断任务需单独从头重启。");
+                c.state_ = "idle"; c.detail_ = tr("队列已停止。已排队但未运行的任务会保留；中断任务可校验片段后继续或从头重启。");
                 emit c.changed(); emit c.operationFinished("drained");
             }); return;
         }
@@ -407,6 +408,7 @@ void QueueController::resume() { if (!busy_) return; state_ = "resuming"; emit c
 void QueueController::stop() { if (importing_) importCancel_.request_stop(); if (busy_) { state_ = "stopping"; emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->stop(); },Qt::QueuedConnection); } }
 void QueueController::cancelTask(const QString& id) { if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->cancel(id); },Qt::QueuedConnection); }
 void QueueController::retryTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->retry(id); },Qt::QueuedConnection); }
+void QueueController::resumeTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->resumeCheckpoint(id); },Qt::QueuedConnection); }
 void QueueController::restartTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->restart(id); },Qt::QueuedConnection); }
 void QueueController::openOutputFolder(const QString& id) { if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->openFolder(id); },Qt::QueuedConnection); }
 void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,

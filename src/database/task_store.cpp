@@ -142,6 +142,25 @@ void TaskStore::transition(const std::string& id, TaskState next, const std::str
     transaction.commit();
 }
 
+void TaskStore::resumeCheckpointed(const std::string& id) {
+    std::lock_guard lock(mutex_); requireWritable();
+    Transaction transaction(db_);
+    Statement state(db_,"SELECT state FROM tasks WHERE id=? AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
+    bindText(db_,state.get(),1,id);
+    if (sqlite3_step(state.get()) != SQLITE_ROW) throw std::invalid_argument("configured task does not exist");
+    if (taskStateFromString(columnText(state.get(),0)) != TaskState::interrupted)
+        throw std::logic_error("only interrupted tasks can be resumed from a checkpoint");
+    Statement checkpoint(db_,"SELECT 1 FROM task_checkpoint_manifests m WHERE m.task_id=? AND EXISTS(SELECT 1 FROM task_checkpoint_segments s WHERE s.task_id=m.task_id)");
+    bindText(db_,checkpoint.get(),1,id);
+    if (sqlite3_step(checkpoint.get()) != SQLITE_ROW)
+        throw std::logic_error("checkpoint resume requires an immutable manifest and at least one committed segment");
+    Statement update(db_,"UPDATE tasks SET state='queued',error='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='interrupted'");
+    bindText(db_,update.get(),1,id);
+    if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1)
+        throw std::runtime_error("checkpoint resume state transition failed");
+    transaction.commit();
+}
+
 std::size_t TaskStore::recoverInterrupted() {
     std::lock_guard lock(mutex_);
     requireWritable();
@@ -234,7 +253,7 @@ void TaskStore::finish(const std::string& id, TaskState state, const std::string
 }
 std::size_t TaskStore::recoverConfigured() {
     std::lock_guard lock(mutex_); requireWritable();
-    execute(db_, "UPDATE tasks SET state='interrupted',error='Worker ended while task was active. Restart requires a new output; segment checkpoint resume is not yet implemented.',updated_at=CURRENT_TIMESTAMP WHERE state IN ('running','paused') AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
+    execute(db_, "UPDATE tasks SET state='interrupted',error='Worker ended while task was active. Verify checkpoints to resume or create a new output to restart.',updated_at=CURRENT_TIMESTAMP WHERE state IN ('running','paused') AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
     return static_cast<std::size_t>(sqlite3_changes(db_));
 }
 

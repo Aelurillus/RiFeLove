@@ -89,13 +89,13 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
     assert "Source SHA-256 changed" in rows(database)[-1]["error"]
     assert not (root / "unavailable.mkv").exists()
 
-    # Terminate an actual paused writer, reject a second owner (including a
-    # hard-link alias), then detect interruption and restart under a new name.
+    # Terminate a writer with a committed segment plus a live partial, then
+    # detect interruption and resume the original queue task.
     crash = root / "crash"
     crash.mkdir()
-    crash_source = root / "崩溃恢复 6秒.mkv"
-    run(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=5:duration=6",
-        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=6",
+    crash_source = root / "崩溃恢复 11秒.mkv"
+    run(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=5:duration=11",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=11",
         "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited", "-c:v", "ffv1", "-c:a", "flac", crash_source)
     crash_source_hash = hashlib.sha256(crash_source.read_bytes()).hexdigest()
     marker = crash / "paused.txt"
@@ -105,9 +105,10 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
     holder_stderr = (crash / "holder.stderr.log").open("wb")
     holder = subprocess.Popen([str(native), "hold", str(crash), str(crash_source), str(pack), str(runtime), str(marker)], stdout=holder_stdout, stderr=holder_stderr)
     try:
-        deadline = time.monotonic() + 60
+        deadline = time.monotonic() + 120
         while not marker.exists():
-            assert holder.poll() is None, (crash / "holder.stderr.log").read_text(encoding="utf-8", errors="replace")
+            progress = (crash / "hold-progress.txt").read_text(encoding="utf-8", errors="replace") if (crash / "hold-progress.txt").exists() else "no processing event"
+            assert holder.poll() is None, ("last output frame: " + progress, (crash / "holder.stderr.log").read_text(encoding="utf-8", errors="replace"))
             assert time.monotonic() < deadline, "Hold worker failed to pause"
             time.sleep(0.05)
         crash_db = crash / "native-queue.sqlite"
@@ -119,18 +120,18 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
         assert "active owner" in run(native, "owner", alias, source, pack, runtime, marker, code=2).stderr
         holder.kill()
         holder.communicate(timeout=10)
-        stale = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in crash.glob("*.partial")}
+        stale = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in crash.rglob("*.partial")}
         assert stale, "Crash did not exercise an active temporary writer"
-        assert any(p.stat().st_size > 0 for p in stale), "Crash fixture did not reach flushed encoded output"
+        assert any(p.name.startswith("segment-") and p.suffix == ".mkv" for p in crash.rglob("*.mkv")), "Crash fixture did not commit a verified segment"
         run(native, "recover", crash, source, pack, runtime, marker)
         recovered = rows(crash_db)
-        assert [r["state"] for r in recovered] == ["interrupted", "completed"]
+        assert [r["state"] for r in recovered] == ["completed"]
         assert recovered[0]["identity"]["source"]["sha256"] == crash_source_hash
         assert all(p.exists() and hashlib.sha256(p.read_bytes()).hexdigest() == digest for p, digest in stale.items())
-        assert not (crash / "crash-output.mkv").exists()
-        restarted = json.loads(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "json", crash / "restarted-from-zero.mkv").stdout)
-        assert restarted["streams"][0]["nb_read_frames"] == "360"
-        assert pcm(crash_source) == pcm(crash / "restarted-from-zero.mkv")
+        assert (crash / "crash-output.mkv").is_file()
+        resumed = json.loads(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "json", crash / "crash-output.mkv").stdout)
+        assert resumed["streams"][0]["nb_read_frames"] == "66"
+        assert pcm(crash_source) == pcm(crash / "crash-output.mkv")
         assert hashlib.sha256(crash_source.read_bytes()).hexdigest() == crash_source_hash
     finally:
         if holder.poll() is None:
@@ -138,8 +139,44 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
             holder.communicate(timeout=10)
         holder_stdout.close()
         holder_stderr.close()
+
+    # Also interrupt after every output frame has been committed but before
+    # final assembly. Resume must assemble the saved segments with no pending
+    # frame in memory and must not append a duplicate or invent a frame.
+    complete = root / "crash-complete"
+    complete.mkdir()
+    complete_marker = complete / "paused.txt"
+    complete_stdout = (complete / "holder.stdout.log").open("wb")
+    complete_stderr = (complete / "holder.stderr.log").open("wb")
+    complete_holder = subprocess.Popen([str(native), "hold-complete", str(complete), str(crash_source), str(pack), str(runtime), str(complete_marker)], stdout=complete_stdout, stderr=complete_stderr)
+    try:
+        deadline = time.monotonic() + 120
+        while not complete_marker.exists():
+            progress = (complete / "hold-progress.txt").read_text(encoding="utf-8", errors="replace") if (complete / "hold-progress.txt").exists() else "no processing event"
+            assert complete_holder.poll() is None, ("last output frame: " + progress, (complete / "holder.stderr.log").read_text(encoding="utf-8", errors="replace"))
+            assert time.monotonic() < deadline, "Complete-checkpoint worker failed to pause before final assembly"
+            time.sleep(0.05)
+        complete_db = complete / "native-queue.sqlite"
+        assert rows(complete_db)[0]["state"] == "paused"
+        complete_holder.kill()
+        complete_holder.communicate(timeout=10)
+        complete_segments = [p for p in complete.rglob("segment-*.mkv")]
+        assert len(complete_segments) == 4, f"Expected all 64 output frames in four segments; found {len(complete_segments)}"
+        run(native, "recover", complete, crash_source, pack, runtime, complete_marker)
+        completed = rows(complete_db)
+        assert len(completed) == 1 and completed[0]["state"] == "completed"
+        complete_output = complete / "crash-output.mkv"
+        complete_probe = json.loads(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "json", complete_output).stdout)
+        assert complete_probe["streams"][0]["nb_read_frames"] == "64"
+        assert pcm(crash_source) == pcm(complete_output)
+    finally:
+        if complete_holder.poll() is None:
+            complete_holder.kill()
+            complete_holder.communicate(timeout=10)
+        complete_stdout.close()
+        complete_stderr.close()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original
     report = json.loads((reports / "queue-workflow.json").read_text())
-    report.update(cliBatch=True, sourceChangeRejected=True, processCrashDetected=True, hardLinkOwnerProtected=True, restartFromZero=True, checkpointResume=False, stalePartialCleanup=False, sequentialSessions=20, repeatedPixelsAndTimingExact=True)
+    report.update(cliBatch=True, sourceChangeRejected=True, processCrashDetected=True, hardLinkOwnerProtected=True, restartFromZero=True, checkpointResume=True, stalePartialCleanup=False, sequentialSessions=20, repeatedPixelsAndTimingExact=True)
     (reports / "queue-workflow.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 print("Native queue, CLI batch, ownership, pause, cancellation, retry, source integrity and process-crash tests passed")

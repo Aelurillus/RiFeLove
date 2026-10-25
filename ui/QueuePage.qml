@@ -64,7 +64,7 @@ Item {
     }
     function stageText(value) {
         const labels = {checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
-            loading_model: qsTr("加载模型"), processing: qsTr("AI 补帧"), encoding: qsTr("编码视频"),
+            loading_model: qsTr("加载模型"), processing: qsTr("AI 补帧"), resuming: qsTr("读取已完成片段"), encoding: qsTr("编码视频"),
             validating: qsTr("验证输出"), encoder_fallback: qsTr("切换编码器"), paused: qsTr("安全暂停点")}
         return labels[value] || value
     }
@@ -95,7 +95,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { text: qsTr("任务队列"); font.pixelSize: 27; font.bold: true }
-                Label { text: qsTr("批量导入、持久保存任务，并在安全检查点控制处理。中断任务从头重启，不会伪装成断点续传。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("批量导入并持久保存任务。已完成片段会在本机校验和保存；中断后可继续，也可从头重启。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             ActionButton { text: qsTr("重新连接"); visible: !page.queueController.available; onClicked: page.queueController.reconnect() }
         }
@@ -323,6 +323,7 @@ Item {
                         Label { text: outputPath; elide: Text.ElideMiddle; color: "#8da1bd"; font.pixelSize: 11; Layout.fillWidth: true; textFormat: Text.PlainText }
                         ActionButton { objectName: "cancelTaskButton"; text: qsTr("取消任务"); visible: taskState === "queued" || taskState === "running" || taskState === "paused"; enabled: taskState !== "running" || page.queueController.busy; onClicked: page.queueController.cancelTask(taskId) }
                         ActionButton { objectName: "retryTaskButton"; text: qsTr("重试"); visible: taskState === "failed" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.retryTask(taskId) }
+                        ActionButton { text: qsTr("从检查点继续"); visible: taskState === "interrupted" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.resumeTask(taskId) }
                         ActionButton { text: qsTr("从头重启"); visible: taskState === "interrupted" && !page.queueController.busy && !page.queueController.importing; onClicked: page.queueController.restartTask(taskId) }
                         ActionButton { text: qsTr("打开输出位置"); visible: taskState === "completed"; onClicked: page.queueController.openOutputFolder(taskId) }
                     }

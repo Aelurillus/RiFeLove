@@ -3,13 +3,26 @@
 #include "interpolation/scene_analysis.hpp"
 #include "media/video_writer.hpp"
 
+#include <functional>
+#include <optional>
+#include <vector>
+
 namespace rifelove {
+struct PipelineCheckpoint {
+    std::size_t framesPerSegment = 256;
+    std::vector<media::VideoSegmentInput> completedSegments;
+    std::function<std::string(std::uint64_t)> segmentPath;
+    std::function<void(std::uint64_t,std::uint64_t,std::uint64_t,const media::VideoSegmentInput&)> commitSegment;
+};
 struct PipelineSettings {
     PipelineSettings() { encoding.encoder = "auto"; }
     Rational targetRate{60};
     media::VideoEncodingSettings encoding;
     quality::SceneSettings scene;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
+    // Runtime-only queue integration. It is intentionally omitted from the
+    // serialized user job configuration.
+    std::optional<PipelineCheckpoint> checkpoint;
 };
 struct PipelineTimingBreakdown {
     double sourceProbeSeconds = 0;

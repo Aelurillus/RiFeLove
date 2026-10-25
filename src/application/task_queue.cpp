@@ -1,5 +1,8 @@
 #include "application/task_queue.hpp"
+#include "application/checkpoint_artifacts.hpp"
 #include "application/job_serialization.hpp"
+#include "media/media_engine.hpp"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <chrono>
 #include <set>
@@ -10,6 +13,8 @@
 
 namespace rifelove::application {
 namespace {
+using Json = nlohmann::json;
+constexpr std::size_t defaultCheckpointFramesPerSegment = 256;
 std::string utf8(const std::filesystem::path& path) { const auto value = path.u8string(); return {value.begin(),value.end()}; }
 std::filesystem::path path(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(),value.end())); }
 bool samePath(const std::string& a, const std::string& b) {
@@ -26,9 +31,25 @@ const ConfiguredTask& find(const std::vector<ConfiguredTask>& rows, const std::s
     return *row;
 }
 bool ownsOutput(TaskState state) { return state == TaskState::queued || state == TaskState::running || state == TaskState::paused || state == TaskState::interrupted; }
+std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment) {
+    const auto identity = Json::parse(identityText);
+    if (identity.value("schemaVersion",0) != 1) throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
+    auto job = source;
+    job.expectedSourceSha256 = identity.at("source").at("sha256").get<std::string>();
+    job.expectedModelSha256 = identity.at("model").at("sha256").get<std::string>();
+    job.expectedModelId = identity.at("model").at("id").get<std::string>();
+    job.expectedModelVersion = identity.at("model").at("version").get<std::string>();
+    return Json{{"schemaVersion",1},{"source",job.source},{"output",job.output},
+        {"job",Json::parse(serializeJob(job))},{"identity",identity},
+        {"mediaRuntime",media::MediaEngine::runtimeVersion()},
+        {"framesPerSegment",framesPerSegment}}.dump();
 }
-TaskQueue::TaskQueue(const std::filesystem::path& database)
-    : owner_(std::make_unique<QueueOwner>(database)), store_(utf8(database)) { recovered_ = store_.recoverConfigured(); }
+}
+TaskQueue::TaskQueue(const std::filesystem::path& database, std::size_t checkpointFramesPerSegment)
+    : owner_(std::make_unique<QueueOwner>(database)), store_(utf8(database)),checkpointFramesPerSegment_(checkpointFramesPerSegment) {
+    if (checkpointFramesPerSegment_ == 0) throw std::invalid_argument("Checkpoint segment size must be positive");
+    recovered_ = store_.recoverConfigured();
+}
 TaskQueue::~TaskQueue() { stop(); if (worker_.joinable()) worker_.join(); }
 void TaskQueue::stop() { std::stop_source source; { std::lock_guard lock(activity_); source = runCancel_; } source.request_stop(); }
 void TaskQueue::wait() { if (worker_.joinable()) worker_.join(); }
@@ -92,6 +113,27 @@ void TaskQueue::retry(const std::string& id) {
     for (const auto& other : rows) if (other.task.id != id && ownsOutput(other.task.state) && samePath(other.task.outputPath,task.task.outputPath)) throw std::logic_error("Another task owns the retry output");
     store_.transition(id,TaskState::queued);
 }
+void TaskQueue::resumeCheckpoint(const std::string& id) {
+    std::lock_guard lock(activity_);
+    const auto rows = store_.configured(); const auto& task = find(rows,id);
+    if (task.task.state != TaskState::interrupted) throw std::logic_error("Only interrupted tasks can resume from a checkpoint");
+    if (std::filesystem::exists(path(task.task.outputPath))) throw std::invalid_argument("Resume output already exists; keep it and create a new output task");
+    for (const auto& other : rows) if (other.task.id != id && ownsOutput(other.task.state) && samePath(other.task.outputPath,task.task.outputPath))
+        throw std::logic_error("Another task owns the interrupted output");
+    if (task.identity.empty()) throw std::logic_error("This task has no saved processing identity; restart it with a new output");
+    const auto manifest = store_.checkpointManifest(id);
+    if (manifest.empty()) throw std::logic_error("This task has no verified checkpoint segments; restart it with a new output");
+    auto job = parseJob(task.task.sourcePath,task.task.outputPath,task.configuration);
+    applyStoredIdentity(job,task.identity);
+    if (checkpointManifest(job,task.identity,checkpointFramesPerSegment_) != manifest)
+        throw std::logic_error("Task settings, model identity or local media runtime changed; restart with a new output");
+    CheckpointArtifacts artifacts(store_,id,path(task.task.outputPath));
+    const auto segments = artifacts.verifyCommitted();
+    if (segments.empty()) throw std::logic_error("This task has no complete verified checkpoint segments; restart it with a new output");
+    if (std::any_of(segments.begin(),segments.end(),[](const media::VideoSegmentInput& segment) { return segment.contract.encoder.empty(); }))
+        throw std::logic_error("Checkpoint encoder identity is missing; restart with a new output");
+    store_.resumeCheckpointed(id);
+}
 std::string TaskQueue::restart(const std::string& id, const std::string& output) {
     const auto rows = store_.configured(); const auto& old = find(rows,id);
     if (old.task.state != TaskState::interrupted) throw std::logic_error("Restart-from-zero applies only to interrupted tasks");
@@ -119,9 +161,27 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
         try {
             auto job = parseJob(current->task.sourcePath,current->task.outputPath,current->configuration);
             applyStoredIdentity(job,current->identity);
+            CheckpointArtifacts artifacts(store_,current->task.id,path(current->task.outputPath));
+            const auto configurePipeline = [&](const ProcessingIdentity& identity, PipelineSettings& settings) {
+                const auto identityJson = serializeIdentity(identity);
+                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_);
+                const auto previousManifest = artifacts.manifest();
+                if (!previousManifest.empty() && previousManifest != manifest)
+                    throw std::logic_error("Checkpoint identity or runtime changed; refusing to reuse prior segments");
+                store_.saveIdentity(current->task.id,identityJson);
+                artifacts.setManifest(manifest);
+                PipelineCheckpoint checkpoint;
+                checkpoint.framesPerSegment = checkpointFramesPerSegment_;
+                checkpoint.completedSegments = artifacts.verifyCommitted(cancellation.get_token());
+                checkpoint.segmentPath = [&artifacts](std::uint64_t index) { return utf8(artifacts.segmentPath(index)); };
+                checkpoint.commitSegment = [&artifacts,token = cancellation.get_token()](std::uint64_t index,std::uint64_t first,
+                    std::uint64_t end,const media::VideoSegmentInput& segment) {
+                    (void)artifacts.commit(index,first,end,segment,token);
+                };
+                settings.checkpoint = std::move(checkpoint);
+            };
             auto result = executeProcessingJob(job,[&](ProcessingEvent event) {
                 const auto now = std::chrono::steady_clock::now();
-                if (event.kind == ProcessingEvent::Kind::prepared && event.identity) store_.saveIdentity(current->task.id,serializeIdentity(*event.identity));
                 if (event.stage == "paused" || event.stage == "resumed") {
                     store_.transition(current->task.id,event.stage == "paused" ? TaskState::paused : TaskState::running);
                     event.outputFrames = lastProgress.outputFrames; event.aiFrames = lastProgress.aiFrames;
@@ -132,7 +192,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 }
                 lastProgress = event;
                 callback({current->task.id,std::move(event),false,{}});
-            },cancellation.get_token(),pause_);
+            },cancellation.get_token(),pause_,configurePipeline);
             result.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
             store_.finish(current->task.id,TaskState::completed,serializeResult(result));

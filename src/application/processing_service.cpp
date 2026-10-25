@@ -11,7 +11,8 @@ std::filesystem::path localPath(const std::string& value) { return std::filesyst
 std::timed_mutex engineSlot;
 }
 PipelineResult executeProcessingJob(const ProcessingJob& job, const std::function<void(ProcessingEvent)>& progress,
-    std::stop_token stop, PauseGate& pause) {
+    std::stop_token stop, PauseGate& pause,
+    const std::function<void(const ProcessingIdentity&,PipelineSettings&)>& configurePipeline) {
     const auto started = std::chrono::steady_clock::now();
     auto lastUpdate = started;
     std::string lastStage;
@@ -53,24 +54,30 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     inference::OnnxCudaConfig config; config.runtimeDirectory = job.runtimeDirectory;
     inference::OnnxCudaBackend backend(device,config); backend.loadModel(pack);
     const auto capabilities = backend.capabilities();
+    ProcessingIdentity processingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info(),capabilities.backend};
     ProcessingEvent prepared; prepared.kind = ProcessingEvent::Kind::prepared; prepared.stage = "loading_model";
     prepared.detail = capabilities.fallbackReason;
-    prepared.identity = ProcessingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info(),capabilities.backend};
+    prepared.identity = processingIdentity;
     send(std::move(prepared));
+    auto pipelineSettings = job.settings;
+    if (configurePipeline) configurePipeline(processingIdentity,pipelineSettings);
     checkpoint();
-    return interpolateVideo(job.source,job.output,job.settings,*device,backend,[&](const PipelineProgress& value) {
+    return interpolateVideo(job.source,job.output,pipelineSettings,*device,backend,[&](const PipelineProgress& value) {
         // A completed progress event follows atomic output publication. Do
         // not acknowledge a new pause/cancel as though that output is partial.
-        if (value.stage != "completed") checkpoint();
         const auto now = std::chrono::steady_clock::now();
-        if (value.stage == lastStage && now - lastUpdate < std::chrono::milliseconds(100)) return;
-        lastUpdate = now; lastStage = value.stage;
-        ProcessingEvent event; event.stage = value.stage; event.detail = value.detail; event.encoder = value.encoder;
-        event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames; event.timestamp = value.timestamp;
-        event.timings = value.timings;
-        const auto seconds = std::chrono::duration<double>(now - started).count();
-        event.processingFps = seconds > 0 ? static_cast<double>(value.outputFrames) / seconds : 0;
-        send(std::move(event));
+        if (value.stage != lastStage || now - lastUpdate >= std::chrono::milliseconds(100)) {
+            lastUpdate = now; lastStage = value.stage;
+            ProcessingEvent event; event.stage = value.stage; event.detail = value.detail; event.encoder = value.encoder;
+            event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames; event.timestamp = value.timestamp;
+            event.timings = value.timings;
+            const auto seconds = std::chrono::duration<double>(now - started).count();
+            event.processingFps = seconds > 0 ? static_cast<double>(value.outputFrames) / seconds : 0;
+            send(std::move(event));
+        }
+        // Honor a pause/cancel requested by the observer at the just-reported
+        // safe boundary. Check even when this progress event was throttled.
+        if (value.stage != "completed") checkpoint();
     },stop);
 }
 ProcessingService::~ProcessingService() { cancel(); if (worker_.joinable()) worker_.join(); }
