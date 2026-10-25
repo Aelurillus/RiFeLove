@@ -120,6 +120,26 @@ class NativeMediaIntegration(unittest.TestCase):
         self.assertEqual(len(info["chapters"]), 1)
         self.assertEqual(info["chapters"][0]["metadata"]["title"], "Opening")
 
+    def test_probe_and_decode_h264_hevc_and_av1_inputs(self):
+        cases = (
+            ("h264", "mp4", "libopenh264", ("-b:v", "256k")),
+            ("hevc", "mkv", "libkvazaar", ("-qp", "32")),
+            ("av1", "mkv", "libaom-av1", ("-crf", "40", "-b:v", "0", "-cpu-used", "8")),
+        )
+        for codec, extension, encoder, encoder_options in cases:
+            with self.subTest(codec=codec, container=extension):
+                source = self.root / f"codec-input-{codec}.{extension}"
+                invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i",
+                       "testsrc2=size=96x64:rate=24000/1001:duration=0.5", "-frames:v", "12", "-an",
+                       "-c:v", encoder, *encoder_options, source)
+                info = self.probe(source)
+                self.assertEqual(info["streams"][0]["codec"], codec)
+                self.assertEqual((info["streams"][0]["width"], info["streams"][0]["height"]), (96, 64))
+                self.assertEqual(Fraction(info["streams"][0]["average_rate"]), Fraction(24000, 1001))
+                records = self.scan(source)
+                self.assertEqual(records[-1]["event"], "decode_summary")
+                self.assertEqual(records[-1]["frames"], 12)
+
     def test_media_capabilities_open_encoder_contexts_for_source_profile(self):
         report = json.loads(invoke(CLI, "media-capabilities", self.reordered, "--fps", "60000/1001").stdout)
         self.assertEqual(report["event"], "media_capabilities")
