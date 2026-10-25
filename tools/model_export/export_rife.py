@@ -186,9 +186,10 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
         passed = all(case["passed"] for case in validation)
         validated_backends = ["pytorch_cpu", "onnxruntime_cpu"]
         supported_input_profiles = ["bt709-sdr8", "bt470bg-sdr8", "bt709-sdr10", "bt470bg-sdr10"]
+        model_adapter = {"id": "rife-sdr-v1", "version": 1}
         report = {"status": "passed_cpu_reference" if passed else "failed_cpu_reference", "providers": session.get_providers(),
                   "torch": torch.__version__, "onnx": onnx.__version__, "onnxruntime": ort.__version__,
-                  "model_sha256": graph_hash, "numerical_profile": numerical_profile,
+                  "model_sha256": graph_hash, "model_adapter": model_adapter, "numerical_profile": numerical_profile,
                   "supported_input_profiles": supported_input_profiles,
                   "validated_backends": validated_backends,
                   "warp_adapter_max_abs_error": adapter_error, "ort_max_abs_error_limit": limits["maximum"], "minimum_psnr_db": limits["psnr"],
@@ -208,6 +209,7 @@ def export_pack(source_directory, destination, manifest, numerical_profile="stri
         descriptor = {"schemaVersion": 2, "id": pack_id,
                       "displayName": f"{display_name} FP32 {numerical_profile.upper()} SDR 8/10-bit",
                       "family": "rife", "version": model_version,
+                      "adapter": model_adapter,
                       "modelFile": "model.onnx", "sha256": graph_hash,
                       "license": {"id": "MIT", "file": "LICENSE.txt", "sha256": digest(license_bytes)},
                       "provenance": {"manifestFile": "source-manifest.json", "manifestSha256": digest(source_manifest_bytes)},

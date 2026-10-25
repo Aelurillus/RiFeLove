@@ -1,6 +1,5 @@
 #include "core/pipeline/video_pipeline.hpp"
 #include "common/logging.hpp"
-#include "media/rife_color.hpp"
 #include "timeline/timeline.hpp"
 #include <algorithm>
 #include <array>
@@ -18,9 +17,6 @@ Rational encodingTimeBase(Rational sourceBase, Rational targetRate) {
     const auto factor = a / std::gcd(a,b);
     if (factor > std::numeric_limits<int>::max() / b) throw std::invalid_argument("Source and target times need an encoder time base beyond 32-bit range");
     return Rational(1,factor * b);
-}
-quality::RgbView view(const media::RifeSdrFrame& frame) {
-    return {frame.pixels,frame.width,frame.height,frame.paddedWidth,static_cast<std::size_t>(frame.paddedWidth) * static_cast<std::size_t>(frame.paddedHeight)};
 }
 struct CachedFrame { media::DecodedFrame source; media::RifeSdrFrame prepared; std::optional<inference::GpuFrame> gpu; };
 class ScopedTiming final {
@@ -102,6 +98,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto capabilities = backend.capabilities();
     if (capabilities.modelId.empty() || !capabilities.dynamicTimestep || capabilities.spatialMultiple != 64)
         throw std::invalid_argument("Selected backend/model does not meet the dynamic RIFE contract");
+    const auto adapterRegistry = settings.modelAdapters ? settings.modelAdapters : interpolation::defaultModelAdapterRegistry();
+    const auto& adapter = adapterRegistry->resolve(capabilities);
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
     PipelineResult result{};
@@ -116,7 +114,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto paddedHeight = static_cast<std::size_t>(((video->height + 63) / 64) * 64);
     if (paddedWidth * paddedHeight * 3 * sizeof(float) > settings.hostFloatBufferLimit)
         throw std::invalid_argument("Input exceeds the configured host float-buffer limit");
-    const auto inputProfile = media::rifeSdrInputProfile(video->color);
+    const auto inputProfile = adapter.inputProfile(video->color);
     const bool legacySdr8 = video->color.bitDepth == 8 &&
         std::find(capabilities.supportedInputProfiles.begin(),capabilities.supportedInputProfiles.end(),"legacy-unverified") != capabilities.supportedInputProfiles.end();
     if (!legacySdr8 && std::find(capabilities.supportedInputProfiles.begin(),capabilities.supportedInputProfiles.end(),inputProfile) == capabilities.supportedInputProfiles.end())
@@ -223,6 +221,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto outputTickTolerance = writer->outputTimeBase() / Rational(2);
     result.timings.encoderSetupSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - encoderSetupStarted).count();
     result.modelId = capabilities.modelId; result.backend = capabilities.backend;
+    result.adapterId = capabilities.adapterId; result.adapterVersion = capabilities.adapterVersion;
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
     std::optional<CachedFrame> previous;
     std::optional<CfrClock> clock;
@@ -320,7 +319,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             right.source.color.matrix != left.source.color.matrix || right.source.color.range != left.source.color.range)
             throw std::runtime_error("Midstream resolution/format/color changes require an explicit normalization policy");
         const auto analysis = measure(result.timings.sceneAnalysisSeconds,[&] {
-            return quality::analyzePair(view(left.prepared),view(right.prepared),settings.scene);
+            return quality::analyzePair(adapter.analysisView(left.prepared),adapter.analysisView(right.prepared),settings.scene);
         });
         if (analysis.action == quality::PairAction::sceneCutHold) ++result.sceneCuts;
         else if (analysis.action == quality::PairAction::duplicateHold) ++result.duplicatePairs;
@@ -357,7 +356,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 });
                 reusableOutput = device.reclaim(std::move(interpolated.frame.pixels));
                 ++result.aiFrames;
-                auto restored = measure(result.timings.colorRestoreSeconds,[&] { return media::restoreRifeSdr(generated,stop); });
+                auto restored = measure(result.timings.colorRestoreSeconds,[&] { return adapter.postprocess(generated,stop); });
                 emit(std::move(restored));
             }
         }
@@ -369,7 +368,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         ScopedTiming callbackTiming(decodeCallbackSeconds);
         checkStop(stop);
         if (!frame.timestamp) throw std::runtime_error("Interpolation requires a known timestamp for every source frame");
-        auto prepared = measure(result.timings.sourcePreparationSeconds,[&] { return media::prepareRifeSdr(frame,settings.hostFloatBufferLimit,stop); });
+        auto prepared = measure(result.timings.sourcePreparationSeconds,[&] { return adapter.preprocess(frame,settings.hostFloatBufferLimit,stop); });
         CachedFrame current{frame,std::move(prepared),{}};
         if (!clock) {
             origin = frame.timestamp; clock.emplace(*origin,settings.targetRate);

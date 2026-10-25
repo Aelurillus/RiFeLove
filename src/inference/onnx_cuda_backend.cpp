@@ -350,6 +350,8 @@ public:
         }
         if (!session.value) session = buildSession(false);
         modelId = model.id;
+        adapterId = model.adapterId;
+        adapterVersion = model.adapterVersion;
         supportedInputProfiles = model.supportedInputProfiles;
         profiled = !config.profilePrefix.empty();
     }
@@ -380,7 +382,7 @@ public:
     ModelCapabilities capabilities() const {
         std::lock_guard lock(mutex);
         const bool fp16 = config.enableTensorRtFp16 && resolvedBackend == "onnxruntime_tensorrt_cuda";
-        return {resolvedBackend, modelId, 64, true, fp16, fallbackReason, supportedInputProfiles};
+        return {resolvedBackend, modelId, 64, true, fp16, fallbackReason, supportedInputProfiles, adapterId, adapterVersion};
     }
 private:
     InterpolationResult execute(InterpolationRequest& request, std::stop_token shutdown) {
@@ -485,6 +487,8 @@ private:
     bool active = false;
     bool profiled = false;
     std::string modelId;
+    std::string adapterId = "rife-sdr-v1";
+    int adapterVersion = 1;
     std::vector<std::string> supportedInputProfiles;
     std::string resolvedBackend = "onnxruntime_cuda";
     std::string fallbackReason;

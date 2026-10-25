@@ -133,7 +133,8 @@ std::string serializeProgress(const ProcessingEvent& event) {
         {"processingFps",event.processingFps},{"timestamp",optional(event.timestamp)},{"timings",timingBreakdown(event.timings)}}.dump();
 }
 std::string serializeResult(const PipelineResult& r) {
-    return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},{"inferenceFallbackReason",r.inferenceFallbackReason},
+    return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},
+        {"modelAdapter",{{"id",r.adapterId},{"version",r.adapterVersion}}},{"inferenceFallbackReason",r.inferenceFallbackReason},
         {"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
         {"aiFrames",r.aiFrames},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
         {"recoveredTimestamps",r.recoveredTimestamps},
@@ -163,6 +164,7 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
             {"submittedFrames",result.video.framesSubmitted},{"videoPackets",result.video.videoPackets},{"copiedPackets",result.video.copiedPackets},
             {"firstTimestamp",result.video.firstTimestamp.toString()},{"endExclusive",result.video.endExclusive.toString()}}},
         {"model",{{"id",result.modelId},{"version",context.modelVersion},{"sha256",context.modelSha256},{"backend",result.backend},
+            {"adapter",{{"id",result.adapterId},{"version",result.adapterVersion}}},
             {"fallbackReason",result.inferenceFallbackReason}}},
         {"gpu",{{"ordinal",device.ordinal},{"name",device.name},{"pciBusId",device.pciBusId},
             {"computeCapability",std::to_string(device.computeMajor) + "." + std::to_string(device.computeMinor)},

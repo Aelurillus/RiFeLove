@@ -1,9 +1,11 @@
 #pragma once
 #include "inference/interpolation_backend.hpp"
+#include "interpolation/model_adapter.hpp"
 #include "interpolation/scene_analysis.hpp"
 #include "media/video_writer.hpp"
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -21,6 +23,8 @@ struct PipelineSettings {
     Rational targetRate{60};
     media::VideoEncodingSettings encoding;
     quality::SceneSettings scene;
+    // Runtime-only extension registry; omitted from serialized user settings.
+    std::shared_ptr<const interpolation::ModelAdapterRegistry> modelAdapters;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     // Runtime-only queue integration. It is intentionally omitted from the
     // serialized user job configuration.
@@ -73,6 +77,8 @@ struct PipelineResult {
     std::size_t recoveredTimestamps;
     std::string modelId;
     std::string backend;
+    std::string adapterId = "rife-sdr-v1";
+    int adapterVersion = 1;
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;

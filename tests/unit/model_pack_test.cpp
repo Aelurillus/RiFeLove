@@ -47,7 +47,8 @@ void makeV2Pack(const std::filesystem::path& root) {
     const std::vector<std::string> profiles{"bt709-sdr8","bt470bg-sdr8","bt709-sdr10","bt470bg-sdr10"};
     const std::string validation = Json{
         {"status", "passed_cpu_reference"}, {"model_sha256", hashText(graph)},
-        {"numerical_profile", "sdr8"}, {"validated_backends", backends}, {"supported_input_profiles",profiles},
+        {"numerical_profile", "sdr8"}, {"model_adapter",{{"id","rife-sdr-v1"},{"version",1}}},
+        {"validated_backends", backends}, {"supported_input_profiles",profiles},
         {"cases", Json::array({Json{{"passed", true}}})}
     }.dump(2) + "\n";
     writeText(root / "model.onnx", graph);
@@ -56,7 +57,8 @@ void makeV2Pack(const std::filesystem::path& root) {
     writeText(root / "validation.json", validation);
     const Json descriptor{
         {"schemaVersion", 2}, {"id", "rife-4.25-fp32-sdr8"}, {"displayName", "RIFE 4.25 FP32 SDR8"},
-        {"family", "rife"}, {"version", "4.25"}, {"modelFile", "model.onnx"}, {"sha256", hashText(graph)},
+        {"family", "rife"}, {"version", "4.25"}, {"adapter",{{"id","rife-sdr-v1"},{"version",1}}},
+        {"modelFile", "model.onnx"}, {"sha256", hashText(graph)},
         {"license", {{"id", "MIT"}, {"file", "LICENSE.txt"}, {"sha256", hashText(license)}}},
         {"provenance", {{"manifestFile", "source-manifest.json"}, {"manifestSha256", hashText(manifest)}}},
         {"capabilities", {
@@ -125,6 +127,8 @@ TEST(ModelIntegrity, V2PackVerifiesWeightsLicenseProvenanceAndValidation) {
     EXPECT_EQ(model.id, "rife-4.25-fp32-sdr8");
     EXPECT_EQ(model.displayName, "RIFE 4.25 FP32 SDR8");
     EXPECT_EQ(model.version, "4.25");
+    EXPECT_EQ(model.adapterId, "rife-sdr-v1");
+    EXPECT_EQ(model.adapterVersion, 1);
     EXPECT_EQ(model.licenseId, "MIT");
     EXPECT_EQ(model.sourceRepository, "https://github.com/hzwer/Practical-RIFE");
     EXPECT_EQ(model.upstreamCommit, "abcdef0123456789");
@@ -133,6 +137,15 @@ TEST(ModelIntegrity, V2PackVerifiesWeightsLicenseProvenanceAndValidation) {
     EXPECT_EQ(model.supportedInputProfiles, (std::vector<std::string>{"bt709-sdr8","bt470bg-sdr8","bt709-sdr10","bt470bg-sdr10"}));
     EXPECT_FALSE(model.hdrQualified);
     EXPECT_TRUE(model.metadataIntegrityVerified);
+}
+
+TEST(ModelIntegrity, RejectsAdapterVersionThatDoesNotMatchNumericalEvidence) {
+    TemporaryDirectory temporary("rifelove-v2-adapter-");
+    makeV2Pack(temporary.value);
+    auto descriptor = readJson(temporary.value / "model.json");
+    descriptor["adapter"]["version"] = 2;
+    writeJson(temporary.value / "model.json",descriptor);
+    EXPECT_THROW((void)loadModelPack(temporary.value),std::invalid_argument);
 }
 
 TEST(ModelIntegrity, InputProfileMatchingKeepsLegacyPacksToSdr8) {

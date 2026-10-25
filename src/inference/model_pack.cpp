@@ -68,6 +68,31 @@ void validateTensorContract(const Json& capabilities) {
         throw std::invalid_argument("Unsupported RIFE model tensor contract");
 }
 
+void readAdapterMetadata(const Json& descriptor, ModelPack& model) {
+    const auto found = descriptor.find("adapter");
+    if (found == descriptor.end()) return; // Compatibility with existing RIFE packs.
+    if (!found->is_object()) throw std::invalid_argument("Model adapter metadata must be an object");
+    model.adapterId = requireString(*found,"id",128);
+    const auto version = found->find("version");
+    if (version == found->end() || !version->is_number_integer())
+        throw std::invalid_argument("Model adapter version is missing or invalid");
+    if (version->is_number_unsigned()) {
+        const auto value = version->get<std::uint64_t>();
+        if (value == 0 || value > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+            throw std::invalid_argument("Model adapter version is out of range");
+        model.adapterVersion = static_cast<int>(value);
+    } else {
+        const auto value = version->get<std::int64_t>();
+        if (value <= 0 || value > std::numeric_limits<int>::max())
+            throw std::invalid_argument("Model adapter version is out of range");
+        model.adapterVersion = static_cast<int>(value);
+    }
+    if (!std::all_of(model.adapterId.begin(),model.adapterId.end(),[](unsigned char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        }))
+        throw std::invalid_argument("Model adapter identifier contains unsupported characters");
+}
+
 std::vector<std::byte> readLegacyLicense(const std::filesystem::path& directory, const Json& descriptor, std::string& licenseId) {
     licenseId = requireString(descriptor, "license", 128);
     return readLocalFile(packFile(directory, requireString(descriptor, "licenseFile")), 1024 * 1024);
@@ -105,6 +130,27 @@ void readV2Metadata(const std::filesystem::path& directory, const Json& descript
         requireString(report, "numerical_profile", 128) != model.numericalProfile ||
         requireStringArray(report, "validated_backends") != model.validatedBackends)
         throw std::invalid_argument("Model validation report does not match the declared model profile");
+    const auto reportAdapter = report.find("model_adapter");
+    if (reportAdapter == report.end()) {
+        if (model.adapterId != "rife-sdr-v1" || model.adapterVersion != 1)
+            throw std::invalid_argument("Custom model adapter is missing from its numerical validation report");
+    } else {
+        if (!reportAdapter->is_object() || !reportAdapter->contains("id") || !reportAdapter->at("id").is_string() ||
+            reportAdapter->at("id").get<std::string>() != model.adapterId || !reportAdapter->contains("version") ||
+            !reportAdapter->at("version").is_number_integer())
+            throw std::invalid_argument("Model validation report does not match the selected adapter");
+        const auto version = reportAdapter->at("version");
+        int reportVersion = -1;
+        if (version.is_number_unsigned()) {
+            const auto value = version.get<std::uint64_t>();
+            if (value <= static_cast<std::uint64_t>(std::numeric_limits<int>::max())) reportVersion = static_cast<int>(value);
+        } else {
+            const auto value = version.get<std::int64_t>();
+            if (value >= std::numeric_limits<int>::min() && value <= std::numeric_limits<int>::max()) reportVersion = static_cast<int>(value);
+        }
+        if (reportVersion != model.adapterVersion)
+            throw std::invalid_argument("Model validation report does not match the selected adapter");
+    }
     const auto cases = report.find("cases");
     if (cases == report.end() || !cases->is_array() || cases->empty())
         throw std::invalid_argument("Model validation report contains no cases");
@@ -208,6 +254,7 @@ ModelPack loadModelPack(const std::filesystem::path& directory) {
     if (model.displayName.empty() || model.displayName.size() > 256) throw std::invalid_argument("Invalid model display name");
     model.family = requireString(json, "family", 64);
     if (model.family != "rife") throw std::invalid_argument("Unsupported model family");
+    readAdapterMetadata(json,model);
     model.version = requireString(json, "version", 128);
     model.sha256 = requireString(json, "sha256", 64);
     if (!isHash(model.sha256)) throw std::invalid_argument("Invalid model graph SHA-256");

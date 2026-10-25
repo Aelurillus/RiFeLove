@@ -21,6 +21,11 @@ struct ModelPack {
     std::string displayName;
     std::string family;
     int schemaVersion = 1;
+    // The installed, application-owned adapter that maps media frames to this
+    // model's canonical tensor contract. Packs select an adapter by identity;
+    // they never contain executable preprocessing code.
+    std::string adapterId = "rife-sdr-v1";
+    int adapterVersion = 1;
     std::string licenseId;
     std::string licenseSha256;
     std::string numericalProfile;

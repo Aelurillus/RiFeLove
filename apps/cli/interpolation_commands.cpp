@@ -113,6 +113,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         }
         std::cout << "{\"event\":\"interpolation_completed\",\"model\":" << jsonString(result.modelId) << ",\"model_sha256\":" << jsonString(pack.sha256)
             << ",\"backend\":" << jsonString(result.backend) << ",\"encoder\":" << jsonString(result.video.encoder)
+            << ",\"model_adapter\":" << jsonString(result.adapterId) << ",\"model_adapter_version\":" << result.adapterVersion
             << ",\"inference_fallback_reason\":" << jsonString(result.inferenceFallbackReason)
             << ",\"encoder_fallback_reason\":" << jsonString(result.encoderFallbackReason) << ",\"target_fps\":" << jsonString(settings.targetRate.toString())
             << ",\"source_frames\":" << result.sourceFrames << ",\"output_frames\":" << result.video.framesSubmitted << ",\"ai_frames\":" << result.aiFrames
