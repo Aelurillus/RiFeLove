@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
             }
             if (studio.status() == "processing") {
                 sawEta = sawEta || progressLabel->property("text").toString().contains(QStringLiteral("剩余约"));
-                sawModeNotice = sawModeNotice || progressLabel->property("text").toString().contains(QStringLiteral("软件编码 · CUDA 补帧"));
+                sawModeNotice = sawModeNotice || progressLabel->property("text").toString().contains(QStringLiteral("CPU H.264 编码 · CUDA RIFE 插帧"));
             }
         });
         QTimer heartbeat; heartbeat.setInterval(5);

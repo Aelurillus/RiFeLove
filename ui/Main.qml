@@ -507,10 +507,16 @@ ApplicationWindow {
                                 const frames = Number(window.progress.frames || 0)
                                 const expected = Number(window.progress.estimatedFrames || 0)
                                 const speed = Number(window.progress.fps || 0)
+                                const encoder = String(window.progress.encoder || "")
+                                const softwareEncoderName = ({
+                                    libopenh264: qsTr("CPU H.264"),
+                                    libkvazaar: qsTr("CPU HEVC"),
+                                    "libaom-av1": qsTr("CPU AV1")
+                                })[encoder] || qsTr("CPU 软件")
                                 let value = expected > 0 ? qsTr("%1 / 约 %2 帧").arg(frames).arg(expected) : qsTr("%1 帧").arg(frames)
                                 value += " · " + speed.toFixed(1) + qsTr(" 处理 FPS")
                                 if (window.progress.encoderFallbackReason)
-                                    value += " · " + qsTr("软件编码 · CUDA 补帧")
+                                    value += " · " + qsTr("%1 编码 · CUDA RIFE 插帧").arg(softwareEncoderName)
                                 if (studio.busy) {
                                     if (expected > 0 && speed > 0)
                                         value += " · " + qsTr("剩余约 %1").arg(ProgressEstimate.formatDuration(Math.max(0,expected - frames) / speed))
