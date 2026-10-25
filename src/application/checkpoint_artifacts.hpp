@@ -22,6 +22,9 @@ public:
     void setManifest(const std::string& manifest);
     [[nodiscard]] std::string manifest() const;
     [[nodiscard]] std::vector<media::VideoSegmentInput> verifyCommitted(std::stop_token stop = {}) const;
+    // Remove only unjournaled segment outputs inside this task-owned directory.
+    // Call after the manifest and committed segments have been verified.
+    [[nodiscard]] std::size_t removeUncommittedSegments(std::stop_token stop = {}) const;
     [[nodiscard]] TaskCheckpointSegment commit(std::uint64_t index, std::uint64_t firstOutputFrame,
         std::uint64_t endOutputFrame, const media::VideoSegmentInput& segment, std::stop_token stop = {});
 

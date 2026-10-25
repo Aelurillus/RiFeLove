@@ -122,12 +122,19 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
         holder.communicate(timeout=10)
         stale = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in crash.rglob("*.partial")}
         assert stale, "Crash did not exercise an active temporary writer"
-        assert any(p.name.startswith("segment-") and p.suffix == ".mkv" for p in crash.rglob("*.mkv")), "Crash fixture did not commit a verified segment"
+        committed_segments = [p for p in crash.rglob("segment-*.mkv")]
+        assert committed_segments, "Crash fixture did not commit a verified segment"
+        orphan = committed_segments[0].parent / "segment-000001-0000000000000001.mkv"
+        orphan.write_bytes(b"uncommitted checkpoint segment from a simulated crash window")
+        unrelated = committed_segments[0].parent / "keep-note.txt"
+        unrelated.write_text("preserve unrelated task data", encoding="utf-8")
         run(native, "recover", crash, source, pack, runtime, marker)
         recovered = rows(crash_db)
         assert [r["state"] for r in recovered] == ["completed"]
         assert recovered[0]["identity"]["source"]["sha256"] == crash_source_hash
-        assert all(p.exists() and hashlib.sha256(p.read_bytes()).hexdigest() == digest for p, digest in stale.items())
+        assert all(not p.exists() for p in stale), "Checkpoint resume retained stale task-owned partial writers"
+        assert not orphan.exists(), "Checkpoint resume retained an unjournaled final segment"
+        assert unrelated.read_text(encoding="utf-8") == "preserve unrelated task data"
         assert (crash / "crash-output.mkv").is_file()
         resumed = json.loads(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "json", crash / "crash-output.mkv").stdout)
         assert resumed["streams"][0]["nb_read_frames"] == "66"
@@ -177,6 +184,9 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
         complete_stderr.close()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original
     report = json.loads((reports / "queue-workflow.json").read_text())
-    report.update(cliBatch=True, sourceChangeRejected=True, processCrashDetected=True, hardLinkOwnerProtected=True, restartFromZero=True, checkpointResume=True, stalePartialCleanup=False, sequentialSessions=20, repeatedPixelsAndTimingExact=True)
+    report.update(cliBatch=True, sourceChangeRejected=True, processCrashDetected=True, hardLinkOwnerProtected=True,
+                  restartFromZero=True, checkpointResume=True, stalePartialCleanup=True,
+                  uncommittedSegmentCleanup=True, unrelatedTaskFilesPreserved=True, sequentialSessions=20,
+                  repeatedPixelsAndTimingExact=True)
     (reports / "queue-workflow.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 print("Native queue, CLI batch, ownership, pause, cancellation, retry, source integrity and process-crash tests passed")

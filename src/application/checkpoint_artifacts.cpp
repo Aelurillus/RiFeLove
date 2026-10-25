@@ -2,12 +2,15 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <iomanip>
 #include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #ifndef NOMINMAX
@@ -48,8 +51,46 @@ bool isSegmentName(const std::filesystem::path& path, std::uint64_t index) {
     if (path.has_root_path() || path.has_parent_path() || path.extension() != ".mkv") return false;
     const auto name = path.filename().wstring();
     const auto prefix = widenAscii(segmentPrefix(index));
-    return name.size() > prefix.size() + 4 &&
-        CompareStringOrdinal(name.data(),static_cast<int>(prefix.size()),prefix.data(),static_cast<int>(prefix.size()),TRUE) == CSTR_EQUAL;
+    if (name.size() != prefix.size() + 16 + 4 ||
+        CompareStringOrdinal(name.data(),static_cast<int>(prefix.size()),prefix.data(),static_cast<int>(prefix.size()),TRUE) != CSTR_EQUAL ||
+        CompareStringOrdinal(name.data() + name.size() - 4,4,L".mkv",4,TRUE) != CSTR_EQUAL) return false;
+    return std::all_of(name.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+        name.begin() + static_cast<std::ptrdiff_t>(prefix.size() + 16),[](wchar_t value) { return std::iswxdigit(value) != 0; });
+}
+
+std::optional<std::uint64_t> segmentIndex(const std::wstring& name) {
+    constexpr std::wstring_view prefix = L"segment-";
+    if (name.size() < prefix.size() + 8 ||
+        CompareStringOrdinal(name.data(),static_cast<int>(prefix.size()),prefix.data(),static_cast<int>(prefix.size()),TRUE) != CSTR_EQUAL)
+        return {};
+    std::size_t end = prefix.size();
+    std::uint64_t value = 0;
+    std::size_t digits = 0;
+    while (end < name.size() && name[end] >= L'0' && name[end] <= L'9') {
+        const auto digit = static_cast<std::uint64_t>(name[end] - L'0');
+        if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10) return {};
+        value = value * 10 + digit;
+        ++end;
+        ++digits;
+    }
+    if (digits < 6 || end >= name.size() || name[end] != L'-') return {};
+    return value;
+}
+
+bool isSegmentTemporary(const std::wstring& name, std::uint64_t index) {
+    constexpr std::wstring_view marker = L".rifelove-";
+    constexpr std::wstring_view suffix = L".partial";
+    const std::wstring_view view(name);
+    if (view.size() <= suffix.size() || view.substr(view.size() - suffix.size()) != suffix) return false;
+    const auto markerPosition = view.rfind(marker);
+    if (markerPosition == std::wstring_view::npos) return false;
+    const auto segment = std::filesystem::path(std::wstring(view.substr(0,markerPosition)));
+    if (!isSegmentName(segment,index)) return false;
+    const auto randoms = view.substr(markerPosition + marker.size(),view.size() - markerPosition - marker.size() - suffix.size());
+    const auto separator = randoms.find(L'-');
+    if (separator == std::wstring_view::npos || separator == 0 || separator + 1 >= randoms.size()) return false;
+    return std::all_of(randoms.begin(),randoms.begin() + static_cast<std::ptrdiff_t>(separator),[](wchar_t value) { return value >= L'0' && value <= L'9'; }) &&
+        std::all_of(randoms.begin() + static_cast<std::ptrdiff_t>(separator + 1),randoms.end(),[](wchar_t value) { return value >= L'0' && value <= L'9'; });
 }
 
 bool reparsePoint(const std::filesystem::path& path) {
@@ -159,6 +200,32 @@ std::vector<media::VideoSegmentInput> CheckpointArtifacts::verifyCommitted(std::
         result.push_back({utf8(path),std::move(contract)});
     }
     return result;
+}
+
+std::size_t CheckpointArtifacts::removeUncommittedSegments(std::stop_token stop) const {
+    const auto committed = store_.checkpointSegments(taskId_);
+    const auto firstUncommitted = static_cast<std::uint64_t>(committed.size());
+    ensureDirectory();
+    std::size_t removed = 0;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(directory_,error), end;
+    if (error) throw std::filesystem::filesystem_error("open checkpoint artifact directory",directory_,error);
+    for (; iterator != end; iterator.increment(error)) {
+        if (error) throw std::filesystem::filesystem_error("inspect checkpoint artifacts",directory_,error);
+        if (stop.stop_requested()) throw std::runtime_error("Checkpoint cleanup cancelled");
+        const auto name = iterator->path().filename().wstring();
+        const auto index = segmentIndex(name);
+        if (!index || *index < firstUncommitted) continue;
+        if (!isSegmentTemporary(name,*index) && !isSegmentName(iterator->path().filename(),*index)) continue;
+        ensurePlainPath(iterator->path());
+        const auto status = iterator->symlink_status(error);
+        if (error) throw std::filesystem::filesystem_error("inspect checkpoint artifact",iterator->path(),error);
+        if (!std::filesystem::is_regular_file(status)) continue;
+        if (std::filesystem::remove(iterator->path(),error)) ++removed;
+        else if (error) throw std::filesystem::filesystem_error("remove checkpoint artifact",iterator->path(),error);
+    }
+    if (error) throw std::filesystem::filesystem_error("finish checkpoint artifact cleanup",directory_,error);
+    return removed;
 }
 
 TaskCheckpointSegment CheckpointArtifacts::commit(std::uint64_t index, std::uint64_t firstOutputFrame,

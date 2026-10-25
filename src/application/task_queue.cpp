@@ -132,6 +132,7 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     if (segments.empty()) throw std::logic_error("This task has no complete verified checkpoint segments; restart it with a new output");
     if (std::any_of(segments.begin(),segments.end(),[](const media::VideoSegmentInput& segment) { return segment.contract.encoder.empty(); }))
         throw std::logic_error("Checkpoint encoder identity is missing; restart with a new output");
+    (void)artifacts.removeUncommittedSegments();
     store_.resumeCheckpointed(id);
 }
 std::string TaskQueue::restart(const std::string& id, const std::string& output) {
