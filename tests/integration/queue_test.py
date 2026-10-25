@@ -182,11 +182,64 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
             complete_holder.communicate(timeout=10)
         complete_stdout.close()
         complete_stderr.close()
+
+    # Kill the queue after the validated final file is atomically published
+    # but before the SQLite task-completion commit. Resume must adopt only the
+    # byte-identical file described by the durable pre-publication proof.
+    published = root / "crash-published"
+    published.mkdir()
+    published_marker = published / "published.txt"
+    published_stdout = (published / "holder.stdout.log").open("wb")
+    published_stderr = (published / "holder.stderr.log").open("wb")
+    published_holder = subprocess.Popen([str(native), "hold-published", str(published), str(crash_source), str(pack), str(runtime), str(published_marker)], stdout=published_stdout, stderr=published_stderr)
+    try:
+        deadline = time.monotonic() + 120
+        while not published_marker.exists():
+            assert published_holder.poll() is None, ("Published-output worker exited before the crash point", (published / "holder.stderr.log").read_text(encoding="utf-8", errors="replace"))
+            assert time.monotonic() < deadline, "Queue did not reach the post-publication crash point"
+            time.sleep(0.05)
+        published_db = published / "native-queue.sqlite"
+        published_output = published / "crash-output.mkv"
+        assert rows(published_db)[0]["state"] == "running"
+        assert published_output.is_file(), "The post-publication crash marker preceded final output publication"
+        with closing(sqlite3.connect(published_db)) as connection:
+            publication = connection.execute("SELECT sha256, byte_count FROM task_output_publications").fetchone()
+        assert publication is not None, "Final output was published without a durable pre-publication proof"
+        published_probe = json.loads(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "json", published_output).stdout)
+        assert published_probe["streams"][0]["nb_read_frames"] == "64"
+        expected_bytes = published_output.read_bytes()
+        assert publication == (hashlib.sha256(expected_bytes).hexdigest(), len(expected_bytes)), "Publication proof did not bind the final output bytes"
+        assert pcm(crash_source) == pcm(published_output)
+        published_holder.kill()
+        published_holder.communicate(timeout=10)
+
+        altered = bytearray(expected_bytes)
+        altered[-1] ^= 0x5A
+        published_output.write_bytes(altered)
+        run(native, "reject-published", published, crash_source, pack, runtime, published_marker)
+        assert rows(published_db)[0]["state"] == "interrupted", "Modified published output was incorrectly marked complete"
+        assert published_output.read_bytes() == bytes(altered), "Recovery overwrote the mismatched output"
+
+        published_output.write_bytes(expected_bytes)
+        run(native, "recover", published, crash_source, pack, runtime, published_marker)
+        published_rows = rows(published_db)
+        assert len(published_rows) == 1 and published_rows[0]["state"] == "completed"
+        assert published_rows[0]["result"]["outputFrames"] == 64
+        assert published_output.read_bytes() == expected_bytes, "Published-output recovery rewrote a verified file"
+        assert pcm(crash_source) == pcm(published_output)
+    finally:
+        if published_holder.poll() is None:
+            published_holder.kill()
+            published_holder.communicate(timeout=10)
+        published_stdout.close()
+        published_stderr.close()
+
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original
     report = json.loads((reports / "queue-workflow.json").read_text())
     report.update(cliBatch=True, sourceChangeRejected=True, processCrashDetected=True, hardLinkOwnerProtected=True,
                   restartFromZero=True, checkpointResume=True, stalePartialCleanup=True,
                   uncommittedSegmentCleanup=True, unrelatedTaskFilesPreserved=True, sequentialSessions=20,
+                  publishedOutputRecovery=True, tamperedPublishedOutputRejected=True,
                   repeatedPixelsAndTimingExact=True)
     (reports / "queue-workflow.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 print("Native queue, CLI batch, ownership, pause, cancellation, retry, source integrity and process-crash tests passed")

@@ -1,10 +1,12 @@
 #include "application/task_queue.hpp"
 #include "application/checkpoint_artifacts.hpp"
 #include "application/job_serialization.hpp"
+#include "application/local_lease.hpp"
 #include "media/media_engine.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <set>
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -21,6 +23,13 @@ bool samePath(const std::string& a, const std::string& b) {
     const auto left = std::filesystem::weakly_canonical(std::filesystem::absolute(path(a))).wstring();
     const auto right = std::filesystem::weakly_canonical(std::filesystem::absolute(path(b))).wstring();
     return CompareStringOrdinal(left.c_str(),-1,right.c_str(),-1,TRUE) == CSTR_EQUAL;
+}
+bool pathEntryExists(const std::filesystem::path& value) {
+    const auto attributes = GetFileAttributesW(value.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES) return true;
+    const auto error = GetLastError();
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return false;
+    throw std::runtime_error("Could not inspect task output path (Windows error " + std::to_string(error) + ")");
 }
 struct PathLess {
     bool operator()(const std::wstring& a, const std::wstring& b) const { return CompareStringOrdinal(a.c_str(),-1,b.c_str(),-1,TRUE) == CSTR_LESS_THAN; }
@@ -117,7 +126,8 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     std::lock_guard lock(activity_);
     const auto rows = store_.configured(); const auto& task = find(rows,id);
     if (task.task.state != TaskState::interrupted) throw std::logic_error("Only interrupted tasks can resume from a checkpoint");
-    if (std::filesystem::exists(path(task.task.outputPath))) throw std::invalid_argument("Resume output already exists; keep it and create a new output task");
+    const auto outputPath = path(task.task.outputPath);
+    const bool outputExists = pathEntryExists(outputPath);
     for (const auto& other : rows) if (other.task.id != id && ownsOutput(other.task.state) && samePath(other.task.outputPath,task.task.outputPath))
         throw std::logic_error("Another task owns the interrupted output");
     if (task.identity.empty()) throw std::logic_error("This task has no saved processing identity; restart it with a new output");
@@ -132,6 +142,26 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     if (segments.empty()) throw std::logic_error("This task has no complete verified checkpoint segments; restart it with a new output");
     if (std::any_of(segments.begin(),segments.end(),[](const media::VideoSegmentInput& segment) { return segment.contract.encoder.empty(); }))
         throw std::logic_error("Checkpoint encoder identity is missing; restart with a new output");
+    if (outputExists) {
+        const auto publication = store_.outputPublicationIntent(id);
+        if (!publication)
+            throw std::invalid_argument("Output already exists without a saved validation proof; keep it and restart with a new output path");
+        SourceLease lease(outputPath);
+        const auto actual = lease.fingerprint(std::stop_token{});
+        if (actual.size != publication->byteCount || actual.sha256 != publication->sha256)
+            throw std::invalid_argument("Existing output does not match its pre-publication validation proof; keep it and restart with a new output path");
+        const auto expectedFrames = Json::parse(publication->result).at("outputFrames").get<std::uint64_t>();
+        std::uint64_t committedFrames = 0;
+        for (const auto& segment : segments) {
+            if (segment.contract.frameCount > std::numeric_limits<std::uint64_t>::max() - committedFrames)
+                throw std::runtime_error("Verified checkpoint frame count exceeds the supported range");
+            committedFrames += static_cast<std::uint64_t>(segment.contract.frameCount);
+        }
+        if (expectedFrames == 0 || expectedFrames != committedFrames)
+            throw std::runtime_error("Saved output validation result does not match the verified checkpoint frame count");
+        store_.completePublishedOutput(id);
+        return;
+    }
     (void)artifacts.removeUncommittedSegments();
     store_.resumeCheckpointed(id);
 }
@@ -178,6 +208,36 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 checkpoint.commitSegment = [&artifacts,token = cancellation.get_token()](std::uint64_t index,std::uint64_t first,
                     std::uint64_t end,const media::VideoSegmentInput& segment) {
                     (void)artifacts.commit(index,first,end,segment,token);
+                };
+                checkpoint.prepareOutputPublication = [this,id = current->task.id,token = cancellation.get_token(),
+                    &started,&lastSaved,&lastProgress,&callback](const std::string& temporary, const PipelineResult& result) {
+                    FileIdentity identity;
+                    auto lastFingerprintUpdate = std::chrono::steady_clock::time_point{};
+                    {
+                        SourceLease output(path(temporary));
+                        identity = output.fingerprint(token,[&](std::uint64_t currentBytes,std::uint64_t totalBytes) {
+                            const auto now = std::chrono::steady_clock::now();
+                            if (currentBytes != totalBytes && lastFingerprintUpdate.time_since_epoch().count() != 0 &&
+                                now - lastFingerprintUpdate < std::chrono::milliseconds(500)) return;
+                            ProcessingEvent event;
+                            event.stage = "verifying_output";
+                            event.detail = std::to_string(currentBytes) + " / " + std::to_string(totalBytes) + " bytes";
+                            event.outputFrames = result.video.framesSubmitted;
+                            event.aiFrames = result.aiFrames;
+                            event.processingFps = result.processingFps;
+                            event.timings = result.timings;
+                            store_.saveProgress(id,serializeProgress(event));
+                            lastSaved = now;
+                            lastProgress = event;
+                            callback({id,std::move(event),false,{}});
+                            lastFingerprintUpdate = now;
+                        });
+                    }
+                    auto publicationResult = result;
+                    publicationResult.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                    publicationResult.processingFps = publicationResult.elapsedSeconds > 0
+                        ? static_cast<double>(publicationResult.video.framesSubmitted) / publicationResult.elapsedSeconds : 0;
+                    store_.saveOutputPublicationIntent(id,identity.sha256,identity.size,serializeResult(publicationResult));
                 };
                 settings.checkpoint = std::move(checkpoint);
             };

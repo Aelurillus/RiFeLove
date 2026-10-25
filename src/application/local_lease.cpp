@@ -27,11 +27,13 @@ struct Hash final {
 };
 }
 SourceLease::SourceLease(const std::filesystem::path& path) {
-    const auto handle = CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
+    const auto handle = CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
     if (handle == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not exclusively protect source from writes/replacement (Windows error " + std::to_string(GetLastError()) + ")");
     BY_HANDLE_FILE_INFORMATION info{};
-    if (GetFileType(handle) != FILE_TYPE_DISK || !GetFileInformationByHandle(handle,&info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-        CloseHandle(handle); throw std::invalid_argument("Source lease requires a local regular file");
+    if (GetFileType(handle) != FILE_TYPE_DISK || !GetFileInformationByHandle(handle,&info) ||
+        (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+        CloseHandle(handle); throw std::invalid_argument("Source lease requires a local regular file, not a directory or reparse point");
     }
     handle_ = handle;
 }

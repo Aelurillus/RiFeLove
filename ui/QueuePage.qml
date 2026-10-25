@@ -65,7 +65,7 @@ Item {
     function stageText(value) {
         const labels = {checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
             loading_model: qsTr("加载模型"), processing: qsTr("AI 补帧"), resuming: qsTr("读取已完成片段"), encoding: qsTr("编码视频"),
-            validating: qsTr("验证输出"), encoder_fallback: qsTr("切换编码器"), paused: qsTr("安全暂停点")}
+            validating: qsTr("验证输出"), verifying_output: qsTr("校验发布文件"), encoder_fallback: qsTr("切换编码器"), paused: qsTr("安全暂停点")}
         return labels[value] || value
     }
     Component.onCompleted: applyDefaults()

@@ -105,6 +105,7 @@ TaskStore::TaskStore(const std::string& databasePath, OpenMode mode) : mode_(mod
         execute(db_, "CREATE TABLE IF NOT EXISTS task_details (sequence INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id), configuration TEXT NOT NULL, identity TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '');");
         execute(db_, "CREATE TABLE IF NOT EXISTS task_checkpoint_manifests (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, schema_version INTEGER NOT NULL CHECK(schema_version=1), manifest_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
         execute(db_, "CREATE TABLE IF NOT EXISTS task_checkpoint_segments (task_id TEXT NOT NULL REFERENCES task_details(task_id) ON DELETE CASCADE, segment_index INTEGER NOT NULL CHECK(segment_index>=0), first_output_frame INTEGER NOT NULL CHECK(first_output_frame>=0), end_output_frame INTEGER NOT NULL CHECK(end_output_frame>first_output_frame), artifact_path TEXT NOT NULL, sha256 TEXT NOT NULL CHECK(length(sha256)=64), byte_count INTEGER NOT NULL CHECK(byte_count>0), contract_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(task_id,segment_index), UNIQUE(task_id,artifact_path));");
+        execute(db_, "CREATE TABLE IF NOT EXISTS task_output_publications (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, sha256 TEXT NOT NULL CHECK(length(sha256)=64), byte_count INTEGER NOT NULL CHECK(byte_count>0), result_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
     } catch (...) { sqlite3_close(db_); db_ = nullptr; throw; }
 }
 TaskStore::~TaskStore() { if (db_) sqlite3_close(db_); }
@@ -138,6 +139,9 @@ void TaskStore::transition(const std::string& id, TaskState next, const std::str
         Statement reset(db_, "UPDATE task_details SET progress='',result='' WHERE task_id=?");
         bindText(db_,reset.get(),1,id);
         if (sqlite3_step(reset.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+        Statement clearPublication(db_,"DELETE FROM task_output_publications WHERE task_id=?");
+        bindText(db_,clearPublication.get(),1,id);
+        if (sqlite3_step(clearPublication.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     }
     transaction.commit();
 }
@@ -158,6 +162,9 @@ void TaskStore::resumeCheckpointed(const std::string& id) {
     bindText(db_,update.get(),1,id);
     if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1)
         throw std::runtime_error("checkpoint resume state transition failed");
+    Statement clearPublication(db_,"DELETE FROM task_output_publications WHERE task_id=?");
+    bindText(db_,clearPublication.get(),1,id);
+    if (sqlite3_step(clearPublication.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     transaction.commit();
 }
 
@@ -257,6 +264,57 @@ void TaskStore::finish(const std::string& id, TaskState state, const std::string
     bindText(db_,update.get(),1,toString(state)); bindText(db_,update.get(),2,error); bindText(db_,update.get(),3,id);
     if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1) throw std::logic_error("Task is not active/configured");
     Statement detail(db_, "UPDATE task_details SET result=? WHERE task_id=?");
+    bindText(db_,detail.get(),1,result); bindText(db_,detail.get(),2,id);
+    if (sqlite3_step(detail.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    transaction.commit();
+}
+void TaskStore::saveOutputPublicationIntent(const std::string& id, const std::string& sha256,
+    std::uint64_t byteCount, const std::string& result) {
+    if (!validSha256(sha256) || byteCount == 0) throw std::invalid_argument("Output publication identity is invalid");
+    boundedPayload(result,true);
+    std::lock_guard lock(mutex_); requireWritable();
+    Transaction transaction(db_);
+    Statement state(db_,"SELECT state FROM tasks WHERE id=? AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
+    bindText(db_,state.get(),1,id);
+    if (sqlite3_step(state.get()) != SQLITE_ROW) throw std::invalid_argument("configured task does not exist");
+    const auto current = taskStateFromString(columnText(state.get(),0));
+    if (current != TaskState::running && current != TaskState::paused)
+        throw std::logic_error("output publication proof requires an active configured task");
+    Statement insert(db_,"INSERT INTO task_output_publications(task_id,sha256,byte_count,result_json) VALUES(?,?,?,?) "
+        "ON CONFLICT(task_id) DO UPDATE SET sha256=excluded.sha256,byte_count=excluded.byte_count,result_json=excluded.result_json,created_at=CURRENT_TIMESTAMP");
+    bindText(db_,insert.get(),1,id); bindText(db_,insert.get(),2,sha256); bindInt64(db_,insert.get(),3,byteCount); bindText(db_,insert.get(),4,result);
+    if (sqlite3_step(insert.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    transaction.commit();
+}
+std::optional<TaskOutputPublication> TaskStore::outputPublicationIntent(const std::string& id) const {
+    std::lock_guard lock(mutex_);
+    Statement statement(db_,"SELECT sha256,byte_count,result_json FROM task_output_publications WHERE task_id=?");
+    bindText(db_,statement.get(),1,id);
+    const int status = sqlite3_step(statement.get());
+    if (status == SQLITE_DONE) return {};
+    if (status != SQLITE_ROW) throw std::runtime_error(sqlite3_errmsg(db_));
+    const auto bytes = sqlite3_column_int64(statement.get(),1);
+    const auto digest = columnText(statement.get(),0);
+    const auto result = columnText(statement.get(),2);
+    if (bytes <= 0 || !validSha256(digest) || result.empty())
+        throw std::runtime_error("stored output publication proof is invalid");
+    return TaskOutputPublication{digest,static_cast<std::uint64_t>(bytes),result};
+}
+void TaskStore::completePublishedOutput(const std::string& id) {
+    std::lock_guard lock(mutex_); requireWritable();
+    Transaction transaction(db_);
+    Statement proof(db_,"SELECT p.result_json FROM task_output_publications p JOIN tasks t ON t.id=p.task_id "
+        "WHERE p.task_id=? AND t.state='interrupted' AND EXISTS(SELECT 1 FROM task_details WHERE task_id=t.id)");
+    bindText(db_,proof.get(),1,id);
+    if (sqlite3_step(proof.get()) != SQLITE_ROW)
+        throw std::logic_error("published-output recovery requires an interrupted task and saved validation proof");
+    const auto result = columnText(proof.get(),0);
+    if (result.empty()) throw std::runtime_error("published-output validation result is empty");
+    Statement update(db_,"UPDATE tasks SET state='completed',error='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='interrupted'");
+    bindText(db_,update.get(),1,id);
+    if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1)
+        throw std::runtime_error("published-output task state transition failed");
+    Statement detail(db_,"UPDATE task_details SET result=? WHERE task_id=?");
     bindText(db_,detail.get(),1,result); bindText(db_,detail.get(),2,id);
     if (sqlite3_step(detail.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     transaction.commit();

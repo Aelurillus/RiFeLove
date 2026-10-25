@@ -200,7 +200,8 @@ public:
     // into a new output without replacing existing files.
     [[nodiscard]] static VideoSegmentAssemblyResult assembleVideoSegments(const std::string& source,
         const std::string& destination, int videoStreamIndex, const std::vector<VideoSegmentInput>& segments,
-        std::stop_token stop = {}, const std::function<void(const std::string&)>& validate = {});
+        std::stop_token stop = {}, const std::function<void(const std::string&)>& validate = {},
+        const std::function<void(const std::string&,const VideoSegmentAssemblyResult&)>& beforePublish = {});
     // Copies compressed streams, metadata and chapters; never replaces an existing output.
     [[nodiscard]] static RemuxResult remux(const std::string& input, const std::string& output,
         std::stop_token stop = {});

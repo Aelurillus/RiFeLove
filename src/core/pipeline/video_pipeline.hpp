@@ -8,11 +8,13 @@
 #include <vector>
 
 namespace rifelove {
+struct PipelineResult;
 struct PipelineCheckpoint {
     std::size_t framesPerSegment = 256;
     std::vector<media::VideoSegmentInput> completedSegments;
     std::function<std::string(std::uint64_t)> segmentPath;
     std::function<void(std::uint64_t,std::uint64_t,std::uint64_t,const media::VideoSegmentInput&)> commitSegment;
+    std::function<void(const std::string&,const PipelineResult&)> prepareOutputPublication;
 };
 struct PipelineSettings {
     PipelineSettings() { encoding.encoder = "auto"; }

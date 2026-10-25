@@ -42,6 +42,11 @@ struct TaskCheckpointSegment {
     // Versioned JSON containing exact PTS boundaries and the validated stream contract.
     std::string contract;
 };
+struct TaskOutputPublication {
+    std::string sha256;
+    std::uint64_t byteCount = 0;
+    std::string result;
+};
 
 class TaskStore final {
 public:
@@ -68,6 +73,12 @@ public:
     void saveIdentity(const std::string& id, const std::string& json);
     void saveProgress(const std::string& id, const std::string& json);
     void finish(const std::string& id, TaskState state, const std::string& result, const std::string& error = {});
+    // Persist proof and result before atomically publishing a validated queue output.
+    void saveOutputPublicationIntent(const std::string& id, const std::string& sha256,
+        std::uint64_t byteCount, const std::string& result);
+    [[nodiscard]] std::optional<TaskOutputPublication> outputPublicationIntent(const std::string& id) const;
+    // Caller must verify the published file against the saved hash and size first.
+    void completePublishedOutput(const std::string& id);
     [[nodiscard]] std::size_t recoverConfigured();
 
     // A checkpoint manifest is immutable for a task. Segment records are added

@@ -371,6 +371,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     },encoding.videoStreamIndex,stop);
     const auto decodeWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - decodeStarted).count();
     result.timings.sourceDecodeSeconds = std::max(0.0,decodeWallSeconds - decodeCallbackSeconds);
+    result.sourceFrames = decoded.frameCount;
+    result.recoveredTimestamps = decoded.recoveredTimestamps;
     if (!previous) throw std::runtime_error("Source produced no video frames");
     std::optional<Rational> boundary;
     if (previous->source.duration && *previous->source.duration > Rational(0)) boundary = *previous->source.timestamp + *previous->source.duration;
@@ -428,7 +430,20 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             throw std::runtime_error("Checkpoint segments do not cover the complete output timeline");
         if (!segments.back().contract.endExclusive || absolute(*segments.back().contract.endExclusive - end) > video->timeBase)
             throw std::runtime_error("Final checkpoint segment does not end at the verified source boundary");
-        const auto assembly = media::MediaEngine::assembleVideoSegments(source,destination,encoding.videoStreamIndex,segments,stop,validateTemporary);
+        const auto preparePublication = [&](const std::string& temporary, const media::VideoSegmentAssemblyResult& assembly) {
+            const auto assemblySeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - finishStarted).count();
+            result.video = {encoding.encoder,static_cast<std::size_t>(clock->index()),assembly.videoPackets,assembly.auxiliaryPackets,
+                assembly.firstTimestamp,assembly.endExclusive,assemblySeconds,
+                assemblySeconds > 0 ? static_cast<double>(clock->index()) / assemblySeconds : 0};
+            result.timings.outputFinalizeSeconds = std::max(0.0,assemblySeconds - result.timings.outputValidationSeconds);
+            result.elapsedSeconds = elapsed();
+            result.processingFps = result.elapsedSeconds > 0 ? static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds : 0;
+            result.timings.pipelineWallSeconds = result.elapsedSeconds;
+            if (settings.checkpoint->prepareOutputPublication)
+                settings.checkpoint->prepareOutputPublication(temporary,result);
+        };
+        const auto assembly = media::MediaEngine::assembleVideoSegments(source,destination,encoding.videoStreamIndex,
+            segments,stop,validateTemporary,preparePublication);
         const auto assemblySeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - finishStarted).count();
         result.video = {encoding.encoder,static_cast<std::size_t>(clock->index()),assembly.videoPackets,assembly.auxiliaryPackets,
             assembly.firstTimestamp,assembly.endExclusive,assemblySeconds,

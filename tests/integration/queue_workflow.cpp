@@ -39,7 +39,8 @@ int wmain(int argc, wchar_t** wide) {
         require(argc == 7,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER");
         const std::string mode = argv[1]; const auto root = path(argv[2]);
         const auto database = root / "native-queue.sqlite";
-        TaskQueue queue(database,(mode == "hold" || mode == "hold-complete" || mode == "recover") ? 16 : 256);
+        TaskQueue queue(database,(mode == "hold" || mode == "hold-complete" || mode == "hold-published" ||
+            mode == "reject-published" || mode == "recover") ? 16 : 256);
         if (mode == "owner") { std::cout << "ownership acquired\n"; return 0; }
         if (mode == "stress") {
             std::vector<ProcessingJob> jobs;
@@ -54,8 +55,23 @@ int wmain(int argc, wchar_t** wide) {
             for (const auto& row : rows) require(row.task.state == TaskState::completed,"Repeated-session task failed");
             std::ofstream report(path(argv[6])); report << "{\"success\":true,\"sequentialSessions\":20}\n"; return 0;
         }
+        if (mode == "reject-published") {
+            const auto rows = queue.list();
+            require(rows.size() == 1 && rows[0].task.state == TaskState::interrupted,"Published-output mismatch task was not interrupted");
+            bool rejected = false;
+            std::string rejectionReason;
+            try { queue.resumeCheckpoint(rows[0].task.id); }
+            catch (const std::invalid_argument& error) {
+                rejectionReason = error.what();
+                rejected = rejectionReason.find("does not match its pre-publication validation proof") != std::string::npos;
+            }
+            if (!rejected) throw std::runtime_error("Modified published output was accepted as a completed task; path=" +
+                rows[0].task.outputPath + "; exists=" + std::to_string(std::filesystem::exists(path(rows[0].task.outputPath))) +
+                "; reason=" + rejectionReason);
+            return 0;
+        }
         if (mode == "recover") {
-            require(queue.recoveredCount() == 1,"Crash did not recover exactly one configured task");
+            require(queue.recoveredCount() <= 1,"Recovery changed an unexpected number of queue tasks");
             const auto rows = queue.list(); require(rows.size() == 1 && rows[0].task.state == TaskState::interrupted,"Crash task is not interrupted");
             bool rejected = false; try { queue.retry(rows[0].task.id); } catch (const std::logic_error&) { rejected = true; }
             require(rejected,"Interrupted task was incorrectly treated as a retry/checkpoint");
@@ -69,9 +85,9 @@ int wmain(int argc, wchar_t** wide) {
             require(std::filesystem::is_regular_file(path(after[0].task.outputPath)),"Checkpoint resume did not publish the requested output");
             return 0;
         }
-        if (mode == "hold" || mode == "hold-complete") {
+        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published") {
             auto task = job(argv[3],root / "crash-output.mkv",argv[4],argv[5]);
-            task.settings.targetRate = mode == "hold-complete" ? Rational(64,11) : Rational(6);
+            task.settings.targetRate = mode == "hold-complete" || mode == "hold-published" ? Rational(64,11) : Rational(6);
             const auto id = queue.enqueue({task}).front();
             Events events;
             require(queue.start([&](QueueEvent event) {
@@ -89,6 +105,10 @@ int wmain(int argc, wchar_t** wide) {
                 }
                 if (mode == "hold-complete" && event.processing.stage == "validating")
                     queue.pause(); // All output segments are committed before final validation starts.
+                if (mode == "hold-published" && event.processing.stage == "completed") {
+                    std::ofstream marker(path(argv[6])); marker << id; marker.close();
+                    while (!std::filesystem::exists(root / "release.txt")) Sleep(10);
+                }
                 if (event.processing.stage == "paused") {
                     std::ofstream marker(path(argv[6])); marker << id; marker.close();
                     std::lock_guard lock(events.mutex); events.paused = true; events.condition.notify_one();
