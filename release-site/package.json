@@ -6,6 +6,7 @@
     "build": "node ../tools/release/build-site.mjs",
     "test": "node --test ../tools/release/*.test.mjs",
     "publish": "node ../tools/release/publish-release.mjs",
+    "deploy:oss": "node ../tools/release/deploy-update-log.mjs",
     "deploy": "wrangler pages deploy dist --project-name rifelove-updatelog --branch main"
   },
   "dependencies": {

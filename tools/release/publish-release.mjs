@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import OSS from "ali-oss";
-import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
 import { mergePublishedRelease, validateVersion } from "./release-manifest.mjs";
+import { assertPublicObjectAccessAllowed } from "./oss-public-access.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");
+const requireFromReleaseSite = createRequire(path.join(siteRoot, "package.json"));
+const OSS = requireFromReleaseSite("ali-oss");
+const { HeadObjectCommand, S3Client } = requireFromReleaseSite("@aws-sdk/client-s3");
+const { Upload } = requireFromReleaseSite("@aws-sdk/lib-storage");
 const manifestPath = path.join(siteRoot, "releases.json");
 const policyPath = path.join(siteRoot, "release-policy.json");
 const storagePath = path.join(siteRoot, "storage.json");
@@ -61,6 +64,8 @@ const oss = new OSS({
   secure: true,
   timeout: 120_000,
 });
+
+await assertPublicObjectAccessAllowed(oss, bucket);
 
 const existingOss = await headOssObject(oss, key);
 if (existingOss) {

@@ -1,13 +1,15 @@
 import { createReadStream } from "node:fs";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
 import { mergePublishedRelease, validateVersion } from "./release-manifest.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");
+const requireFromReleaseSite = createRequire(path.join(siteRoot, "package.json"));
+const { HeadObjectCommand, S3Client } = requireFromReleaseSite("@aws-sdk/client-s3");
+const { Upload } = requireFromReleaseSite("@aws-sdk/lib-storage");
 const manifestPath = path.join(siteRoot, "releases.json");
 const policyPath = path.join(siteRoot, "release-policy.json");
 const options = parseArguments(process.argv.slice(2));
