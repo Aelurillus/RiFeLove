@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 Item {
@@ -22,6 +23,12 @@ Item {
         }
         picker.selectedId = ""
         profileBox.currentIndex = -1
+    }
+
+    function canExportSelection() {
+        const profiles = picker.controller ? picker.controller.profiles || [] : []
+        return profileBox.currentIndex >= 0 && profileBox.currentIndex < profiles.length
+                && !!profiles[profileBox.currentIndex].valid
     }
 
     ColumnLayout {
@@ -57,6 +64,30 @@ Item {
                 text: qsTr("删除")
                 enabled: picker.available && profileBox.currentIndex >= 0
                 onClicked: deleteDialog.open()
+            }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 82
+            spacing: 6
+            ActionButton {
+                text: qsTr("导入配置")
+                objectName: "localProfileImportButton"
+                enabled: picker.available
+                onClicked: importDialog.open()
+            }
+            ActionButton {
+                text: qsTr("导出所选配置")
+                objectName: "localProfileExportButton"
+                enabled: picker.available && picker.canExportSelection()
+                onClicked: exportDialog.open()
+            }
+            Label {
+                text: qsTr("只读取或写入本机 JSON 设置文件。")
+                color: "#91a2b8"
+                font.pixelSize: 11
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
             }
         }
         Label {
@@ -105,6 +136,23 @@ Item {
         onAccepted: picker.controller.removeProfile(String(profileBox.currentValue))
     }
 
+    FileDialog {
+        id: importDialog
+        title: qsTr("导入本机配置")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("RifeLove 配置文件 (*.json)"), qsTr("所有文件 (*)")]
+        onAccepted: picker.controller.importProfile(selectedFile)
+    }
+
+    FileDialog {
+        id: exportDialog
+        title: qsTr("导出本机配置文件")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "json"
+        nameFilters: [qsTr("RifeLove 配置文件 (*.json)")]
+        onAccepted: picker.controller.exportProfile(String(profileBox.currentValue),selectedFile)
+    }
+
     Connections {
         target: picker.controller
         function onProfilesChanged() { picker.refreshSelection() }
@@ -117,6 +165,8 @@ Item {
             picker.messageIsError = false
             if (operation === "save") picker.message = qsTr("配置已保存在本机。")
             else if (operation === "remove") picker.message = qsTr("本机配置已删除。")
+            else if (operation === "import") picker.message = qsTr("配置已导入本机。")
+            else if (operation === "export") picker.message = qsTr("所选配置已导出为本机 JSON 文件。")
             else picker.message = qsTr("已应用本机配置。")
         }
     }

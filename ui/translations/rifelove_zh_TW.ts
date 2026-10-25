@@ -1898,6 +1898,13 @@
     <message><source>使用</source><translation>套用</translation></message>
     <message><source>保存当前设置</source><translation>儲存目前設定</translation></message>
     <message><source>删除</source><translation>刪除</translation></message>
+    <message><source>导入配置</source><translation>匯入設定</translation></message>
+    <message><source>导出所选配置</source><translation>匯出所選設定</translation></message>
+    <message><source>只读取或写入本机 JSON 设置文件。</source><translation>僅讀取或寫入本機 JSON 設定檔。</translation></message>
+    <message><source>导入本机配置</source><translation>匯入本機設定</translation></message>
+    <message><source>导出本机配置文件</source><translation>匯出本機設定檔</translation></message>
+    <message><source>RifeLove 配置文件 (*.json)</source><translation>RifeLove 設定檔 (*.json)</translation></message>
+    <message><source>所有文件 (*)</source><translation>所有檔案 (*)</translation></message>
     <message><source>保存本机配置</source><translation>儲存本機設定</translation></message>
     <message><source>给这组视频设置取一个容易辨认的名称。</source><translation>為這組影片設定取一個容易辨識的名稱。</translation></message>
     <message><source>例如：手机视频 60 FPS</source><translation>例如：手機影片 60 FPS</translation></message>
@@ -1907,5 +1914,7 @@
     <message><source>配置已保存在本机。</source><translation>已儲存至本機。</translation></message>
     <message><source>本机配置已删除。</source><translation>已刪除本機設定。</translation></message>
     <message><source>已应用本机配置。</source><translation>已套用本機設定。</translation></message>
+    <message><source>配置已导入本机。</source><translation>已匯入本機設定。</translation></message>
+    <message><source>所选配置已导出为本机 JSON 文件。</source><translation>所選設定已匯出為本機 JSON 檔案。</translation></message>
 </context>
 </TS>

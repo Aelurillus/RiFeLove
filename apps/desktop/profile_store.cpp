@@ -2,6 +2,11 @@
 #include "encoding_settings.hpp"
 #include "common/rational.hpp"
 
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QUrl>
 #include <QUuid>
 #include <algorithm>
@@ -12,6 +17,55 @@ namespace {
 std::string utf8(const QString& value) { return value.toUtf8().toStdString(); }
 QStringList knownEncoders() { return {"auto","libopenh264","libkvazaar","libaom-av1","h264_nvenc"}; }
 QStringList knownContainers() { return {"mkv","mp4","mov"}; }
+constexpr auto profileFormat = "rifelove-local-profile";
+constexpr int profileFormatVersion = 1;
+constexpr qint64 maxProfileFileBytes = 64 * 1024;
+
+QJsonObject profileValuesToJson(const QVariantMap& profile) {
+    auto localUrl = [&](const QString& key) {
+        const auto value = profile.value(key);
+        if (!value.isValid() || value.isNull()) return QString();
+        const auto url = value.canConvert<QUrl>() ? value.toUrl() : QUrl(value.toString());
+        return url.isEmpty() ? QString() : url.toString(QUrl::FullyEncoded);
+    };
+    return {{"name",profile.value("name").toString()}, {"rate",profile.value("rate").toString()},
+        {"modelUrl",localUrl(QStringLiteral("model"))}, {"runtimeUrl",localUrl(QStringLiteral("runtime"))},
+        {"outputUrl",localUrl(QStringLiteral("output"))}, {"encoder",profile.value("encoder").toString()},
+        {"container",profile.value("container").toString()}, {"bitrateKbps",profile.value("bitrateKbps").toInt()},
+        {"qualityMode",profile.value("qualityMode").toString()}, {"quality",profile.value("quality").toInt()},
+        {"gopSize",profile.value("gopSize").toInt()}};
+}
+
+QUrl localUrlFromJson(const QJsonObject& object, const char* key) {
+    const auto value = object.value(QLatin1StringView(key));
+    if (!value.isString()) throw std::invalid_argument("Profile local path fields must be strings");
+    const auto encoded = value.toString();
+    if (encoded.isEmpty()) return {};
+    const auto url = QUrl::fromEncoded(encoded.toUtf8(),QUrl::StrictMode);
+    if (!url.isValid() || !url.isLocalFile())
+        throw std::invalid_argument("Profile paths must use local file URLs");
+    return url;
+}
+
+QVariantMap profileValuesFromJson(const QJsonObject& object) {
+    const QStringList fields{"name","rate","modelUrl","runtimeUrl","outputUrl","encoder","container",
+        "bitrateKbps","qualityMode","quality","gopSize"};
+    for (const auto& key : object.keys())
+        if (!fields.contains(key)) throw std::invalid_argument("Profile file contains an unsupported field");
+    for (const auto& key : fields)
+        if (!object.contains(key)) throw std::invalid_argument("Profile file is missing a required field");
+    if (!object.value("name").isString() || !object.value("rate").isString() ||
+        !object.value("encoder").isString() || !object.value("container").isString() ||
+        !object.value("qualityMode").isString() || !object.value("bitrateKbps").isDouble() ||
+        !object.value("quality").isDouble() || !object.value("gopSize").isDouble())
+        throw std::invalid_argument("Profile file contains a field with the wrong type");
+    return {{"name",object.value("name").toString()}, {"rate",object.value("rate").toString()},
+        {"model",localUrlFromJson(object,"modelUrl")}, {"runtime",localUrlFromJson(object,"runtimeUrl")},
+        {"output",localUrlFromJson(object,"outputUrl")}, {"encoder",object.value("encoder").toString()},
+        {"container",object.value("container").toString()}, {"bitrateKbps",object.value("bitrateKbps").toInt()},
+        {"qualityMode",object.value("qualityMode").toString()}, {"quality",object.value("quality").toInt()},
+        {"gopSize",object.value("gopSize").toInt()}};
+}
 
 void requireLocalOrEmpty(const QVariantMap& values, const QString& key) {
     const auto value = values.value(key);
@@ -130,6 +184,51 @@ bool LocalProfileStore::remove(const QString& id) {
     settings_.sync();
     if (settings_.status() != QSettings::NoError) throw std::runtime_error("Could not remove the local profile");
     return true;
+}
+
+void LocalProfileStore::exportToFile(const QString& id, const QString& localPath) {
+    if (localPath.trimmed().isEmpty()) throw std::invalid_argument("Choose a local profile file");
+    const auto profiles = list();
+    const auto found = std::find_if(profiles.cbegin(),profiles.cend(),[&](const QVariant& value) {
+        const auto profile = value.toMap();
+        return profile.value("id").toString() == id && profile.value("valid").toBool();
+    });
+    if (found == profiles.cend()) throw std::invalid_argument("A valid local profile must be selected");
+
+    const QJsonObject document{{"format",QString::fromLatin1(profileFormat)}, {"version",profileFormatVersion},
+        {"profile",profileValuesToJson(found->toMap())}};
+    const auto payload = QJsonDocument(document).toJson(QJsonDocument::Indented);
+    QSaveFile file(localPath);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error("Could not create the local profile file");
+    if (file.write(payload) != payload.size()) {
+        file.cancelWriting();
+        throw std::runtime_error("Could not write the local profile file");
+    }
+    if (!file.commit()) throw std::runtime_error("Could not finish saving the local profile file");
+}
+
+QString LocalProfileStore::importFromFile(const QString& localPath) {
+    if (localPath.trimmed().isEmpty()) throw std::invalid_argument("Choose a local profile file");
+    QFileInfo info(localPath);
+    if (!info.exists() || !info.isFile() || info.size() > maxProfileFileBytes)
+        throw std::invalid_argument("The local profile file is missing or too large");
+    QFile file(localPath);
+    if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Could not read the local profile file");
+    const auto payload = file.read(maxProfileFileBytes + 1);
+    if (payload.size() > maxProfileFileBytes || file.error() != QFileDevice::NoError)
+        throw std::invalid_argument("The local profile file is too large or could not be read");
+    QJsonParseError parseError;
+    const auto document = QJsonDocument::fromJson(payload,&parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+        throw std::invalid_argument("The local profile file is not valid JSON");
+    const auto root = document.object();
+    if (root.value("format").toString() != QString::fromLatin1(profileFormat) ||
+        root.value("version").toInt(-1) != profileFormatVersion || !root.value("profile").isObject())
+        throw std::invalid_argument("The local profile file format or version is not supported");
+    const auto values = profileValuesFromJson(root.value("profile").toObject());
+    const auto normalized = normalize(values.value("name").toString(),values);
+    return save(normalized.value("name").toString(),normalized);
 }
 
 } // namespace rifelove::desktop

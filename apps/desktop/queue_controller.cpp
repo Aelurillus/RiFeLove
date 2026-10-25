@@ -168,6 +168,34 @@ public:
             post([](QueueController& c) { emit c.profileOperationFinished(false,QStringLiteral("remove")); });
         }
     }
+    void exportProfile(QString id, QUrl destination) {
+        try {
+            if (!settings_) throw std::runtime_error("Local settings are unavailable");
+            if (!destination.isLocalFile() || destination.toLocalFile().isEmpty())
+                throw std::invalid_argument("Choose a local JSON profile file");
+            rifelove::desktop::LocalProfileStore(*settings_).exportToFile(id,destination.toLocalFile());
+            post([](QueueController& c) { emit c.profileOperationFinished(true,QStringLiteral("export")); });
+        } catch (const std::exception&) {
+            post([](QueueController& c) { emit c.profileOperationFinished(false,QStringLiteral("export")); });
+        }
+    }
+    void importProfile(QUrl source) {
+        try {
+            if (!settings_) throw std::runtime_error("Local settings are unavailable");
+            if (!source.isLocalFile() || source.toLocalFile().isEmpty())
+                throw std::invalid_argument("Choose a local JSON profile file");
+            rifelove::desktop::LocalProfileStore store(*settings_);
+            (void)store.importFromFile(source.toLocalFile());
+            const auto profiles = store.list();
+            post([profiles](QueueController& c) {
+                c.profiles_ = profiles;
+                emit c.profilesChanged();
+                emit c.profileOperationFinished(true,QStringLiteral("import"));
+            });
+        } catch (const std::exception&) {
+            post([](QueueController& c) { emit c.profileOperationFinished(false,QStringLiteral("import")); });
+        }
+    }
     void refreshModels() {
         try {
             if (!settings_) throw std::runtime_error("Local model catalog is unavailable");
@@ -495,6 +523,14 @@ void QueueController::applyProfile(const QString& id) {
         profile.value("encoder","auto").toString(),profile.value("container","mkv").toString(),options);
     emit profileApplied(profile);
     emit profileOperationFinished(true,QStringLiteral("apply"));
+}
+void QueueController::exportProfile(const QString& id, const QUrl& destination) {
+    if (!available_ || busy_ || importing_) { emit profileOperationFinished(false,QStringLiteral("export")); return; }
+    QMetaObject::invokeMethod(worker_,[w=worker_,id,destination] { w->exportProfile(id,destination); },Qt::QueuedConnection);
+}
+void QueueController::importProfile(const QUrl& source) {
+    if (!available_ || busy_ || importing_) { emit profileOperationFinished(false,QStringLiteral("import")); return; }
+    QMetaObject::invokeMethod(worker_,[w=worker_,source] { w->importProfile(source); },Qt::QueuedConnection);
 }
 void QueueController::refreshModels() {
     if (!available_ || busy_ || importing_ || verifyingModels_) return;

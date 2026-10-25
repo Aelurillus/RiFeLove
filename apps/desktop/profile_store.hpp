@@ -14,6 +14,8 @@ public:
     [[nodiscard]] QVariantList list();
     [[nodiscard]] QString save(const QString& name, const QVariantMap& values);
     [[nodiscard]] bool remove(const QString& id);
+    void exportToFile(const QString& id, const QString& localPath);
+    [[nodiscard]] QString importFromFile(const QString& localPath);
 
     [[nodiscard]] static QVariantMap normalize(const QString& name, const QVariantMap& values);
 

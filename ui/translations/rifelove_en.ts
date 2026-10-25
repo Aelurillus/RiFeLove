@@ -1898,6 +1898,13 @@ Showing the first 50 details only.</translation>
     <message><source>使用</source><translation>Use</translation></message>
     <message><source>保存当前设置</source><translation>Save current settings</translation></message>
     <message><source>删除</source><translation>Delete</translation></message>
+    <message><source>导入配置</source><translation>Import profile</translation></message>
+    <message><source>导出所选配置</source><translation>Export selected profile</translation></message>
+    <message><source>只读取或写入本机 JSON 设置文件。</source><translation>Reads or writes a local JSON settings file only.</translation></message>
+    <message><source>导入本机配置</source><translation>Import local profile</translation></message>
+    <message><source>导出本机配置文件</source><translation>Export local profile file</translation></message>
+    <message><source>RifeLove 配置文件 (*.json)</source><translation>RifeLove profile files (*.json)</translation></message>
+    <message><source>所有文件 (*)</source><translation>All files (*)</translation></message>
     <message><source>保存本机配置</source><translation>Save local profile</translation></message>
     <message><source>给这组视频设置取一个容易辨认的名称。</source><translation>Choose a recognizable name for these video settings.</translation></message>
     <message><source>例如：手机视频 60 FPS</source><translation>For example: Phone video 60 FPS</translation></message>
@@ -1907,5 +1914,7 @@ Showing the first 50 details only.</translation>
     <message><source>配置已保存在本机。</source><translation>Profile saved on this device.</translation></message>
     <message><source>本机配置已删除。</source><translation>Local profile deleted.</translation></message>
     <message><source>已应用本机配置。</source><translation>Local profile applied.</translation></message>
+    <message><source>配置已导入本机。</source><translation>Profile imported on this device.</translation></message>
+    <message><source>所选配置已导出为本机 JSON 文件。</source><translation>The selected profile was exported as a local JSON file.</translation></message>
 </context>
 </TS>

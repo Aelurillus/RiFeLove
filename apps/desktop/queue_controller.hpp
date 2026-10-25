@@ -55,6 +55,8 @@ public:
     Q_INVOKABLE void saveProfile(const QString& name, const QVariantMap& values);
     Q_INVOKABLE void removeProfile(const QString& id);
     Q_INVOKABLE void applyProfile(const QString& id);
+    Q_INVOKABLE void exportProfile(const QString& id, const QUrl& destination);
+    Q_INVOKABLE void importProfile(const QUrl& source);
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void addLocalModel(const QUrl& directory);
     Q_INVOKABLE void removeLocalModel(const QUrl& directory);

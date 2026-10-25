@@ -1898,6 +1898,13 @@ model.json を含む検証済みモデルパックを追加してください</t
     <message><source>使用</source><translation>使用</translation></message>
     <message><source>保存当前设置</source><translation>現在の設定を保存</translation></message>
     <message><source>删除</source><translation>削除</translation></message>
+    <message><source>导入配置</source><translation>設定をインポート</translation></message>
+    <message><source>导出所选配置</source><translation>選択した設定をエクスポート</translation></message>
+    <message><source>只读取或写入本机 JSON 设置文件。</source><translation>ローカルの JSON 設定ファイルのみを読み書きします。</translation></message>
+    <message><source>导入本机配置</source><translation>ローカル設定をインポート</translation></message>
+    <message><source>导出本机配置文件</source><translation>ローカル設定ファイルをエクスポート</translation></message>
+    <message><source>RifeLove 配置文件 (*.json)</source><translation>RifeLove 設定ファイル (*.json)</translation></message>
+    <message><source>所有文件 (*)</source><translation>すべてのファイル (*)</translation></message>
     <message><source>保存本机配置</source><translation>ローカル設定を保存</translation></message>
     <message><source>给这组视频设置取一个容易辨认的名称。</source><translation>この動画設定を見分けやすい名前にします。</translation></message>
     <message><source>例如：手机视频 60 FPS</source><translation>例：スマートフォン動画 60 FPS</translation></message>
@@ -1907,5 +1914,7 @@ model.json を含む検証済みモデルパックを追加してください</t
     <message><source>配置已保存在本机。</source><translation>ローカルに保存しました。</translation></message>
     <message><source>本机配置已删除。</source><translation>ローカル設定を削除しました。</translation></message>
     <message><source>已应用本机配置。</source><translation>ローカル設定を適用しました。</translation></message>
+    <message><source>配置已导入本机。</source><translation>ローカルに設定をインポートしました。</translation></message>
+    <message><source>所选配置已导出为本机 JSON 文件。</source><translation>選択した設定をローカル JSON ファイルにエクスポートしました。</translation></message>
 </context>
 </TS>

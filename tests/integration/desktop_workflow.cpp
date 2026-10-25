@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
+#include <QTemporaryDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
@@ -169,7 +170,11 @@ int main(int argc, char** argv) {
         auto* queuePage = root->findChild<QObject*>("queuePage");
         auto* queueRate = root->findChild<QObject*>("queueTargetRate");
         require(queuePage && queueRate && root->findChild<QObject*>("studioLocalProfiles") &&
-                queuePage->findChild<QObject*>("queueLocalProfiles"),
+                queuePage->findChild<QObject*>("queueLocalProfiles") &&
+                root->findChild<QObject*>("localProfileImportButton") &&
+                root->findChild<QObject*>("localProfileExportButton") &&
+                queuePage->findChild<QObject*>("localProfileImportButton") &&
+                queuePage->findChild<QObject*>("localProfileExportButton"),
             "The shared local profile controls are missing from Studio or Queue");
         const auto originalProfileCount = taskQueue.profiles().size();
         const QVariantMap workflowProfile{{"rate",QStringLiteral("144")},
@@ -192,6 +197,27 @@ int main(int argc, char** argv) {
             "The desktop did not persist the local processing profile");
         require(savedProfile.value("valid").toBool() && !savedProfile.value("id").toString().isEmpty(),
             "The saved desktop profile was not validated");
+        QTemporaryDir profileTransferDirectory;
+        require(profileTransferDirectory.isValid(),"Could not create a local profile transfer fixture");
+        const auto profileTransferPath = QDir(profileTransferDirectory.path()).filePath("workflow-profile.json");
+        taskQueue.exportProfile(savedProfile.value("id").toString(),QUrl::fromLocalFile(profileTransferPath));
+        waitUntil([&] { return QFileInfo(profileTransferPath).isFile() && QFileInfo(profileTransferPath).size() > 0; },
+            "The desktop did not export the local processing profile");
+        taskQueue.removeProfile(savedProfile.value("id").toString());
+        waitUntil([&] { return taskQueue.profiles().size() == originalProfileCount; },
+            "The desktop did not remove the profile before the import check");
+        taskQueue.importProfile(QUrl::fromLocalFile(profileTransferPath));
+        waitUntil([&] {
+            for (const auto& candidate : taskQueue.profiles()) {
+                const auto profile = candidate.toMap();
+                if (profile.value("name").toString() == QStringLiteral("Desktop Workflow Profile") &&
+                    profile.value("id").toString() != savedProfile.value("id").toString()) {
+                    savedProfile = profile;
+                    return true;
+                }
+            }
+            return false;
+        },"The desktop did not import the local processing profile");
         taskQueue.applyProfile(savedProfile.value("id").toString());
         require(targetRate->property("editText").toString() == QStringLiteral("144") &&
                 queueRate->property("editText").toString() == QStringLiteral("144") &&
