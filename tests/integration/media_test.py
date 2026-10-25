@@ -10,8 +10,8 @@ import tempfile
 import unittest
 
 
-CLI, FFMPEG, FFPROBE = (Path(argument).resolve() for argument in sys.argv[1:4])
-del sys.argv[1:4]
+CLI, FFMPEG, FFPROBE, METADATA_FIXTURE = (Path(argument).resolve() for argument in sys.argv[1:5])
+del sys.argv[1:5]
 
 
 def invoke(executable, *arguments, expected=0):
@@ -24,6 +24,18 @@ def invoke(executable, *arguments, expected=0):
 
 def reference(path, *arguments):
     return json.loads(invoke(FFPROBE, "-v", "error", *arguments, "-of", "json", path).stdout)
+
+
+def semantic_side_data(side):
+    result = {}
+    for key, value in side.items():
+        if key != "side_data_type" and isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            try:
+                value = Fraction(str(value))
+            except (ValueError, ZeroDivisionError):
+                pass
+        result[key] = value
+    return result
 
 
 class NativeMediaIntegration(unittest.TestCase):
@@ -57,6 +69,12 @@ class NativeMediaIntegration(unittest.TestCase):
         cls.vertical_flip_rotated = cls.root / "vertical-flip-rotated.mp4"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-display_vflip", "-display_rotation", "270",
                "-i", cls.reordered, "-c", "copy", cls.vertical_flip_rotated)
+        cls.hdr_metadata_base = cls.root / "hdr-metadata-base.mkv"
+        invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=24:duration=0.5",
+               "-vf", "format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc:range=limited",
+               "-c:v", "ffv1", "-level", "3", cls.hdr_metadata_base)
+        cls.hdr_metadata_rotated = cls.root / "hdr-metadata-rotated.mkv"
+        invoke(METADATA_FIXTURE, cls.hdr_metadata_base, cls.hdr_metadata_rotated)
         cls.vfr = cls.root / "vfr.mkv"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=30:duration=0.4",
                "-vf", "setpts='if(lt(N,6),N,6+(N-6)*2)/(30*TB)'", "-fps_mode", "vfr", "-c:v", "ffv1", cls.vfr)
@@ -144,6 +162,51 @@ class NativeMediaIntegration(unittest.TestCase):
                             result = self.probe(output)["streams"][0]
                             self.assertEqual(result["display_matrix"], source["display_matrix"])
                             self.assertAlmostEqual(result["rotation_degrees"], source["rotation_degrees"], delta=0.01)
+
+    def test_static_hdr_metadata_survives_rotation_and_transcode(self):
+        source = self.probe(self.hdr_metadata_rotated)["streams"][0]
+        self.assertEqual(source["color"]["mastering_display"], {
+            "min_luminance": "1/200", "max_luminance": "1000/1",
+            "primaries": [["17/25", "8/25"], ["53/200", "69/100"], ["3/20", "3/50"]],
+            "white_point": ["3127/10000", "329/1000"],
+        })
+        self.assertEqual(source["color"]["content_light"], {"max_cll": 1000, "max_fall": 400})
+        self.assertEqual(len(source["display_matrix"]), 9)
+        self.assertEqual(source["color"]["bit_depth"], 10)
+        self.assertEqual(source["color"]["transfer"], "smpte2084")
+        self.assertTrue(source["color"]["hdr_transfer"])
+        reference_stream = reference(self.hdr_metadata_rotated, "-show_streams")["streams"][0]
+        reference_side_data = {side["side_data_type"]: side for side in reference_stream["side_data_list"]}
+        self.assertIn("Mastering display metadata", reference_side_data)
+        self.assertIn("Content light level metadata", reference_side_data)
+        self.assertIn("Display Matrix", reference_side_data)
+        matrix_text = reference_side_data["Display Matrix"]["displaymatrix"]
+        reference_matrix = [int(value) for line in matrix_text.strip().splitlines()
+                            for value in line.split(":", 1)[1].split()]
+        self.assertEqual(source["display_matrix"], reference_matrix)
+        self.assertAlmostEqual(source["rotation_degrees"], reference_side_data["Display Matrix"]["rotation"], delta=0.01)
+
+        remuxed = self.root / "hdr-metadata-remuxed.mkv"
+        invoke(CLI, "remux", self.hdr_metadata_rotated, remuxed)
+        transcoded_outputs = [remuxed]
+        for extension in ("mp4", "mkv"):
+            output = self.root / f"hdr-metadata-transcoded.{extension}"
+            invoke(CLI, "transcode", self.hdr_metadata_rotated, output, "--encoder", "libaom-av1",
+                   "--option", "cpu-used=8", "--option", "threads=2")
+            transcoded_outputs.append(output)
+
+        for output in transcoded_outputs:
+            with self.subTest(output=output.suffix):
+                result = self.probe(output)["streams"][0]
+                self.assertEqual(result["color"]["mastering_display"], source["color"]["mastering_display"])
+                self.assertEqual(result["color"]["content_light"], source["color"]["content_light"])
+                self.assertEqual(result["display_matrix"], source["display_matrix"])
+                output_reference = reference(output, "-show_streams")["streams"][0]
+                output_side_data = {side["side_data_type"]: side for side in output_reference["side_data_list"]}
+                for side_type in ("Mastering display metadata", "Content light level metadata", "Display Matrix"):
+                    self.assertIn(side_type, output_side_data)
+                    self.assertEqual(semantic_side_data(output_side_data[side_type]),
+                                     semantic_side_data(reference_side_data[side_type]))
 
     def test_fractional_cfr_is_not_confused_with_timestamp_quantization(self):
         records = self.scan(self.source)

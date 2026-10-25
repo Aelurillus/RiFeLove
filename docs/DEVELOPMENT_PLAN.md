@@ -25,8 +25,11 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Decode software frames with presentation reordering/drain and retained original-precision storage.
 - [x] Scan actual timestamp cadence with fractional-CFR quantization handling and VFR fixtures.
 - [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.
-- [ ] Complete codec/container coverage, missing-PTS recovery and full mastering/rotation metadata fixture coverage.
-  - Decoder now repairs an absent frame PTS only from a declared stream start or the preceding frame's positive decoded duration, never from average FPS alone; media-scan, interpolation results and reports expose the repair count. Unanchored timestamps still fail visibly. `media-probe` now exposes the exact nine-coefficient display matrix alongside FFmpeg's rotation angle. Horizontal/vertical reflection combined with rotation is checked against ffprobe and survives remux plus software H.264 transcode to MP4, MOV and MKV. Mastering/content-light metadata fixtures, rotation combinations with static HDR metadata, and broader codec/container coverage remain open.
+- [x] Recover missing PTS only from declared stream start or prior positive frame duration; keep unanchored gaps explicit.
+  - Decoder repairs an absent frame PTS only from a declared stream start or the preceding frame's positive decoded duration, never from average FPS alone; media-scan, interpolation results and reports expose the repair count. Unit coverage confirms unanchored gaps remain unresolved instead of guessing from average FPS.
+- [x] Preserve/test rotation, reflection, mastering-display and content-light metadata through supported media operations.
+  - `media-probe` exposes the exact nine-coefficient display matrix alongside FFmpeg's rotation angle. Horizontal/vertical reflection combined with rotation survives remux and software H.264 transcode to MP4, MOV and MKV. A generated 10-bit PQ fixture combines mastering-display metadata, content-light levels, horizontal reflection and rotation; the probe, MKV remux and AV1 MP4/MKV transcodes preserve the metadata and matrix against ffprobe's semantic values.
+- [ ] Expand metadata fixtures across codecs and containers; validate broader codec/container coverage and real HDR media.
 - [ ] Add explicit color/pixel-format and HDR metadata handling.
 - [x] Add the first explicit tagged BT.709 8-bit SDR conversion to normalized RGB, replicated padding and restored crop; reject unknown/HDR/higher-depth inputs in this path.
 - [x] Add a model-independent CPU-frame encoder/mux writer and transcode path with compatible original audio/subtitle stream copy.
