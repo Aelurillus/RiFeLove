@@ -63,9 +63,16 @@ int main(int argc, char* argv[]) {
     parser.addHelpOption();
     const QCommandLineOption screenshot("smoke-screenshot","Render one startup frame for the local UI build check and exit.","path");
     parser.addOption(screenshot);
+    QCommandLineOption smokePage("smoke-page","Select a page for a local smoke screenshot.","page");
+    smokePage.setValueName("home|studio|queue|models|comparison");
+    parser.addOption(smokePage);
     const QCommandLineOption dataDirectory("data-dir","Store local task history and preferences in this directory.","path");
     parser.addOption(dataDirectory);
     parser.process(app);
+    if (parser.isSet(smokePage) && !parser.isSet(screenshot)) {
+        qCritical().noquote() << "--smoke-page requires --smoke-screenshot";
+        return 2;
+    }
     const QDir applicationDirectory(QCoreApplication::applicationDirPath());
     const bool portable = QFileInfo(applicationDirectory.filePath("portable.flag")).isFile();
     const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
@@ -175,6 +182,15 @@ int main(int argc, char* argv[]) {
 #endif
     engine.loadFromModule("RifeLove", "Main");
     if (engine.rootObjects().isEmpty()) return 1;
+    if (parser.isSet(smokePage)) {
+        const QStringList pages{"home","studio","queue","models","comparison"};
+        const int pageIndex = pages.indexOf(parser.value(smokePage));
+        if (pageIndex < 0) {
+            qCritical().noquote() << "Unknown smoke page:" << parser.value(smokePage);
+            return 2;
+        }
+        engine.rootObjects().front()->setProperty("currentPage",pageIndex);
+    }
     if (parser.isSet(screenshot)) {
         QTimer::singleShot(1000,&app,[&] {
             const auto window = qobject_cast<QQuickWindow*>(engine.rootObjects().front());

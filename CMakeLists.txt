@@ -352,6 +352,8 @@ if(RIFELOVE_BUILD_TESTS)
   if(TARGET rifelove-desktop)
     add_test(NAME Desktop.Smoke COMMAND rifelove-desktop --smoke-screenshot "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke.png" --data-dir "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke-data")
     set_tests_properties(Desktop.Smoke PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
+    add_test(NAME Desktop.StudioSmoke COMMAND rifelove-desktop --smoke-screenshot "${CMAKE_CURRENT_BINARY_DIR}/desktop-studio-smoke.png" --smoke-page studio --data-dir "${CMAKE_CURRENT_BINARY_DIR}/desktop-studio-smoke-data")
+    set_tests_properties(Desktop.StudioSmoke PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
     if(Python3_Interpreter_FOUND)
       add_test(NAME Desktop.LocalizationSmoke
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/localization_smoke.py

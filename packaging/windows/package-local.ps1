@@ -184,6 +184,12 @@ try {
     $quotedScreenshot = '"' + $screenshot + '"'
     $smoke = Start-Process -FilePath (Join-Path $packageRoot "RifeLove.exe") -ArgumentList "--smoke-screenshot $quotedScreenshot" -Wait -PassThru -WindowStyle Hidden
     if ($smoke.ExitCode -ne 0) { throw "Packaged RifeLove startup check failed with exit code $($smoke.ExitCode)" }
+    $studioScreenshot = Join-Path $packageRoot "studio-smoke.png"
+    $quotedStudioScreenshot = '"' + $studioScreenshot + '"'
+    $studioSmoke = Start-Process -FilePath (Join-Path $packageRoot "RifeLove.exe") -ArgumentList "--smoke-screenshot $quotedStudioScreenshot --smoke-page studio" -Wait -PassThru -WindowStyle Hidden
+    if ($studioSmoke.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $studioScreenshot -PathType Leaf)) {
+        throw "Packaged RifeLove Studio page check failed with exit code $($studioSmoke.ExitCode)"
+    }
 } finally {
     $env:PATH = $savedPath
     $env:QT_QPA_PLATFORM = $savedQpa

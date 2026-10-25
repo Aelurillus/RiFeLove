@@ -339,33 +339,88 @@ ApplicationWindow {
                 contentWidth: availableWidth
                 ColumnLayout {
                     width: parent.width
-                spacing: 20
+                spacing: 14
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.margins: 32
-                    spacing: 20
-                    RowLayout {
+                    Layout.margins: 24
+                    spacing: 14
+                    Rectangle {
+                        objectName: "studioHero"
                         Layout.fillWidth: true
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 5
-                            Label { text: qsTr("插帧工作室"); color: "#6fdbb8"; font.pixelSize: 11; font.bold: true }
-                            Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 32; font.bold: true; color: "#f2f6fa" }
-                            Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#94a5b8"; wrapMode: Text.WordWrap }
+                        Layout.preferredHeight: 120
+                        radius: 18
+                        border.color: "#2a3a4b"
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: "#192a3b" }
+                            GradientStop { position: 1; color: "#111a25" }
                         }
-                        Rectangle {
-                            visible: processingAvailable
-                            radius: 20
-                            color: "#132822"
-                            border.color: "#315246"
-                            implicitWidth: engineLabel.implicitWidth + 24
-                            implicitHeight: engineLabel.implicitHeight + 16
-                            Label { id: engineLabel; anchors.centerIn: parent; text: qsTr("●  RIFE 4.25 · CUDA"); color: "#a8efd5"; font.pixelSize: 12; font.bold: true }
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 24
+                            anchors.rightMargin: 24
+                            anchors.topMargin: 20
+                            anchors.bottomMargin: 20
+                            spacing: 22
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 7
+                                Label { text: qsTr("RIFELOVE  /  MOTION STUDIO"); color: "#9ee6c8"; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1.2 }
+                                Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 29; font.bold: true; color: "#f2f6fa" }
+                                Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#a9b8c9"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            }
+                            ColumnLayout {
+                                Layout.preferredWidth: 304
+                                spacing: 8
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 7
+                                    Rectangle {
+                                        Layout.preferredWidth: 72; Layout.preferredHeight: 52
+                                        radius: 10; color: "#172838"; border.color: "#385267"
+                                        Rectangle { x: 13; y: 13; width: 25; height: 27; radius: 13; color: "#2b5663" }
+                                        Rectangle { x: 43; y: 12; width: 15; height: 3; radius: 2; color: "#78bda9" }
+                                        Rectangle { x: 43; y: 20; width: 12; height: 3; radius: 2; color: "#587f8c" }
+                                        Rectangle { x: 43; y: 28; width: 17; height: 3; radius: 2; color: "#587f8c" }
+                                    }
+                                    Label { text: "›"; color: "#78bda9"; font.pixelSize: 22 }
+                                    Rectangle {
+                                        Layout.preferredWidth: 72; Layout.preferredHeight: 52
+                                        radius: 10; color: "#183027"; border.color: "#47735f"
+                                        Rectangle { x: 11; y: 12; width: 50; height: 5; radius: 3; color: "#4d9b7a" }
+                                        Rectangle { x: 17; y: 23; width: 38; height: 5; radius: 3; color: "#7bd3ae" }
+                                        Rectangle { x: 23; y: 34; width: 26; height: 5; radius: 3; color: "#4d9b7a" }
+                                    }
+                                    Label { text: "›"; color: "#78bda9"; font.pixelSize: 22 }
+                                    Rectangle {
+                                        Layout.preferredWidth: 72; Layout.preferredHeight: 52
+                                        radius: 10; color: "#172838"; border.color: "#385267"
+                                        Rectangle { x: 11; y: 11; width: 50; height: 30; radius: 6; color: "#203b4c" }
+                                        Rectangle { x: 18; y: 30; width: 38; height: 3; radius: 2; color: "#93d6ba" }
+                                        Rectangle { x: 23; y: 35; width: 28; height: 2; radius: 1; color: "#6ba99f" }
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: qsTr("源帧     ·     RIFE 生成     ·     补帧输出")
+                                    color: "#91a6b7"
+                                    font.pixelSize: 11
+                                }
+                                Label {
+                                    id: engineLabel
+                                    Layout.fillWidth: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: window.selectedModelVerified ? qsTr("●  本地模型已校验 · CUDA 推理") : qsTr("●  CUDA 推理")
+                                    color: "#a8efd5"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                }
+                            }
                         }
                     }
                     Rectangle {
                         Layout.fillWidth: true
-                        implicitHeight: importContent.implicitHeight + 34
+                        implicitHeight: importContent.implicitHeight + 26
                         color: "#121d28"
                         radius: 14
                         border.color: drop.containsDrag ? "#6fdbb8" : "#263746"
@@ -381,8 +436,8 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.leftMargin: 20
                             anchors.rightMargin: 18
-                            anchors.topMargin: 17
-                            anchors.bottomMargin: 17
+                            anchors.topMargin: 12
+                            anchors.bottomMargin: 12
                             spacing: 11
                             RowLayout {
                                 Label { text: qsTr("导入视频"); font.bold: true; font.pixelSize: 15; Layout.fillWidth: true }
@@ -444,7 +499,7 @@ ApplicationWindow {
                             id: studioProfiles
                             objectName: "studioLocalProfiles"
                             anchors.fill: parent
-                            anchors.margins: 12
+                            anchors.margins: 8
                             controller: taskQueue
                             values: window.localProfileValues()
                             available: processingAvailable && !window.active && taskQueue.available
@@ -462,7 +517,7 @@ ApplicationWindow {
                             ColumnLayout {
                                 id: settingsContent
                                 anchors.fill: parent
-                                anchors.margins: 14
+                                anchors.margins: 12
                                 spacing: 9
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -483,18 +538,18 @@ ApplicationWindow {
                         radius: 13
                         color: "#111b26"
                         border.color: "#263746"
-                        implicitHeight: outputContent.implicitHeight + 26
+                        implicitHeight: outputContent.implicitHeight + 20
                         ColumnLayout {
                             id: outputContent
                             anchors.fill: parent
-                            anchors.margins: 13
+                            anchors.margins: 10
                             spacing: 8
                             RowLayout {
                                 Layout.fillWidth: true
                                 Label { text: qsTr("输出文件"); font.bold: true; Layout.fillWidth: true }
                                 ActionButton { text: qsTr("选择位置"); enabled: processingAvailable && !window.active; onClicked: { outputDialog.selectedFile = studio.localUrl(studio.output); outputDialog.open() } }
                             }
-                            TextField { Layout.fillWidth: true; readOnly: true; text: processingAvailable ? studio.output : ""; placeholderText: qsTr("导入视频后自动生成新文件名"); selectByMouse: true }
+                            TextField { Layout.fillWidth: true; implicitHeight: 44; readOnly: true; text: processingAvailable ? studio.output : ""; placeholderText: qsTr("导入视频后自动生成新文件名"); selectByMouse: true }
                         }
                     }
                     ActionButton {
@@ -692,38 +747,6 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         color: window.state === "failed" ? "#ffb3ad" : studio.progressStalled ? "#f0c98a" : "#b9c9dd"
                         font.pixelSize: 12
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        visible: !window.info.width
-                        Repeater {
-                            model: [
-                                {icon: "◉", title: qsTr("完全本地"), detail: qsTr("视频与模型只在本机处理")},
-                                {icon: "↗", title: qsTr("安全输出"), detail: qsTr("保留原片，生成独立文件")},
-                                {icon: "✦", title: qsTr("NVIDIA 加速"), detail: qsTr("RIFE 推理由 CUDA 驱动")}
-                            ]
-                            delegate: Rectangle {
-                                required property var modelData
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 82
-                                radius: 12
-                                color: "#121b27"
-                                border.color: "#202d3d"
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 14
-                                    spacing: 12
-                                    Label { text: modelData.icon; color: "#9ee6c8"; font.pixelSize: 20 }
-                                    ColumnLayout {
-                                        spacing: 4
-                                        Layout.fillWidth: true
-                                        Label { text: modelData.title; font.bold: true }
-                                        Label { text: modelData.detail; color: "#91a1b4"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
