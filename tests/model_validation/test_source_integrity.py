@@ -19,6 +19,7 @@ from export_rife import export_pack, inference_state
 class ModelSourceIntegrity(unittest.TestCase):
     def test_default_source_directory_tracks_pinned_model_and_rejects_path_escape(self):
         self.assertEqual(default_destination("rife-4.25"), ROOT / "models/weights/rife4.25-reviewed")
+        self.assertEqual(default_destination("rife-4.25-lite"), ROOT / "models/weights/rife4.25-lite-reviewed")
         self.assertEqual(default_destination("rife-4.26"), ROOT / "models/weights/rife4.26-reviewed")
         with self.assertRaisesRegex(ValueError, "invalid modelId"):
             default_destination("rife-../../outside")

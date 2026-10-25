@@ -153,7 +153,7 @@ $readmeLines = @(
     '启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。',
     '运行日志只保存在本机：桌面日志位于 data/logs/rifelove.jsonl，CLI 日志位于 %LOCALAPPDATA%/RifeLove/logs/cli.jsonl。日志最多 4 MiB 并保留最近 3 个轮转文件；错误详情有时会包含本地文件名，分享前请检查。',
     '本次附带并完成文件校验的模型：{0}。首次启动默认选择 {1}。当前色彩路径支持模型清单声明的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR，并保留输入位深和色彩标签；HDR、其他位深和未知色彩仍被拦截。模型许可与 SHA-256 位于各自的 models 子目录。',
-    '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。两套随包模型都经过本机 TensorRT FP32 数值校验，摘要保存在 data/tensorrt-validation.json。FP16 在当前 GTX 1660 SUPER 上未通过 8-bit SDR 精度门槛，因此不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
+    '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。随包模型都经过本机 TensorRT FP32 数值校验，摘要保存在 data/tensorrt-validation.json。FP16 在当前 GTX 1660 SUPER 上未通过 8-bit SDR 精度门槛，因此不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
     '默认视频编码：任务开始前按目标帧率、像素格式、码率和编码选项预检查 NVIDIA NVENC；若当前驱动或像素格式不兼容，会选择已通过同一输出设置检查的软件编码器。界面会分别标明 CPU 视频编码和 CUDA RIFE 插帧。当前驱动提供 NVENC API 12.2，而本机 FFmpeg 要求 API 13.0 / 驱动 570.0 或更新，所以自动模式将使用软件 H.264。高级编码中可以显式选择 NVENC 的恒定质量 CQ（VBR + CQ）；该设置需要本机 NVENC 可初始化，无法回退到软件编码。',
     '导入视频时会显示按源分辨率和像素格式检查的 NVENC、软件 H.264、HEVC 与 AV1 能力；开始任务时会再次按目标输出帧率、时间基、像素格式、码率、GOP 和编码选项检查实际配置。进度栏按预计总帧数显示确定进度与剩余时间；估算总帧数不替代最终时间轴验证。',
     '本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\{2}" --runtime-dir ".\runtime" --progress --report "处理报告.json"。报告记录模型/GPU、实际编码器和回退原因、端到端速度、质量保护计数及时间轴校验；不包含未实测的主观画质评分。',
@@ -166,7 +166,7 @@ $readmeLines = @(
     '',
     'GPU 运行库使用本机依赖目录中的 ONNX Runtime CUDA 1.22.0、TensorRT 10.9、CUDA 12.8 和 cuDNN 9；runtime 联接指向完整的本机推理运行库。它不是跨电脑可搬运的发行包。目标电脑需要兼容的 NVIDIA 驱动。此本机目录不代表完成了公开发行所需的第三方再分发审核。',
     '',
-    '当前验证边界：本地 GTX 1660 SUPER；RIFE 4.25 与 4.26 FP32 均通过六组小尺寸 CPU/CUDA/TensorRT 数值对比；4.25 另通过合成 720p BT.709、30→60 FPS 端到端验证，并保留音轨和 0.5 秒时长。RIFE 4.26 TensorRT FP32 六组对照最大绝对误差 0.00183、最低 PSNR 85.94 dB；相同模型的 TensorRT FP16 六组测试未通过门槛（最大误差 0.953、最低 PSNR 16.53 dB），因此当前只启用 FP32。BT.470BG/SMPTE 170M 8-bit SDR 通过 CUDA RIFE 合成片段验证；BT.709 10-bit SDR 通过 96x64 合成 RIFE 插帧、AV1 回退和输出色彩/时间轴检查，但不是实际素材画质验收。这些结果没有证明 4.26 画质更好。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用源格式兼容的软件编码，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR 和真实素材对比仍未验证。',
+    '当前验证边界：本地 GTX 1660 SUPER；RIFE 4.25、4.25 Lite 与 4.26 FP32 均通过六组小尺寸 CPU/CUDA/TensorRT 数值对比；4.25 另通过合成 720p BT.709、30→60 FPS 端到端验证，并保留音轨和 0.5 秒时长。RIFE 4.26 TensorRT FP32 六组对照最大绝对误差 0.00183、最低 PSNR 85.94 dB；RIFE 4.25 Lite TensorRT FP32 六组最大误差 0.000382、最低 PSNR 93.96 dB；Lite 的本机 720p 合成端到端速度与另外两款相近；相同模型的 TensorRT FP16 六组测试未通过门槛（最大误差 0.953、最低 PSNR 16.53 dB），因此当前只启用 FP32。BT.470BG/SMPTE 170M 8-bit SDR 通过 CUDA RIFE 合成片段验证；BT.709 10-bit SDR 通过 96x64 合成 RIFE 插帧、AV1 回退和输出色彩/时间轴检查，但不是实际素材画质验收。这些结果没有证明 4.26 或 Lite 在真实素材上画质更好。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用源格式兼容的软件编码，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR 和真实素材对比仍未验证。',
     '任务、偏好设置和模型中心目录保存在 data/preferences.ini 与 data/queue.sqlite.'
 )
 $readme = ($readmeLines -join [Environment]::NewLine) -f $modelNames, [string]$defaultModelPack.descriptor.displayName, [string]$defaultModelPack.descriptor.id
