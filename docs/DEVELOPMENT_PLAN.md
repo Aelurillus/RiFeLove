@@ -64,7 +64,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [ ] Add bounded VRAM pool, CUDA streams and safe pipeline overlap.
   - The sequential RIFE path now reuses up to two completed source-frame buffers and releases idle cache entries when allocation pressure requires space; buffers still referenced by an inference request are never recycled. The allocator regression passes on the local GTX 1660 SUPER; end-to-end pipeline profiling, throughput benchmarking and stage overlap remain open.
 - [ ] Benchmark cold/warm inference and end-to-end throughput by GPU/resolution.
-  - Studio now reports cumulative RIFE wait, frame encoding, source decode, preparation/transfers/color restoration and final validation time; JSON result/report includes the same stage breakdown. Repeatable hardware/resolution performance baselines and attribution under the full test matrix remain open.
+  - [x] Add a local-only benchmark runner that repeats CLI jobs, excludes warmups from aggregates, records model/GPU/encoder/backend/fallback and stage timing data, hashes source files, and independently checks output frame counts with FFprobe.
+  - Studio now reports cumulative RIFE wait, frame encoding, source decode, preparation/transfers/color restoration and final validation time; JSON result/report includes the same stage breakdown. Controlled measurements across GPU/resolution/content combinations and attribution under the full test matrix remain open.
 - [ ] Evaluate CUDA Graph, FP16, profiles and optional overlapped tiling.
 
 ## Phase 5 — quality/color
