@@ -41,7 +41,7 @@ ApplicationWindow {
     function resolveSelectedModelDisplayName() {
         selectedModelVerified = false
         if (!processingAvailable || !taskQueue || !taskQueue.defaults) return ""
-        const selected = taskQueue.defaults.model
+        const selected = modelFolder.toString() !== "" ? modelFolder : taskQueue.defaults.model
         const directory = selected ? taskQueue.localPath(selected) : ""
         if (!directory) return ""
         const models = taskQueue.models || []
@@ -58,6 +58,7 @@ ApplicationWindow {
     function refreshSelectedModelDisplayName() {
         selectedModelDisplayName = resolveSelectedModelDisplayName()
     }
+    onModelFolderChanged: refreshSelectedModelDisplayName()
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
@@ -74,22 +75,12 @@ ApplicationWindow {
     }
     readonly property bool selectedModelSupportsInputProfile: {
         const profile = window.info.inputProfile || ""
-        if (!profile || profile.endsWith("-sdr8")) return true
-        const path = window.modelFolder.toLocalFile()
-        if (!path || !taskQueue || !taskQueue.models) return false
-        const normalizePath = value => String(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
-        const selectedPath = normalizePath(path)
-        const models = taskQueue.models
-        for (let index = 0; index < models.length; ++index) {
-            const model = models[index]
-            if (normalizePath(model.directory) !== selectedPath || !model.valid) continue
-            const profiles = model.supportedInputProfiles || []
-            return profiles.indexOf(profile) >= 0
-        }
-        return false
+        if (!profile) return false
+        return !!taskQueue && taskQueue.supportsModelInputProfile(window.modelFolder,profile)
     }
     readonly property bool canStart: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor &&
-        !!window.info.gpuAvailable && window.selectedEncoderReady && window.selectedModelSupportsInputProfile &&
+        !!window.info.gpuAvailable && window.selectedEncoderReady && window.selectedModelVerified && !taskQueue.verifyingModels &&
+        window.selectedModelSupportsInputProfile &&
         window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
 
     function applyLocalDefaults() {
@@ -135,6 +126,12 @@ ApplicationWindow {
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
             codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv", encodingOptions())
     }
+    function ensureStartupModelValidation() {
+        if (!processingAvailable || !taskQueue || !taskQueue.available || window.startupModelValidationStarted ||
+                taskQueue.busy || taskQueue.importing) return
+        window.startupModelValidationStarted = true
+        if (!taskQueue.verifyingModels) taskQueue.refreshModels()
+    }
     function encoderHint() {
         if (!window.info.width) return qsTr("导入后会检查本机的 GPU 与视频编码能力。")
         if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型没有声明支持这个 10-bit SDR 输入配置。")
@@ -150,26 +147,28 @@ ApplicationWindow {
         if (window.info.nvencContextOpened) return qsTr("NVENC 可以初始化；最终以实际导出结果为准。")
         return qsTr("没有兼容的自动编码器，请检查本机视频运行环境。")
     }
-    Component.onCompleted: { applyLocalDefaults(); refreshSelectedModelDisplayName() }
+    Component.onCompleted: {
+        applyLocalDefaults()
+        refreshSelectedModelDisplayName()
+        ensureStartupModelValidation()
+    }
     Connections {
         target: taskQueue
         function onDefaultsChanged() { window.applyLocalDefaults(); window.refreshSelectedModelDisplayName() }
         function onModelsChanged() { window.refreshSelectedModelDisplayName() }
-        function onChanged() {
-            if (taskQueue.available && !window.startupModelValidationStarted) {
-                window.startupModelValidationStarted = true
-                taskQueue.refreshModels()
-            }
-        }
+        function onChanged() { window.ensureStartupModelValidation() }
     }
 
     function stateText(value) {
         if (value === "inspected" && window.info.width) {
             if (!window.info.supportedColor) return qsTr("色彩格式暂不支持")
             if (!window.info.gpuAvailable) return qsTr("NVIDIA GPU 不可用")
+            if (!window.modelFolder.toString()) return qsTr("请先在模型中心选择本地模型")
+            if (taskQueue.verifyingModels) return qsTr("正在校验所选本地模型…")
+            if (!window.selectedModelVerified) return qsTr("所选模型未通过本机校验，请在模型中心检查")
             if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型不支持此输入配置")
             if (!window.selectedEncoderReady) return qsTr("所选编码器不可用")
-            if (!window.modelFolder.toString() || !window.runtimeFolder.toString()) return qsTr("请配置模型与运行库")
+            if (!window.runtimeFolder.toString()) return qsTr("请配置本地推理运行库")
             return qsTr("可以开始")
         }
         const labels = {ready: qsTr("等待导入"), inspecting: qsTr("读取视频信息"), inspected: qsTr("可以开始"),
@@ -197,7 +196,6 @@ ApplicationWindow {
         nameFilters: ["Matroska (*.mkv)", "MP4 (*.mp4)", "QuickTime (*.mov)"]
         onAccepted: studio.setOutput(selectedFile)
     }
-    FolderDialog { id: modelDialog; title: qsTr("选择已校验的本地模型包"); onAccepted: { window.modelFolder = selectedFolder; window.persistLocalDefaults() } }
     FolderDialog { id: runtimeDialog; title: qsTr("选择 ONNX CUDA 运行库目录"); onAccepted: { window.runtimeFolder = selectedFolder; window.persistLocalDefaults() } }
     onClosing: function(close) {
         if (window.active) { close.accepted = false; closeDialog.open() }
@@ -487,15 +485,20 @@ ApplicationWindow {
                             anchors.fill: parent
                             RowLayout {
                                 Label { text: qsTr("模型包"); Layout.preferredWidth: 70 }
-                                TextField { Layout.fillWidth: true; readOnly: true; text: window.modelFolder.toString(); placeholderText: qsTr("包含 model.json 的已校验模型包"); selectByMouse: true }
-                                ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: modelDialog.open() }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: window.selectedModelDisplayName || qsTr("尚未选择已校验模型")
+                                    color: window.selectedModelVerified ? "#9ee6c8" : "#f0c98a"
+                                    elide: Text.ElideRight
+                                }
+                                ActionButton { text: qsTr("打开模型中心"); enabled: !window.active; onClicked: window.currentPage = 3 }
                             }
                             RowLayout {
                                 Label { text: qsTr("运行库"); Layout.preferredWidth: 70 }
                                 TextField { Layout.fillWidth: true; readOnly: true; text: window.runtimeFolder.toString(); placeholderText: qsTr("包含 ONNX Runtime / CUDA DLL 的目录"); selectByMouse: true }
                                 ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: runtimeDialog.open() }
                             }
-                            Label { text: qsTr("RIFE 色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库仅从所选本地目录加载。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
+                            Label { text: qsTr("模型必须先在本地模型中心通过完整性校验，再设为默认模型。色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库只从本机目录读取。"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aaac0"; font.pixelSize: 12 }
                         }
                     }
                     RowLayout {

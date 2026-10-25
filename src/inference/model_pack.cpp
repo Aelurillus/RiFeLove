@@ -163,13 +163,17 @@ bool supportsInputProfile(const ModelPack& model, std::string_view profile) {
 std::vector<std::byte> readLocalFile(const std::filesystem::path& path, std::size_t limit) {
     // Bound allocation, then read from the same opened handle that supplied size.
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
-    if (!stream || !std::filesystem::is_regular_file(path)) throw std::runtime_error("Could not open local model file");
+    const auto encodedPath = path.u8string();
+    const std::string displayPath(encodedPath.begin(),encodedPath.end());
+    if (!stream || !std::filesystem::is_regular_file(path))
+        throw std::runtime_error("Could not open local model file: " + displayPath);
     const auto end = stream.tellg();
-    if (end < 0 || static_cast<std::uintmax_t>(end) > limit) throw std::runtime_error("Model file exceeds its size limit");
+    if (end < 0 || static_cast<std::uintmax_t>(end) > limit)
+        throw std::runtime_error("Model file exceeds its size limit: " + displayPath);
     std::vector<std::byte> bytes(static_cast<std::size_t>(end));
     stream.seekg(0);
     if (!bytes.empty() && !stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
-        throw std::runtime_error("Could not read complete local model file");
+        throw std::runtime_error("Could not read complete local model file: " + displayPath);
     return bytes;
 }
 std::vector<std::byte> readVerifiedFile(const std::filesystem::path& path, const std::string& expected, std::size_t limit) {

@@ -474,3 +474,15 @@ void QueueController::setDefaultModel(const QUrl& directory) {
         {{"bitrateKbps",defaults_.value("bitrateKbps",8000)}, {"qualityMode",defaults_.value("qualityMode","bitrate")},
          {"quality",defaults_.value("quality",32)}, {"gopSize",defaults_.value("gopSize",120)}});
 }
+bool QueueController::supportsModelInputProfile(const QUrl& directory, const QString& profile) const {
+    if (!directory.isLocalFile() || directory.toLocalFile().isEmpty() || profile.isEmpty()) return false;
+    const auto selectedPath = directory.toLocalFile();
+    for (const auto& value : models_) {
+        const auto entry = value.toMap();
+        if (!entry.value("valid").toBool() || !samePath(entry.value("directory").toString(),selectedPath)) continue;
+        const auto profiles = entry.value("supportedInputProfiles").toStringList();
+        if (profiles.contains(profile)) return true;
+        return profile.endsWith(QStringLiteral("-sdr8")) && profiles.contains(QStringLiteral("legacy-unverified"));
+    }
+    return false;
+}

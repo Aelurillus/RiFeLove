@@ -85,6 +85,12 @@ TEST(ModelIntegrity, BoundsHashMismatchAndPathEscapesAreRejected) {
     { std::ofstream output(temporary.value / "model.onnx", std::ios::binary); output << "abc"; }
     EXPECT_EQ(readVerifiedFile(temporary.value / "model.onnx", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3).size(), 3);
     EXPECT_THROW((void)readLocalFile(temporary.value / "model.onnx", 2), std::runtime_error);
+    try {
+        (void)readLocalFile(temporary.value / "missing.onnx", 10);
+        FAIL() << "A missing local model file was accepted";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("missing.onnx"),std::string::npos);
+    }
     EXPECT_THROW((void)readVerifiedFile(temporary.value / "model.onnx", std::string(64, '0'), 3), std::runtime_error);
     EXPECT_THROW((void)packFile(temporary.value, "../outside.onnx"), std::invalid_argument);
     EXPECT_THROW((void)packFile(temporary.value, "C:/outside.onnx"), std::invalid_argument);

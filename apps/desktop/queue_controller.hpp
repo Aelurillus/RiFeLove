@@ -54,6 +54,7 @@ public:
     Q_INVOKABLE void addLocalModel(const QUrl& directory);
     Q_INVOKABLE void removeLocalModel(const QUrl& directory);
     Q_INVOKABLE void setDefaultModel(const QUrl& directory);
+    Q_INVOKABLE bool supportsModelInputProfile(const QUrl& directory, const QString& profile) const;
     Q_INVOKABLE QUrl localUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
     Q_INVOKABLE QString localPath(const QUrl& url) const { return url.isLocalFile() ? url.toLocalFile() : QString(); }
 signals:

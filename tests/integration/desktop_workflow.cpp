@@ -128,6 +128,11 @@ int main(int argc, char** argv) {
         auto* statusLabel = root->findChild<QObject*>("studioStatusLabel");
         auto* targetRate = root->findChild<QObject*>("targetRate");
         auto* studioEncoder = root->findChild<QObject*>("studioEncoder");
+        waitUntil([&] {
+            return !taskQueue.verifyingModels() && taskQueue.models().size() == 1 &&
+                taskQueue.models().front().toMap().value("valid").toBool();
+        }, "Saved local model was not verified before the Studio workflow");
+        require(root->property("selectedModelVerified").toBool(), "Saved local model path is not reflected as verified in Studio");
         require(button && !button->property("enabled").toBool(), "Start should be disabled without input/model");
         require(statusLabel, "Studio status label is unavailable");
         require(targetRate && targetRate->property("editText").toString() == QStringLiteral("240") &&
@@ -142,7 +147,10 @@ int main(int argc, char** argv) {
                 "Studio did not restore saved advanced encoder settings");
         // Confirm restoration above, then keep the synthetic workflow short.
         require(targetRate->setProperty("editText","60"), "Could not set the synthetic workflow FPS");
-        root->setProperty("modelFolder", QUrl::fromLocalFile(arguments[3]));
+        const auto unverifiedModel = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("corrupt-model-copy");
+        require(QFileInfo(unverifiedModel).isDir(), "Unverified model regression fixture is unavailable");
+        root->setProperty("modelFolder", QUrl::fromLocalFile(unverifiedModel));
+        require(!root->property("selectedModelVerified").toBool(), "Studio trusted the saved model after the selected path changed");
         root->setProperty("runtimeFolder", QUrl::fromLocalFile(arguments[4]));
         studio.openSource(QUrl::fromLocalFile(arguments[1]));
         require(studio.busy(), "Inspection should run asynchronously");
@@ -162,6 +170,21 @@ int main(int argc, char** argv) {
         if (!studio.media().value("nvencContextOpened").toBool() && studio.media().value("softwareH264ContextOpened").toBool())
             require(studio.detail().contains(QStringLiteral("软件 H.264")) && !studio.detail().contains(QStringLiteral("Function not implemented")),
                 "Studio did not explain its preflight NVENC fallback in user-facing language");
+        require(!button->property("enabled").toBool() &&
+                statusLabel->property("text").toString() == QStringLiteral("所选模型未通过本机校验，请在模型中心检查"),
+            "Studio allowed an unverified model path to reach native model loading");
+        require(root->setProperty("modelFolder", QUrl::fromLocalFile(arguments[3])), "Could not restore the saved model path");
+        if (!root->property("selectedModelVerified").toBool()) {
+            const auto selected = root->property("modelFolder").toUrl().toLocalFile().toStdString();
+            std::string entries;
+            for (const auto& value : taskQueue.models()) {
+                const auto model = value.toMap();
+                entries += " [" + model.value("directory").toString().toStdString() + ",valid=" +
+                    std::to_string(model.value("valid").toBool()) + "]";
+            }
+            throw std::runtime_error("Studio did not revalidate restored model path " + selected + "; display=" +
+                root->property("selectedModelDisplayName").toString().toStdString() + "; catalog=" + entries);
+        }
         require(button->property("enabled").toBool() && statusLabel->property("text").toString() == QStringLiteral("可以开始"), "Supported BT.601 source readiness disagrees with the start control");
         const auto av1Probe = encoderCapabilities.value(QStringLiteral("libaom-av1")).toMap();
         if (!av1Probe.value(QStringLiteral("contextOpened")).toBool()) {
