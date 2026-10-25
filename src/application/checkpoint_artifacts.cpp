@@ -160,7 +160,14 @@ void CheckpointArtifacts::ensureDirectory() const {
         throw std::runtime_error("checkpoint artifact root is not a local directory");
 }
 
-void CheckpointArtifacts::setManifest(const std::string& value) { store_.setCheckpointManifest(taskId_,value); }
+void CheckpointArtifacts::setManifest(const std::string& value) {
+    const auto manifest = Json::parse(value);
+    if (!manifest.is_object() || !manifest.contains("schemaVersion") || !manifest.at("schemaVersion").is_number_integer())
+        throw std::invalid_argument("checkpoint manifest has no supported schema version");
+    const auto version = manifest.at("schemaVersion").get<int>();
+    if (version != 1 && version != 2) throw std::invalid_argument("unsupported checkpoint manifest schema version");
+    store_.setCheckpointManifest(taskId_,value,version);
+}
 std::string CheckpointArtifacts::manifest() const { return store_.checkpointManifest(taskId_); }
 
 std::filesystem::path CheckpointArtifacts::resolveRecordedPath(const TaskCheckpointSegment& segment) const {
@@ -291,6 +298,35 @@ media::VideoSegmentContract CheckpointArtifacts::parseContract(const std::string
         throw;
     } catch (const std::exception& error) {
         throw std::invalid_argument(std::string("invalid checkpoint segment contract: ") + error.what());
+    }
+}
+
+bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::string& expected) {
+    try {
+        auto actual = Json::parse(saved);
+        const auto wanted = Json::parse(expected);
+        if (actual == wanted) return true;
+        if (!actual.is_object() || !wanted.is_object() || actual.value("schemaVersion",0) != 1 ||
+            wanted.value("schemaVersion",0) != 2 || !actual.contains("job") || !actual.contains("identity") ||
+            !actual.at("job").is_object() || !actual.at("identity").is_object()) return false;
+        auto& oldJob = actual["job"];
+        auto& oldIdentity = actual["identity"];
+        if (oldJob.value("schemaVersion",0) != 1 || oldIdentity.value("schemaVersion",0) != 1 ||
+            !oldIdentity.contains("model") || !oldIdentity.at("model").is_object()) return false;
+        // A v1 task could only select the built-in adapter. If it contains
+        // adapter-like extension data, do not reinterpret it as trusted.
+        if ((oldJob.contains("expectedModelAdapterId") && oldJob.at("expectedModelAdapterId") != "rife-sdr-v1") ||
+            (oldJob.contains("expectedModelAdapterVersion") && oldJob.at("expectedModelAdapterVersion") != 1) ||
+            oldIdentity.at("model").contains("adapter")) return false;
+        oldJob["expectedModelAdapterId"] = "rife-sdr-v1";
+        oldJob["expectedModelAdapterVersion"] = 1;
+        oldJob["schemaVersion"] = 2;
+        oldIdentity["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
+        oldIdentity["schemaVersion"] = 2;
+        actual["schemaVersion"] = 2;
+        return actual == wanted;
+    } catch (const std::exception&) {
+        return false;
     }
 }
 

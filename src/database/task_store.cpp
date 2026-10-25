@@ -103,7 +103,21 @@ TaskStore::TaskStore(const std::string& databasePath, OpenMode mode) : mode_(mod
         execute(db_, "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;");
         execute(db_, "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, output_path TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','running','paused','interrupted','failed','cancelled','completed')), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, error TEXT NOT NULL DEFAULT ''); CREATE INDEX IF NOT EXISTS tasks_state_created ON tasks(state, created_at);");
         execute(db_, "CREATE TABLE IF NOT EXISTS task_details (sequence INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id), configuration TEXT NOT NULL, identity TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '');");
-        execute(db_, "CREATE TABLE IF NOT EXISTS task_checkpoint_manifests (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, schema_version INTEGER NOT NULL CHECK(schema_version=1), manifest_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
+        execute(db_, "CREATE TABLE IF NOT EXISTS task_checkpoint_manifests (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, schema_version INTEGER NOT NULL CHECK(schema_version IN (1,2)), manifest_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
+        std::string checkpointManifestTableSql;
+        {
+            Statement schema(db_,"SELECT sql FROM sqlite_master WHERE type='table' AND name='task_checkpoint_manifests'");
+            if (sqlite3_step(schema.get()) != SQLITE_ROW) throw std::runtime_error("checkpoint manifest table was not created");
+            checkpointManifestTableSql = columnText(schema.get(),0);
+        }
+        if (checkpointManifestTableSql.find("CHECK(schema_version IN (1,2))") == std::string::npos) {
+            Transaction migration(db_);
+            execute(db_,"CREATE TABLE task_checkpoint_manifests_v2 (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, schema_version INTEGER NOT NULL CHECK(schema_version IN (1,2)), manifest_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+            execute(db_,"INSERT INTO task_checkpoint_manifests_v2(task_id,schema_version,manifest_json,created_at) SELECT task_id,schema_version,manifest_json,created_at FROM task_checkpoint_manifests");
+            execute(db_,"DROP TABLE task_checkpoint_manifests");
+            execute(db_,"ALTER TABLE task_checkpoint_manifests_v2 RENAME TO task_checkpoint_manifests");
+            migration.commit();
+        }
         execute(db_, "CREATE TABLE IF NOT EXISTS task_checkpoint_segments (task_id TEXT NOT NULL REFERENCES task_details(task_id) ON DELETE CASCADE, segment_index INTEGER NOT NULL CHECK(segment_index>=0), first_output_frame INTEGER NOT NULL CHECK(first_output_frame>=0), end_output_frame INTEGER NOT NULL CHECK(end_output_frame>first_output_frame), artifact_path TEXT NOT NULL, sha256 TEXT NOT NULL CHECK(length(sha256)=64), byte_count INTEGER NOT NULL CHECK(byte_count>0), contract_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(task_id,segment_index), UNIQUE(task_id,artifact_path));");
         execute(db_, "CREATE TABLE IF NOT EXISTS task_output_publications (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, sha256 TEXT NOT NULL CHECK(length(sha256)=64), byte_count INTEGER NOT NULL CHECK(byte_count>0), result_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
     } catch (...) { sqlite3_close(db_); db_ = nullptr; throw; }
@@ -333,7 +347,8 @@ std::size_t TaskStore::recoverConfigured() {
     return static_cast<std::size_t>(sqlite3_changes(db_));
 }
 
-void TaskStore::setCheckpointManifest(const std::string& id, const std::string& manifest) {
+void TaskStore::setCheckpointManifest(const std::string& id, const std::string& manifest, int schemaVersion) {
+    if (schemaVersion != 1 && schemaVersion != 2) throw std::invalid_argument("unsupported checkpoint manifest schema version");
     boundedPayload(manifest,true);
     std::lock_guard lock(mutex_);
     requireWritable();
@@ -355,8 +370,10 @@ void TaskStore::setCheckpointManifest(const std::string& id, const std::string& 
         return;
     }
     if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
-    Statement insert(db_,"INSERT INTO task_checkpoint_manifests(task_id,schema_version,manifest_json) VALUES(?,1,?)");
-    bindText(db_,insert.get(),1,id); bindText(db_,insert.get(),2,manifest);
+    Statement insert(db_,"INSERT INTO task_checkpoint_manifests(task_id,schema_version,manifest_json) VALUES(?,?,?)");
+    bindText(db_,insert.get(),1,id);
+    if (sqlite3_bind_int(insert.get(),2,schemaVersion) != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db_));
+    bindText(db_,insert.get(),3,manifest);
     if (sqlite3_step(insert.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     transaction.commit();
 }

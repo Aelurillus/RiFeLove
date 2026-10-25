@@ -42,14 +42,16 @@ const ConfiguredTask& find(const std::vector<ConfiguredTask>& rows, const std::s
 }
 bool ownsOutput(TaskState state) { return state == TaskState::queued || state == TaskState::running || state == TaskState::paused || state == TaskState::interrupted; }
 std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment) {
-    const auto identity = Json::parse(identityText);
-    if (identity.value("schemaVersion",0) != 1) throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
+    auto identity = Json::parse(identityText);
+    if (identity.value("schemaVersion",0) != 1 && identity.value("schemaVersion",0) != 2)
+        throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
     auto job = source;
-    job.expectedSourceSha256 = identity.at("source").at("sha256").get<std::string>();
-    job.expectedModelSha256 = identity.at("model").at("sha256").get<std::string>();
-    job.expectedModelId = identity.at("model").at("id").get<std::string>();
-    job.expectedModelVersion = identity.at("model").at("version").get<std::string>();
-    return Json{{"schemaVersion",1},{"source",job.source},{"output",job.output},
+    applyStoredIdentity(job,identityText);
+    if (identity.value("schemaVersion",0) == 1) {
+        identity["model"]["adapter"] = {{"id",job.expectedModelAdapterId},{"version",job.expectedModelAdapterVersion}};
+        identity["schemaVersion"] = 2;
+    }
+    return Json{{"schemaVersion",2},{"source",job.source},{"output",job.output},
         {"job",Json::parse(serializeJob(job))},{"identity",identity},
         {"mediaRuntime",media::MediaEngine::runtimeVersion()},
         {"framesPerSegment",framesPerSegment}}.dump();
@@ -189,7 +191,7 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     if (manifest.empty()) throw std::logic_error("This task has no verified checkpoint segments; restart it with a new output");
     auto job = parseJob(task.task.sourcePath,task.task.outputPath,task.configuration);
     applyStoredIdentity(job,task.identity);
-    if (checkpointManifest(job,task.identity,checkpointFramesPerSegment_) != manifest)
+    if (!CheckpointArtifacts::manifestMatches(manifest,checkpointManifest(job,task.identity,checkpointFramesPerSegment_)))
         throw std::logic_error("Task settings, model identity or local media runtime changed; restart with a new output");
     CheckpointArtifacts artifacts(store_,id,path(task.task.outputPath));
     const auto segments = artifacts.verifyCommitted();
@@ -252,10 +254,10 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 const auto identityJson = serializeIdentity(identity);
                 const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_);
                 const auto previousManifest = artifacts.manifest();
-                if (!previousManifest.empty() && previousManifest != manifest)
+                if (!previousManifest.empty() && !CheckpointArtifacts::manifestMatches(previousManifest,manifest))
                     throw std::logic_error("Checkpoint identity or runtime changed; refusing to reuse prior segments");
                 store_.saveIdentity(current->task.id,identityJson);
-                artifacts.setManifest(manifest);
+                if (previousManifest.empty()) artifacts.setManifest(manifest);
                 PipelineCheckpoint checkpoint;
                 checkpoint.framesPerSegment = checkpointFramesPerSegment_;
                 checkpoint.completedSegments = artifacts.verifyCommitted(cancellation.get_token());

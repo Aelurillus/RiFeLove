@@ -48,6 +48,20 @@ TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThreshold
     auto bad = job; bad.expectedSourceSha256 = "unverified"; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.scene.cutMeanDifference = -0.1; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.encoding.frameRate = Rational(24); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.expectedModelAdapterId = "bad/id"; bad.expectedModelAdapterVersion = 1;
+    EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.expectedModelAdapterVersion = 1;
+    EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+}
+TEST(ProcessingConfiguration, ReadsLegacyVersionOneJobsWithoutAnAdapterPin) {
+    const auto job = configuredJob();
+    auto legacy = nlohmann::json::parse(serializeJob(job));
+    legacy["schemaVersion"] = 1;
+    legacy.erase("expectedModelAdapterId");
+    legacy.erase("expectedModelAdapterVersion");
+    const auto restored = parseJob(job.source,job.output,legacy.dump());
+    EXPECT_TRUE(restored.expectedModelAdapterId.empty());
+    EXPECT_EQ(restored.expectedModelAdapterVersion,0);
 }
 TEST(ProcessingConfiguration, PinsVersionTwoModelDescriptorForPersistentJobs) {
     const auto directory = std::filesystem::temp_directory_path() /
@@ -65,6 +79,53 @@ TEST(ProcessingConfiguration, PinsVersionTwoModelDescriptorForPersistentJobs) {
     EXPECT_EQ(job.expectedModelId,"fixture-v2");
     EXPECT_EQ(job.expectedModelVersion,"4.25");
     EXPECT_EQ(job.expectedModelSha256,digest);
+    EXPECT_EQ(job.expectedModelAdapterId,"rife-sdr-v1");
+    EXPECT_EQ(job.expectedModelAdapterVersion,1);
+
+    const auto customDescriptor = nlohmann::json{{"schemaVersion",2},{"id","fixture-v2"},{"family","rife"},
+        {"version","4.25"},{"sha256",digest},{"adapter",{{"id","fixture-adapter"},{"version",3}}},
+        {"capabilities",nlohmann::json::object()},{"license",nlohmann::json::object()},{"provenance",nlohmann::json::object()},
+        {"validation",nlohmann::json::object()}};
+    { std::ofstream file(directory / "model.json",std::ios::binary | std::ios::trunc); file << customDescriptor.dump(); }
+    job.expectedModelAdapterId.clear(); job.expectedModelAdapterVersion = 0;
+    ASSERT_NO_THROW(pinModelDescriptor(job));
+    EXPECT_EQ(job.expectedModelAdapterId,"fixture-adapter");
+    EXPECT_EQ(job.expectedModelAdapterVersion,3);
+    const auto roundTrip = parseJob(job.source,job.output,serializeJob(job));
+    EXPECT_EQ(roundTrip.expectedModelAdapterId,"fixture-adapter");
+    EXPECT_EQ(roundTrip.expectedModelAdapterVersion,3);
+}
+TEST(ProcessingIdentity, StoresAdapterVersionAndUpgradesLegacyIdentityToBuiltin) {
+    ProcessingIdentity identity;
+    identity.source.sha256 = std::string(64,'b');
+    identity.modelId = "fixture-rife";
+    identity.modelVersion = "4.25";
+    identity.modelSha256 = std::string(64,'a');
+    identity.backend = "onnxruntime_cuda";
+    identity.adapterId = "fixture-adapter";
+    identity.adapterVersion = 3;
+    const auto encoded = serializeIdentity(identity);
+    const auto json = nlohmann::json::parse(encoded);
+    ASSERT_EQ(json.at("schemaVersion"),2);
+    EXPECT_EQ(json.at("model").at("adapter").at("id"),"fixture-adapter");
+    EXPECT_EQ(json.at("model").at("adapter").at("version"),3);
+
+    ProcessingJob restored;
+    applyStoredIdentity(restored,encoded);
+    EXPECT_EQ(restored.expectedModelAdapterId,"fixture-adapter");
+    EXPECT_EQ(restored.expectedModelAdapterVersion,3);
+    auto conflicting = restored;
+    conflicting.expectedModelAdapterId = "rife-sdr-v1";
+    conflicting.expectedModelAdapterVersion = 1;
+    EXPECT_THROW(applyStoredIdentity(conflicting,encoded),std::invalid_argument);
+
+    auto legacy = json;
+    legacy["schemaVersion"] = 1;
+    legacy["model"].erase("adapter");
+    ProcessingJob legacyJob;
+    applyStoredIdentity(legacyJob,legacy.dump());
+    EXPECT_EQ(legacyJob.expectedModelAdapterId,"rife-sdr-v1");
+    EXPECT_EQ(legacyJob.expectedModelAdapterVersion,1);
 }
 TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvidence) {
     PipelineResult result{};

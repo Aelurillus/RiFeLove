@@ -85,7 +85,7 @@ public:
 
     // A checkpoint manifest is immutable for a task. Segment records are added
     // only after the caller has closed, validated and hashed the local artifact.
-    void setCheckpointManifest(const std::string& id, const std::string& manifest);
+    void setCheckpointManifest(const std::string& id, const std::string& manifest, int schemaVersion = 1);
     [[nodiscard]] std::string checkpointManifest(const std::string& id) const;
     void recordCheckpointSegment(const std::string& id, const TaskCheckpointSegment& segment);
     [[nodiscard]] std::vector<TaskCheckpointSegment> checkpointSegments(const std::string& id) const;

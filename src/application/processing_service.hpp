@@ -20,6 +20,10 @@ struct ProcessingJob {
     std::string expectedModelSha256;
     std::string expectedModelId;
     std::string expectedModelVersion;
+    // Queued tasks pin the application-owned frame adapter independently of
+    // the model graph hash so interrupted work cannot resume under new code.
+    std::string expectedModelAdapterId;
+    int expectedModelAdapterVersion = 0;
 };
 struct ProcessingIdentity {
     FileIdentity source;
@@ -28,6 +32,8 @@ struct ProcessingIdentity {
     std::string modelSha256;
     gpu::DeviceInfo device;
     std::string backend;
+    std::string adapterId = "rife-sdr-v1";
+    int adapterVersion = 1;
 };
 struct ProcessingEvent {
     enum class Kind { progress, prepared, inspected, completed, cancelled, failed };

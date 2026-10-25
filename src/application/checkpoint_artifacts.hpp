@@ -30,6 +30,9 @@ public:
 
     [[nodiscard]] static std::string serializeContract(const media::VideoSegmentContract& contract);
     [[nodiscard]] static media::VideoSegmentContract parseContract(const std::string& json);
+    // Schema 1 checkpoints predate adapter identity. They may be upgraded in
+    // memory only as the built-in RIFE SDR adapter; custom identities fail closed.
+    [[nodiscard]] static bool manifestMatches(const std::string& saved, const std::string& expected);
 
 private:
     void ensureDirectory() const;

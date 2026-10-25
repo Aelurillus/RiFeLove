@@ -51,12 +51,16 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         throw std::runtime_error("Model SHA-256 changed since this task was prepared; select a verified model for a new task");
     if ((!job.expectedModelId.empty() && pack.id != job.expectedModelId) || (!job.expectedModelVersion.empty() && pack.version != job.expectedModelVersion))
         throw std::runtime_error("Model identity/version changed since this task was queued");
+    if (!job.expectedModelAdapterId.empty() &&
+        (pack.adapterId != job.expectedModelAdapterId || pack.adapterVersion != job.expectedModelAdapterVersion))
+        throw std::runtime_error("Model adapter identity changed since this task was queued");
     checkpoint();
     auto device = std::make_shared<gpu::CudaDevice>(job.deviceOrdinal);
     inference::OnnxCudaConfig config; config.runtimeDirectory = job.runtimeDirectory;
     inference::OnnxCudaBackend backend(device,config); backend.loadModel(pack);
     const auto capabilities = backend.capabilities();
-    ProcessingIdentity processingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info(),capabilities.backend};
+    ProcessingIdentity processingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info(),capabilities.backend,
+        capabilities.adapterId,capabilities.adapterVersion};
     ProcessingEvent prepared; prepared.kind = ProcessingEvent::Kind::prepared; prepared.stage = "loading_model";
     prepared.detail = capabilities.fallbackReason;
     prepared.identity = processingIdentity;

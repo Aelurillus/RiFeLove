@@ -219,3 +219,41 @@ TEST(TaskStore, CheckpointJournalBindsIdentityAndStoresOnlyContiguousSegments) {
     EXPECT_EQ(reopened.list().front().state,rifelove::TaskState::interrupted);
     EXPECT_THROW(reopened.setCheckpointManifest(id,"{}"),std::logic_error);
 }
+
+TEST(TaskStore, MigratesCheckpointManifestSchemaAndPreservesLegacyRows) {
+    TemporaryDatabase database;
+    sqlite3* connection = nullptr;
+    ASSERT_EQ(sqlite3_open(database.path.string().c_str(),&connection),SQLITE_OK);
+    const auto* legacySchema =
+        "PRAGMA foreign_keys=ON;"
+        "CREATE TABLE tasks (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, output_path TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, error TEXT NOT NULL DEFAULT '');"
+        "CREATE TABLE task_details (sequence INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id), configuration TEXT NOT NULL, identity TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '');"
+        "CREATE TABLE task_checkpoint_manifests (task_id TEXT PRIMARY KEY REFERENCES task_details(task_id) ON DELETE CASCADE, schema_version INTEGER NOT NULL CHECK(schema_version=1), manifest_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+        "INSERT INTO tasks(id,source_path,output_path,state) VALUES('legacy','source.mkv','output.mkv','interrupted');"
+        "INSERT INTO task_details(task_id,configuration) VALUES('legacy','{}');"
+        "INSERT INTO task_checkpoint_manifests(task_id,schema_version,manifest_json) VALUES('legacy',1,'{\"schemaVersion\":1}');";
+    char* error = nullptr;
+    const int createStatus = sqlite3_exec(connection,legacySchema,nullptr,nullptr,&error);
+    const std::string createError = error ? error : "";
+    sqlite3_free(error);
+    sqlite3_close(connection);
+    ASSERT_EQ(createStatus,SQLITE_OK) << createError;
+
+    std::string newId;
+    {
+        rifelove::TaskStore store(database.path.string());
+        EXPECT_EQ(store.checkpointManifest("legacy"),"{\"schemaVersion\":1}");
+        newId = store.createConfigured({{"new-source","new-output","{}"}}).front();
+        store.transition(newId,rifelove::TaskState::running);
+        EXPECT_NO_THROW(store.setCheckpointManifest(newId,"{\"schemaVersion\":2}",2));
+    }
+
+    ASSERT_EQ(sqlite3_open_v2(database.path.string().c_str(),&connection,SQLITE_OPEN_READONLY,nullptr),SQLITE_OK);
+    sqlite3_stmt* query = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(connection,"SELECT schema_version FROM task_checkpoint_manifests WHERE task_id=?",-1,&query,nullptr),SQLITE_OK);
+    ASSERT_EQ(sqlite3_bind_text(query,1,newId.c_str(),static_cast<int>(newId.size()),SQLITE_TRANSIENT),SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(query),SQLITE_ROW);
+    EXPECT_EQ(sqlite3_column_int(query,0),2);
+    sqlite3_finalize(query);
+    sqlite3_close(connection);
+}

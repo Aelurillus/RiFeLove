@@ -257,13 +257,15 @@ int main(int argc, char** argv) {
             "Studio did not present both the video stream and audio sample details");
         require(root->property("mediaDetailsOpen").toBool() == false,"Media details should start collapsed");
         click(mediaDetailsToggle,"open source media details");
-        require(root->property("mediaDetailsOpen").toBool() &&
-                root->findChildren<QObject*>("studioMediaStreamDetail").size() == streamDetails.size(),
-            "Studio did not display its inspected media streams");
+        waitUntil([&] {
+            return root->property("mediaDetailsOpen").toBool() &&
+                root->findChildren<QObject*>("studioMediaStreamDetail").size() == streamDetails.size();
+        }, "Studio did not display its inspected media streams");
         click(mediaDetailsToggle,"collapse source media details");
-        require(!root->property("mediaDetailsOpen").toBool() &&
-                root->findChildren<QObject*>("studioMediaStreamDetail").isEmpty(),
-            "Studio did not collapse the inspected media streams");
+        waitUntil([&] {
+            return !root->property("mediaDetailsOpen").toBool() &&
+                root->findChildren<QObject*>("studioMediaStreamDetail").isEmpty();
+        }, "Studio did not collapse the inspected media streams");
         require(studio.media().value("color").toString().contains("bt470bg") && studio.media().value("color").toString().contains("smpte170m"), "Legacy SDR color tags were not detected");
         const auto encoderCapabilities = studio.media().value("encoders").toMap();
         const bool preflightSoftwareFallback = !studio.media().value("nvencContextOpened").toBool() &&

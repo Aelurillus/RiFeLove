@@ -27,17 +27,10 @@ void hash(const std::string& value, bool required = false) {
 void text(const std::string& value, std::size_t limit, bool required = true) {
     if ((required && value.empty()) || value.size() > limit || value.find('\0') != std::string::npos) throw std::invalid_argument("Invalid task text field");
 }
-void threshold(double value) { if (!std::isfinite(value) || value < 0 || value > 1) throw std::invalid_argument("Quality thresholds must be finite values from zero to one"); }
-Json optional(const std::optional<Rational>& value) { return value ? Json(value->toString()) : Json(nullptr); }
-std::optional<Rational> rational(const Json& value) { if (value.is_null()) return {}; return Rational::parse(value.get<std::string>()); }
-Json timingBreakdown(const PipelineTimingBreakdown& value) {
-    return { {"sourceProbeSeconds",value.sourceProbeSeconds}, {"encoderSetupSeconds",value.encoderSetupSeconds},
-        {"sourceDecodeSeconds",value.sourceDecodeSeconds}, {"sourcePreparationSeconds",value.sourcePreparationSeconds},
-        {"sceneAnalysisSeconds",value.sceneAnalysisSeconds}, {"inputUploadSeconds",value.inputUploadSeconds},
-        {"inferenceWaitSeconds",value.inferenceWaitSeconds}, {"outputDownloadSeconds",value.outputDownloadSeconds},
-        {"colorRestoreSeconds",value.colorRestoreSeconds}, {"frameEncodeSeconds",value.frameEncodeSeconds},
-        {"outputFinalizeSeconds",value.outputFinalizeSeconds}, {"outputValidationSeconds",value.outputValidationSeconds},
-        {"pipelineWallSeconds",value.pipelineWallSeconds} };
+bool adapterIdentifier(const std::string& value) {
+    return !value.empty() && value.size() <= 128 && std::all_of(value.begin(),value.end(),[](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+    });
 }
 template<class T> T integer(const Json& value) {
     if (!value.is_number_integer()) throw std::invalid_argument("Expected an integer task field");
@@ -52,12 +45,57 @@ template<class T> T integer(const Json& value) {
     } else if (number < std::numeric_limits<T>::min() || number > std::numeric_limits<T>::max()) throw std::invalid_argument("Task integer is out of range");
     return static_cast<T>(number);
 }
+std::pair<std::string,int> descriptorAdapter(const Json& descriptor) {
+    const auto found = descriptor.find("adapter");
+    if (found == descriptor.end()) return {"rife-sdr-v1",1};
+    if (!found->is_object() || !found->contains("id") || !found->at("id").is_string())
+        throw std::invalid_argument("Model adapter metadata is missing or invalid");
+    const auto id = found->at("id").get<std::string>();
+    if (!adapterIdentifier(id) || !found->contains("version") || !found->at("version").is_number_integer())
+        throw std::invalid_argument("Model adapter identity is invalid");
+    const auto version = integer<int>(found->at("version"));
+    if (version <= 0) throw std::invalid_argument("Model adapter version is invalid");
+    return {id,version};
+}
+std::pair<std::string,int> identityAdapter(const Json& identity) {
+    const auto schema = identity.at("schemaVersion").get<int>();
+    if (schema == 1) {
+        if (identity.at("model").contains("adapter"))
+            throw std::invalid_argument("Legacy task identity cannot declare a model adapter");
+        return {"rife-sdr-v1",1};
+    }
+    if (schema != 2) throw std::invalid_argument("Unsupported task identity version");
+    const auto& adapter = identity.at("model").at("adapter");
+    if (!adapter.is_object() || !adapter.contains("id") || !adapter.at("id").is_string() ||
+        !adapterIdentifier(adapter.at("id").get<std::string>()))
+        throw std::invalid_argument("Stored model adapter identity is invalid");
+    const auto version = integer<int>(adapter.at("version"));
+    if (version <= 0) throw std::invalid_argument("Stored model adapter version is invalid");
+    return {adapter.at("id").get<std::string>(),version};
+}
+void threshold(double value) { if (!std::isfinite(value) || value < 0 || value > 1) throw std::invalid_argument("Quality thresholds must be finite values from zero to one"); }
+Json optional(const std::optional<Rational>& value) { return value ? Json(value->toString()) : Json(nullptr); }
+std::optional<Rational> rational(const Json& value) { if (value.is_null()) return {}; return Rational::parse(value.get<std::string>()); }
+Json timingBreakdown(const PipelineTimingBreakdown& value) {
+    return { {"sourceProbeSeconds",value.sourceProbeSeconds}, {"encoderSetupSeconds",value.encoderSetupSeconds},
+        {"sourceDecodeSeconds",value.sourceDecodeSeconds}, {"sourcePreparationSeconds",value.sourcePreparationSeconds},
+        {"sceneAnalysisSeconds",value.sceneAnalysisSeconds}, {"inputUploadSeconds",value.inputUploadSeconds},
+        {"inferenceWaitSeconds",value.inferenceWaitSeconds}, {"outputDownloadSeconds",value.outputDownloadSeconds},
+        {"colorRestoreSeconds",value.colorRestoreSeconds}, {"frameEncodeSeconds",value.frameEncodeSeconds},
+        {"outputFinalizeSeconds",value.outputFinalizeSeconds}, {"outputValidationSeconds",value.outputValidationSeconds},
+        {"pipelineWallSeconds",value.pipelineWallSeconds} };
+}
 void validate(const ProcessingJob& job) {
     text(job.source,32768); text(job.output,32768); text(utf8(job.modelDirectory),32768); text(utf8(job.runtimeDirectory),32768);
     if (job.deviceOrdinal < 0 || job.settings.targetRate <= Rational(0) || !job.settings.hostFloatBufferLimit) throw std::invalid_argument("Invalid target/device/buffer configuration");
     if (job.sourceDurationEstimate && *job.sourceDurationEstimate <= Rational(0)) throw std::invalid_argument("Invalid source duration estimate");
     hash(job.expectedSourceSha256); hash(job.expectedModelSha256);
     text(job.expectedModelId,256,false); text(job.expectedModelVersion,256,false);
+    if (job.expectedModelAdapterId.empty()) {
+        if (job.expectedModelAdapterVersion != 0) throw std::invalid_argument("An unpinned model adapter must use version zero");
+    } else if (!adapterIdentifier(job.expectedModelAdapterId) || job.expectedModelAdapterVersion <= 0) {
+        throw std::invalid_argument("Invalid pinned model adapter identity");
+    }
     const auto& e = job.settings.encoding;
     text(e.encoder,256); text(e.pixelFormat,256,false);
     if (e.videoStreamIndex < -1 || e.bitRate < 0 || e.gopSize < 0 || e.maxBFrames < 0 || e.maxBFrames > 16 ||
@@ -72,9 +110,10 @@ void validate(const ProcessingJob& job) {
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",1},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",2},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"runtimeDirectory",utf8(job.runtimeDirectory)},{"deviceOrdinal",job.deviceOrdinal},{"hostFloatBufferLimit",job.settings.hostFloatBufferLimit},
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
+        {"expectedModelAdapterId",job.expectedModelAdapterId},{"expectedModelAdapterVersion",job.expectedModelAdapterVersion},
         {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
             {"bitRate",e.bitRate},{"gopSize",e.gopSize},{"maxBFrames",e.maxBFrames},{"allowPrecisionLoss",e.allowPrecisionLoss},{"options",e.encoderOptions}}},
         {"scene",{{"cutMeanDifference",s.cutMeanDifference},{"cutHistogramDistance",s.cutHistogramDistance},{"abnormalMeanDifference",s.abnormalMeanDifference},{"duplicateMaximumDifference",s.duplicateMaximumDifference}}}};
@@ -83,7 +122,8 @@ std::string serializeJob(const ProcessingJob& job) {
 ProcessingJob parseJob(const std::string& source, const std::string& output, const std::string& value) {
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
-    if (json.at("schemaVersion") != 1) throw std::invalid_argument("Unsupported task configuration version");
+    const auto schemaVersion = integer<int>(json.at("schemaVersion"));
+    if (schemaVersion != 1 && schemaVersion != 2) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -91,6 +131,10 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
     job.expectedSourceSha256 = json.at("expectedSourceSha256").get<std::string>(); job.expectedModelSha256 = json.at("expectedModelSha256").get<std::string>();
     job.expectedModelId = json.at("expectedModelId").get<std::string>(); job.expectedModelVersion = json.at("expectedModelVersion").get<std::string>();
+    if (schemaVersion >= 2) {
+        job.expectedModelAdapterId = json.at("expectedModelAdapterId").get<std::string>();
+        job.expectedModelAdapterVersion = integer<int>(json.at("expectedModelAdapterVersion"));
+    }
     const auto& encoded = json.at("encoding"); auto& e = job.settings.encoding;
     e.encoder = encoded.at("encoder").get<std::string>(); e.pixelFormat = encoded.at("pixelFormat").get<std::string>();
     e.videoStreamIndex = integer<int>(encoded.at("videoStreamIndex")); e.timeBase = rational(encoded.at("timeBase")); e.frameRate = rational(encoded.at("frameRate"));
@@ -102,6 +146,8 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     validate(job); return job;
 }
 void pinModelDescriptor(ProcessingJob& job) {
+    if (job.expectedModelAdapterId.empty() && job.expectedModelAdapterVersion != 0)
+        throw std::invalid_argument("An unpinned model adapter must use version zero");
     const auto bytes = inference::readLocalFile(job.modelDirectory / "model.json",256 * 1024);
     if (bytes.empty()) throw std::invalid_argument("Model descriptor is empty");
     const auto json = Json::parse(reinterpret_cast<const char*>(bytes.data()),reinterpret_cast<const char*>(bytes.data() + bytes.size()));
@@ -110,23 +156,39 @@ void pinModelDescriptor(ProcessingJob& job) {
         throw std::invalid_argument("Unsupported model descriptor");
     const auto digest = json.at("sha256").get<std::string>(); hash(digest,true);
     const auto id = json.at("id").get<std::string>(), version = json.at("version").get<std::string>(); text(id,256); text(version,256);
+    const auto [adapterId,adapterVersion] = descriptorAdapter(json);
     if ((!job.expectedModelSha256.empty() && job.expectedModelSha256 != digest) || (!job.expectedModelId.empty() && job.expectedModelId != id) ||
-        (!job.expectedModelVersion.empty() && job.expectedModelVersion != version)) throw std::invalid_argument("Selected model differs from the pinned task descriptor");
+        (!job.expectedModelVersion.empty() && job.expectedModelVersion != version) ||
+        (!job.expectedModelAdapterId.empty() && (job.expectedModelAdapterId != adapterId || job.expectedModelAdapterVersion != adapterVersion)))
+        throw std::invalid_argument("Selected model differs from the pinned task descriptor");
     job.expectedModelSha256 = digest; job.expectedModelId = id; job.expectedModelVersion = version;
+    job.expectedModelAdapterId = adapterId; job.expectedModelAdapterVersion = adapterVersion;
 }
 std::string serializeIdentity(const ProcessingIdentity& i) {
-    return Json{{"schemaVersion",1},{"source",{{"size",i.source.size},{"modified",i.source.modified},{"fileId",i.source.fileId},{"sha256",i.source.sha256}}},
-        {"model",{{"id",i.modelId},{"version",i.modelVersion},{"sha256",i.modelSha256},{"inferenceBackend",i.backend}}},
+    if (!adapterIdentifier(i.adapterId) || i.adapterVersion <= 0) throw std::invalid_argument("Processing identity has an invalid model adapter");
+    return Json{{"schemaVersion",2},{"source",{{"size",i.source.size},{"modified",i.source.modified},{"fileId",i.source.fileId},{"sha256",i.source.sha256}}},
+        {"model",{{"id",i.modelId},{"version",i.modelVersion},{"sha256",i.modelSha256},{"inferenceBackend",i.backend},
+            {"adapter",{{"id",i.adapterId},{"version",i.adapterVersion}}}}},
         {"device",{{"ordinal",i.device.ordinal},{"name",i.device.name},{"pciBusId",i.device.pciBusId},{"computeMajor",i.device.computeMajor},{"computeMinor",i.device.computeMinor},{"driverCudaApiVersion",i.device.driverCudaApiVersion}}}}.dump();
 }
 void applyStoredIdentity(ProcessingJob& job, const std::string& value) {
     if (value.empty()) return;
     const auto json = Json::parse(value);
-    if (json.at("schemaVersion") != 1) throw std::invalid_argument("Unsupported task identity version");
+    const auto [adapterId,adapterVersion] = identityAdapter(json);
     const auto source = json.at("source").at("sha256").get<std::string>(); hash(source,true);
-    const auto model = json.at("model").at("sha256").get<std::string>(); hash(model,true);
-    if ((!job.expectedSourceSha256.empty() && job.expectedSourceSha256 != source) || (!job.expectedModelSha256.empty() && job.expectedModelSha256 != model)) throw std::invalid_argument("Stored identity contradicts task configuration");
+    const auto& modelIdentity = json.at("model");
+    const auto model = modelIdentity.at("sha256").get<std::string>(); hash(model,true);
+    const auto modelId = modelIdentity.at("id").get<std::string>();
+    const auto modelVersion = modelIdentity.at("version").get<std::string>();
+    if ((!job.expectedSourceSha256.empty() && job.expectedSourceSha256 != source) ||
+        (!job.expectedModelSha256.empty() && job.expectedModelSha256 != model) ||
+        (!job.expectedModelId.empty() && job.expectedModelId != modelId) ||
+        (!job.expectedModelVersion.empty() && job.expectedModelVersion != modelVersion) ||
+        (!job.expectedModelAdapterId.empty() && (job.expectedModelAdapterId != adapterId || job.expectedModelAdapterVersion != adapterVersion)))
+        throw std::invalid_argument("Stored identity contradicts task configuration");
     job.expectedSourceSha256 = source; job.expectedModelSha256 = model;
+    job.expectedModelId = modelId; job.expectedModelVersion = modelVersion;
+    job.expectedModelAdapterId = adapterId; job.expectedModelAdapterVersion = adapterVersion;
 }
 std::string serializeProgress(const ProcessingEvent& event) {
     return Json{{"schemaVersion",1},{"stage",event.stage},{"frames",event.outputFrames},{"aiFrames",event.aiFrames},

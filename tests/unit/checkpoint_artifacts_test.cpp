@@ -1,7 +1,10 @@
 #include "application/checkpoint_artifacts.hpp"
+#include "application/job_serialization.hpp"
+#include "application/task_queue.hpp"
 #include "media/video_writer.hpp"
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <array>
 #include <filesystem>
@@ -91,6 +94,94 @@ TEST(CheckpointArtifacts, ContractRoundTripsExactRationalsAndColorExpectations) 
     EXPECT_EQ(restored.primaries,contract.primaries);
     EXPECT_EQ(restored.range,contract.range);
     EXPECT_THROW((void)rifelove::application::CheckpointArtifacts::parseContract("{\"schemaVersion\":2}"),std::invalid_argument);
+}
+
+TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
+    using Json = nlohmann::json;
+    Json legacy{
+        {"schemaVersion",1},{"source","C:/source.mkv"},{"output","C:/output.mkv"},
+        {"job",{{"schemaVersion",1},{"expectedModelId","rife-4.25"},{"expectedModelVersion","4.25"},
+            {"expectedModelSha256",std::string(64,'a')}}},
+        {"identity",{{"schemaVersion",1},{"source",{{"sha256",std::string(64,'b')}}},
+            {"model",{{"id","rife-4.25"},{"version","4.25"},{"sha256",std::string(64,'a')},
+                {"inferenceBackend","onnxruntime_cuda"}}}}},
+        {"mediaRuntime","ffmpeg fixture"},{"framesPerSegment",256}};
+    Json current = legacy;
+    current["schemaVersion"] = 2;
+    current["job"]["schemaVersion"] = 2;
+    current["job"]["expectedModelAdapterId"] = "rife-sdr-v1";
+    current["job"]["expectedModelAdapterVersion"] = 1;
+    current["identity"]["schemaVersion"] = 2;
+    current["identity"]["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+
+    current["job"]["expectedModelAdapterId"] = "custom-adapter";
+    current["job"]["expectedModelAdapterVersion"] = 2;
+    current["identity"]["model"]["adapter"] = {{"id","custom-adapter"},{"version",2}};
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+    current["job"]["expectedModelAdapterId"] = "rife-sdr-v1";
+    current["job"]["expectedModelAdapterVersion"] = 1;
+    current["identity"]["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
+    current["framesPerSegment"] = 128;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+}
+
+TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    CheckpointFixture fixture;
+    const auto database = fixture.directory / "queue.sqlite";
+    const auto output = fixture.directory / "result.mkv";
+    const std::string modelDigest(64,'a');
+    FileIdentity sourceIdentity;
+    {
+        SourceLease lease(fixture.source);
+        sourceIdentity = lease.fingerprint({});
+    }
+    ProcessingJob job;
+    job.source = fixture.source.string();
+    job.output = output.string();
+    job.modelDirectory = fixture.directory / "model";
+    job.runtimeDirectory = fixture.directory / "runtime";
+    job.settings.targetRate = Rational(50);
+    job.expectedModelId = "rife-4.25";
+    job.expectedModelVersion = "4.25";
+    job.expectedModelSha256 = modelDigest;
+    auto oldConfiguration = nlohmann::json::parse(serializeJob(job));
+    oldConfiguration["schemaVersion"] = 1;
+    oldConfiguration.erase("expectedModelAdapterId");
+    oldConfiguration.erase("expectedModelAdapterVersion");
+    auto manifestJob = oldConfiguration;
+    manifestJob["expectedSourceSha256"] = sourceIdentity.sha256;
+    const nlohmann::json identity{
+        {"schemaVersion",1},
+        {"source",{{"size",sourceIdentity.size},{"modified",sourceIdentity.modified},{"fileId",sourceIdentity.fileId},{"sha256",sourceIdentity.sha256}}},
+        {"model",{{"id",job.expectedModelId},{"version",job.expectedModelVersion},{"sha256",modelDigest},{"inferenceBackend","onnxruntime_cuda"}}},
+        {"device",{{"ordinal",0},{"name","fixture GPU"},{"pciBusId",""},{"computeMajor",7},{"computeMinor",5},{"driverCudaApiVersion",12020}}}};
+    const auto oldManifest = nlohmann::json{
+        {"schemaVersion",1},{"source",job.source},{"output",job.output},{"job",manifestJob},{"identity",identity},
+        {"mediaRuntime",media::MediaEngine::runtimeVersion()},{"framesPerSegment",256}}.dump();
+    std::string taskId;
+    {
+        TaskStore store(database.string());
+        taskId = store.createConfigured({{job.source,job.output,oldConfiguration.dump()}}).front();
+        store.transition(taskId,TaskState::running);
+        store.saveIdentity(taskId,identity.dump());
+        CheckpointArtifacts artifacts(store,taskId,output);
+        artifacts.setManifest(oldManifest);
+        const auto segment = createSegment(fixture,artifacts);
+        (void)artifacts.commit(0,0,2,segment);
+        EXPECT_EQ(store.recoverConfigured(),1U);
+        EXPECT_EQ(store.checkpointManifest(taskId),oldManifest);
+    }
+    {
+        TaskQueue queue(database);
+        EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
+        const auto tasks = queue.list();
+        ASSERT_EQ(tasks.size(),1U);
+        EXPECT_EQ(tasks.front().task.state,TaskState::queued);
+        EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),oldManifest);
+    }
 }
 
 TEST(CheckpointArtifacts, HashesAndJournalsOnlyVerifiedTaskOwnedFiles) {
