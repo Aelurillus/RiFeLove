@@ -189,6 +189,13 @@ Rectangle {
                             text: modelData.button
                             onClicked: index === 0 ? originalDialog.open() : processedDialog.open()
                         }
+                        ActionButton {
+                            objectName: index === 0 ? "comparisonOpenOriginalFolder" : "comparisonOpenProcessedFolder"
+                            text: qsTr("打开位置")
+                            visible: page.exactPreviewAvailable
+                            enabled: visible && (index === 0 ? page.originalReady : page.processedReady)
+                            onClicked: comparisonPreview.openContainingFolder(index === 0 ? page.originalSource : page.processedSource)
+                        }
                     }
                 }
             }
@@ -279,12 +286,15 @@ Rectangle {
             Label { text: qsTr("步进 1/%1 秒").arg(Number(page.frameRate).toFixed(3)); color: "#9aaac0"; font.pixelSize: 12 }
         }
         Label {
+            objectName: "comparisonStatus"
             Layout.fillWidth: true
-            text: (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ||
+            text: (page.exactPreviewAvailable && comparisonPreview.navigationErrorString) ||
+                  (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ||
                   (page.exactPreviewVisible ? qsTr("已按 FFmpeg 实际解码帧精确预览 · 输出时间 %1").arg(page.formatTime(comparisonPreview.outputTimestampMs)) :
                    page.exactPreviewAvailable && comparisonPreview.busy ? qsTr("正在精确解码所选时间的原片与补帧画面…") :
                    page.originalReady && page.processedReady ? qsTr("两路视频按时间戳同步；输出帧率 %1 FPS").arg(Number(page.frameRate).toFixed(3)) : qsTr("请选择原视频和补帧结果"))
-            color: (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ? "#ffb3ad" : "#91a1b4"
+            color: (page.exactPreviewAvailable && comparisonPreview.navigationErrorString) ||
+                   (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ? "#ffb3ad" : "#91a1b4"
             wrapMode: Text.WrapAnywhere
         }
     }

@@ -1,5 +1,7 @@
 #include "comparison_preview.hpp"
 
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QMetaObject>
 #include <QMutexLocker>
 
@@ -64,8 +66,9 @@ void ComparisonFrameImageProvider::storePair(const QString& token, QImage origin
     while (insertionOrder_.size() > 4) images_.remove(insertionOrder_.takeFirst());
 }
 
-ComparisonPreviewController::ComparisonPreviewController(ComparisonFrameImageProvider* provider, QObject* parent)
-    : QObject(parent),provider_(provider) {
+ComparisonPreviewController::ComparisonPreviewController(ComparisonFrameImageProvider* provider, QObject* parent,
+    FolderOpener folderOpener)
+    : QObject(parent),provider_(provider),folderOpener_(std::move(folderOpener)) {
     if (!provider_) throw std::invalid_argument("comparison preview image provider is required");
 }
 
@@ -116,6 +119,7 @@ void ComparisonPreviewController::clear() {
     busy_ = false;
     ready_ = false;
     errorString_.clear();
+    navigationErrorString_.clear();
     originalFrameUrl_ = QUrl();
     processedFrameUrl_ = QUrl();
     processedStart_.reset();
@@ -126,6 +130,25 @@ void ComparisonPreviewController::clear() {
     processedNextFrameTimestamp_.reset();
     processedDuration_.reset();
     emit changed();
+}
+
+bool ComparisonPreviewController::openContainingFolder(const QUrl& fileUrl) {
+    if (!fileUrl.isLocalFile()) {
+        navigationErrorString_ = tr("只能打开本机文件的位置。");
+        emit changed();
+        return false;
+    }
+    const QFileInfo file(fileUrl.toLocalFile());
+    if (!file.exists() || !file.isFile()) {
+        navigationErrorString_ = tr("文件不存在，无法打开所在位置。");
+        emit changed();
+        return false;
+    }
+    const auto folderUrl = QUrl::fromLocalFile(file.absolutePath());
+    const bool opened = folderOpener_ ? folderOpener_(folderUrl) : QDesktopServices::openUrl(folderUrl);
+    navigationErrorString_ = opened ? QString{} : tr("无法打开此文件的位置。");
+    emit changed();
+    return opened;
 }
 
 void ComparisonPreviewController::requestAt(rifelove::Rational outputRelativeTime) {

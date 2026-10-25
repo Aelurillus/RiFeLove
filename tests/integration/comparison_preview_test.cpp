@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -47,6 +48,15 @@ void waitUntil(const std::function<bool()>& condition, const char* message) {
         QTimer::singleShot(10,&loop,&QEventLoop::quit);
         loop.exec();
     }
+}
+
+QObject* findVisualObject(QQuickItem* parent, const QString& name) {
+    if (!parent) return nullptr;
+    for (auto* child : parent->childItems()) {
+        if (child->objectName() == name) return child;
+        if (auto* found = findVisualObject(child,name)) return found;
+    }
+    return nullptr;
 }
 
 void createVideo(const QString& path, const QString& rate) {
@@ -94,7 +104,11 @@ int main(int argc, char** argv) {
         QQmlApplicationEngine engine;
         auto* provider = new ComparisonFrameImageProvider();
         engine.addImageProvider("comparison",provider);
-        ComparisonPreviewController controller(provider);
+        QStringList openedFolders;
+        ComparisonPreviewController controller(provider,nullptr,[&](const QUrl& folder) {
+            openedFolders.push_back(folder.toLocalFile());
+            return true;
+        });
         engine.rootContext()->setContextProperty("comparisonPreview",&controller);
         engine.load(QUrl::fromLocalFile(QString::fromLocal8Bit(argv[1])));
         require(!engine.rootObjects().isEmpty(),"Comparison QML page did not load");
@@ -105,6 +119,20 @@ int main(int argc, char** argv) {
             "Comparison QML player did not open the local H.264 fixtures");
         waitUntil([&] { return controller.ready() && !controller.busy(); },
             "Comparison QML did not automatically show an exact first-frame preview");
+
+        auto* visualPage = qobject_cast<QQuickItem*>(page);
+        auto* openOriginalFolder = findVisualObject(visualPage,QStringLiteral("comparisonOpenOriginalFolder"));
+        auto* openProcessedFolder = findVisualObject(visualPage,QStringLiteral("comparisonOpenProcessedFolder"));
+        require(openOriginalFolder && openOriginalFolder->property("visible").toBool() && openOriginalFolder->property("enabled").toBool(),
+            "Comparison QML did not enable navigation to the original video's folder");
+        require(openProcessedFolder && openProcessedFolder->property("visible").toBool() && openProcessedFolder->property("enabled").toBool(),
+            "Comparison QML did not enable navigation to the processed video's folder");
+        require(QMetaObject::invokeMethod(openOriginalFolder,"clicked",Qt::DirectConnection) && openedFolders.size() == 1 &&
+                openedFolders.back() == QFileInfo(source).absolutePath(),
+            "Original-video navigation did not open its containing folder");
+        require(QMetaObject::invokeMethod(openProcessedFolder,"clicked",Qt::DirectConnection) && openedFolders.size() == 2 &&
+                openedFolders.back() == QFileInfo(output).absolutePath(),
+            "Processed-video navigation did not open its containing folder");
 
         controller.requestFrames(QUrl::fromLocalFile(source),QUrl::fromLocalFile(output),370.0);
         waitForPreview(controller);
@@ -144,6 +172,13 @@ int main(int argc, char** argv) {
         controller.stepFrame(1);
         waitForPreview(controller);
         require(std::abs(controller.outputTimestampMs() - 500.0) < 0.01,"Variable-rate forward stepping did not select the actual next PTS");
+
+        require(!controller.openContainingFolder(QUrl(QStringLiteral("https://example.invalid/video.mp4"))) &&
+                !controller.navigationErrorString().isEmpty(),
+            "Comparison preview did not reject non-local artifact navigation");
+        auto* status = page->findChild<QObject*>(QStringLiteral("comparisonStatus"));
+        require(status && status->property("text").toString() == controller.navigationErrorString(),
+            "Comparison QML did not show a local navigation error");
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
