@@ -1,8 +1,10 @@
 # Video restoration and enhancement
 
-Status: planned; no restoration model has passed product qualification.
+Status: temporal request/result contract implemented; no restoration inference backend or model has passed product qualification.
 
 RifeLove treats frame interpolation and video restoration as separate AI stages. RIFE predicts frames at new presentation times. Restoration models may denoise, deblur, reduce compression artifacts, or increase spatial resolution across one or more existing frames. A two-frame interpolation request is not an adequate contract for those jobs.
+
+The initial C++ boundary is in `src/restoration/video_restoration_backend.hpp` and `.cpp`. Its versioned registry and validators cover model identity, task, stage placement, canonical SDR profile tags, ordered temporal context, scene/clip-edge context, preserved center PTS/duration/color metadata and spatial scale. Seven focused tests exercise this contract. It is not yet connected to ONNX Runtime, TensorRT, the media pipeline, queue, model center or UI; it does not process a video by itself.
 
 ## Product rules
 
@@ -15,7 +17,7 @@ RifeLove treats frame interpolation and video restoration as separate AI stages.
 
 ## Proposed architecture
 
-Use a dedicated restoration interface rather than extending `IInterpolationBackend` or `IModelAdapter` with unrelated fields. The interface needs to represent:
+Continue the dedicated restoration interface rather than extending `IInterpolationBackend` or `IModelAdapter` with unrelated fields. The full product path still needs to represent:
 
 - Restoration tasks: denoising, deblurring, compression cleanup and super-resolution.
 - A temporal context window, including the center frame and exact rational presentation timestamps.
@@ -42,6 +44,7 @@ No universal quality ranking is claimed. Fast/Balanced/Quality presets must be s
 
 - [RVRT](https://github.com/JingyunLiang/RVRT) is a temporal video-restoration research candidate for super-resolution, deblurring and denoising. Its official repository states that the project is released under CC-BY-NC. It is excluded from a redistributable default package unless the project obtains compatible rights.
 - [VRT](https://github.com/JingyunLiang/VRT) is another temporal restoration research candidate. Its official repository also states CC-BY-NC terms, so it has the same distribution gate.
+- [BasicVSR++](https://github.com/ckkelvinchan/BasicVSR_PlusPlus) is a temporal video super-resolution/restoration candidate, and its official source repository is Apache-2.0. Pretrained weights are linked as separate downloads without an explicit weight-redistribution statement in the repository README; therefore the weights stay out of RifeLove packages until their rights and training-data terms are resolved.
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) has BSD-3-Clause source code and offers video inference tooling, but its restoration network is image-oriented. Framewise use is only a spatial candidate: RifeLove must independently establish temporal consistency, weight rights, color behavior and end-to-end performance before offering it for video.
 
 These are research notes, not a selected model or an endorsement that any candidate is universally superior. A future permissively licensed or project-trained temporal model can replace them after it passes the same gates.
