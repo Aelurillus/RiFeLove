@@ -24,8 +24,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 ## Phase 2 — media engine (active, incomplete)
 
 - [x] Bind a pinned local FFmpeg shared SDK and probe streams, rational time bases, metadata and color.
-- [x] Present probed container and stream details in Studio and CLI, including audio sample format/layout, track language/title, chapter count, video rate/color data, rotation and available static HDR metadata.
-  - The UI shows a collapsed local-only details list and the native CLI emits the corresponding fields as JSON. The desktop workflow covers video/audio track display; unit media checks cover the generated audio format/layout. Full codec/container/HDR and subtitle fixture coverage remains open.
+- [x] Present probed container and stream details in Studio and CLI, including audio sample format/layout, default/forced track flags, track language/title, chapter count, video rate/color data, rotation and available static HDR metadata.
+  - The UI shows a collapsed local-only details list and the native CLI emits the corresponding fields as JSON. Desktop workflow checks cover video/audio track display; unit and generated-media checks cover audio format/layout and default/forced dispositions. Full codec/container/HDR and subtitle fixture coverage remains open.
 - [x] Decode software frames with presentation reordering/drain and retained original-precision storage.
 - [x] Scan actual timestamp cadence with fractional-CFR quantization handling and VFR fixtures.
 - [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.

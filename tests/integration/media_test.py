@@ -57,7 +57,9 @@ class NativeMediaIntegration(unittest.TestCase):
                "-c:v", "ffv1", "-level", "3",
                "-c:a", "aac", "-c:s", "srt", "-metadata", "title=RifeLove test",
                "-metadata:s:a:0", "language=zho", "-metadata:s:a:1", "language=jpn",
-               "-metadata:s:s:0", "language=eng", cls.source)
+               "-metadata:s:s:0", "language=eng", "-disposition:v:0", "default",
+               "-disposition:a:0", "default", "-disposition:a:1", "0",
+               "-disposition:s:0", "forced", cls.source)
         cls.reordered = cls.root / "reordered.mp4"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=24:duration=0.5",
                "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:v", "mpeg4", "-bf", "2", "-q:v", "4", "-c:a", "aac", cls.reordered)
@@ -108,8 +110,13 @@ class NativeMediaIntegration(unittest.TestCase):
         self.assertEqual(video["color"]["bit_depth"], 10)
         self.assertEqual(video["color"]["transfer"], "smpte2084")
         self.assertTrue(video["color"]["hdr_transfer"])
+        self.assertTrue(video["default_track"])
         self.assertEqual(info["streams"][1]["metadata"]["language"], "zho")
         self.assertEqual(info["streams"][2]["metadata"]["language"], "jpn")
+        self.assertTrue(info["streams"][1]["default_track"])
+        self.assertFalse(info["streams"][2]["default_track"])
+        self.assertTrue(info["streams"][3]["forced_track"])
+        self.assertFalse(info["streams"][3]["default_track"])
         self.assertEqual(len(info["chapters"]), 1)
         self.assertEqual(info["chapters"][0]["metadata"]["title"], "Opening")
 
