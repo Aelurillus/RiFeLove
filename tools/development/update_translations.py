@@ -119,10 +119,6 @@ NVIDIA GPU 不可用|NVIDIA GPU unavailable|NVIDIA GPU 無法使用|NVIDIA GPU �
 取消导入或当前任务，并等待资源清理后，可关闭窗口。|Cancel the import or current task, then wait for resources to be released before closing.|取消匯入或目前任務，並等待資源清理後再關閉視窗。|読み込みまたは現在のタスクをキャンセルし、リソースの解放を待ってからウィンドウを閉じてください。
 离线视频工作台|Offline video workspace|離線影片工作區|オフライン動画ワークスペース
 工作区|Workspace|工作區|ワークスペース
-⌂     工作区|⌂     Workspace|⌂     工作區|⌂     ワークスペース
-≋     任务队列|≋     Task Queue|≋     任務佇列|≋     タスク キュー
-◈     模型中心|◈     Model Center|◈     模型中心|◈     モデルセンター
-▣     对比预览|▣     Comparison Viewer|▣     比較預覽|▣     比較プレビュー
 本机加速器|Local accelerator|本機加速器|ローカル アクセラレーター
 未检测到 NVIDIA GPU|No NVIDIA GPU detected|未偵測到 NVIDIA GPU|NVIDIA GPU が検出されていません
 NVENC 不可用 · 自动使用%1|NVENC unavailable · using %1 automatically|NVENC 無法使用 · 自動改用%1|NVENC は利用不可 · 自動的に%1を使用
@@ -186,9 +182,7 @@ CPU 软件|CPU software|CPU 軟體|CPU ソフトウェア
 累计耗时：RIFE 推理 %1 秒 · 视频编码 %2 秒 · 解码 %3 秒 · 预处理/色彩 %4 秒|Elapsed: RIFE inference %1 s · video encoding %2 s · decoding %3 s · preprocessing/color %4 s|累計耗時：RIFE 推論 %1 秒 · 影片編碼 %2 秒 · 解碼 %3 秒 · 前處理/色彩 %4 秒|経過時間：RIFE 推論 %1 秒 · 動画エンコード %2 秒 · デコード %3 秒 · 前処理/色調 %4 秒
  · 输出验证 %1 秒| · output validation %1 s| · 輸出驗證 %1 秒| · 出力検証 %1 秒
 请使用启用媒体和 ONNX CUDA 的桌面构建。|Use a desktop build with media and ONNX CUDA enabled.|請使用已啟用媒體與 ONNX CUDA 的桌面建置版本。|メディアと ONNX CUDA を有効にしたデスクトップ ビルドを使用してください。
-选择本地 RIFE 模型包目录|Select local RIFE model-pack folder|選擇本機 RIFE 模型套件資料夾|ローカル RIFE モデルパックのフォルダーを選択
 本地模型中心|Local Model Center|本機模型中心|ローカル モデルセンター
-管理已校验的 RIFE 模型包。模型文件只从本机目录读取；此页面不会联网或下载权重。|Manage verified RIFE model packs. Model files are read only from local folders; this page does not connect to the internet or download weights.|管理已驗證的 RIFE 模型套件。模型檔案只會從本機資料夾讀取；此頁面不會連線或下載權重。|検証済みの RIFE モデルパックを管理します。モデルファイルはローカルフォルダーからのみ読み込み、このページからネット接続や重みのダウンロードは行いません。
 重新校验|Verify again|重新驗證|再検証
 添加本地模型|Add local model|新增本機模型|ローカルモデルを追加
 正在后台读取并校验模型包；不会阻塞视频工作流界面。|Reading and verifying model packs in the background; video workflow remains responsive.|正在背景讀取並驗證模型套件；不會阻塞影片工作流程介面。|バックグラウンドでモデルパックを読み込み、検証しています。動画ワークフロー画面は引き続き操作できます。
@@ -211,8 +205,6 @@ HDR\s\s|HDR\s\s|HDR\s\s|HDR\s\s
 模型包无法读取。|Could not read model pack.|無法讀取模型套件。|モデルパックを読み込めませんでした。
 设为默认模型|Set as default model|設為預設模型|既定モデルに設定
 从目录列表移除|Remove from catalog|從清單移除|カタログから削除
-尚未登记本地模型\n添加包含 model.json 的已校验模型包|No local models registered yet\nAdd a verified model pack containing model.json|尚未登錄本機模型\n新增含有 model.json 的已驗證模型套件|ローカルモデルが登録されていません\nmodel.json を含む検証済みモデルパックを追加してください
-目录校验会检查模型张量契约与所声明的文件哈希。后端列表和数值档案描述已有验证范围；它们不代表感知画质排名，HDR 支持只会在独立色彩与模型测试完成后标记。|Catalog verification checks the model tensor contract and declared file hashes. Backend and numerical-profile details describe existing validation only; they are not perceptual quality rankings. HDR is marked supported only after separate color and model testing.|清單驗證會檢查模型張量契約與宣告的檔案雜湊。後端清單與數值設定檔僅描述既有驗證範圍，不代表感知畫質排名。HDR 只會在完成獨立色彩與模型測試後標記為支援。|カタログ検証ではモデルのテンソル契約と宣言されたファイルハッシュを確認します。バックエンドと数値プロファイルは検証済み範囲を示すだけで、知覚品質の順位ではありません。HDR は個別の色処理とモデル試験後にのみ対応済みと表示します。
 队列忙碌或尚未连接，请等待当前操作结束。|The queue is busy or disconnected. Wait for the current operation to finish.|佇列忙碌或尚未連線，請等待目前作業完成。|キューが処理中または未接続です。現在の操作が終わるまでお待ちください。
 本地任务队列尚未连接，无法导出报告。|The local task queue is not connected; the report cannot be exported.|本機任務佇列尚未連線，無法匯出報告。|ローカル タスク キューに接続されていないため、レポートを出力できません。
 正在校验本地模型及 SHA-256…|Verifying local model and SHA-256…|正在驗證本機模型與 SHA-256…|ローカルモデルと SHA-256 を検証しています…
@@ -331,6 +323,17 @@ RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO
 源帧     ·     RIFE 生成     ·     补帧输出|Source frames     ·     RIFE interpolation     ·     output|來源影格     ·     RIFE 補幀     ·     輸出影片|入力フレーム     ·     RIFE 補間     ·     出力動画
 ●  本地模型已校验 · CUDA 推理|●  Local model verified · CUDA inference|●  本機模型已驗證 · CUDA 推論|●  ローカルモデル検証済み · CUDA 推論
 ●  CUDA 推理|●  CUDA inference|●  CUDA 推論|●  CUDA 推論
+选择本地模型包目录|Select a local model-pack folder|選擇本機模型套件資料夾|ローカルモデルパックフォルダーを選択
+管理本机的 RIFE 插帧模型和画质修复模型。模型只从本机目录读取；此页面不会联网或下载权重。|Manage local RIFE interpolation and video restoration models. Model files are read only from this device; this page does not connect to the internet or download weights.|管理本機的 RIFE 補幀模型與畫質修復模型。模型只會從本機目錄讀取；此頁面不會連線或下載權重。|ローカルの RIFE 補間モデルと映像修復モデルを管理します。モデルファイルはこの PC からのみ読み込み、このページからインターネット接続や重みのダウンロードは行いません。
+本地模型|Local model|本機模型|ローカルモデル
+插帧|Interpolation|補幀|フレーム補間
+画质修复|Video restoration|畫質修復|映像修復
+修复任务：|Restoration tasks: |修復任務：|修復タスク：
+；前/后文帧数：|; Context frames before/after: |；前／後文影格數：|；前後のコンテキストフレーム数：
+；空间倍率：|; Spatial scale: |；空間倍率：|；空間倍率：
+尚未登记本地模型\n添加包含 model.json 的 RIFE 或画质修复模型包|No local models registered yet\nAdd a RIFE or video restoration model pack containing model.json|尚未登記本機模型\n新增包含 model.json 的 RIFE 或畫質修復模型套件|ローカルモデルがまだ登録されていません\nmodel.json を含む RIFE または映像修復モデルパックを追加してください
+目录校验会检查模型权重、许可、来源、能力和本地验证记录的文件哈希。哈希一致不代表作者身份或画质排名；未完成独立色彩与模型测试的路径不会标记为 HDR。移除只会从目录列表中取消登记，不会删除本机模型文件。|Catalog verification checks hashes for model weights, license, provenance, capabilities, and local validation records. Matching hashes do not authenticate the author or rank image quality. HDR is not shown unless the color and model paths pass separate tests. Removing a model only unregisters it; it does not delete local files.|目錄驗證會檢查模型權重、授權、來源、能力與本機驗證記錄的檔案雜湊。雜湊一致不代表作者身分或畫質排名；未通過獨立色彩與模型測試的路徑不會標示為 HDR。移除只會取消目錄登記，不會刪除本機模型檔案。|カタログ検証ではモデルの重み、ライセンス、出所、機能、ローカル検証記録のハッシュを確認します。ハッシュ一致は作者の認証や画質順位を保証しません。HDR は色とモデルの経路が個別テストに合格するまで表示しません。削除操作は登録解除のみで、ローカルファイルは削除しません。
+镜头切换阈值必须介于 0 和 1 之间，默认设置未保存。|Scene-cut threshold must be between 0 and 1; defaults were not saved.|鏡頭切換閾值必須介於 0 和 1 之間，預設設定未儲存。|シーン切り替えのしきい値は 0 から 1 の範囲で指定してください。既定値は保存されませんでした。
 """
 
 

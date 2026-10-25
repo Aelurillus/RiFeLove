@@ -5,13 +5,16 @@
 #include "application/queue_report.hpp"
 #include "application/import_service.hpp"
 #include "inference/model_pack.hpp"
+#include "restoration/model_pack.hpp"
 #include "timeline/timeline.hpp"
 #include "profile_store.hpp"
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QSettings>
 #include <QStringList>
 #include <set>
@@ -201,25 +204,7 @@ public:
     void refreshModels() {
         try {
             if (!settings_) throw std::runtime_error("Local model catalog is unavailable");
-            settings_->sync();
-            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not read local model catalog settings");
-            const auto storedPaths = settings_->value("modelCatalog/paths").toStringList();
-            QStringList paths;
-            for (const auto& value : storedPaths) {
-                const auto normalized = canonical(value);
-                if (std::none_of(paths.begin(),paths.end(),[&](const QString& path) { return samePath(path,normalized); })) paths.push_back(normalized);
-            }
-            const auto selected = settings_->value("model").toUrl();
-            if (selected.isLocalFile()) {
-                const auto selectedPath = canonical(selected.toLocalFile());
-                if (std::none_of(paths.begin(),paths.end(),[&](const QString& path) { return samePath(path,selectedPath); })) paths.push_back(selectedPath);
-            }
-            if (paths != storedPaths) {
-                settings_->setValue("modelCatalog/paths",paths); settings_->sync();
-                if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not save the current model in the local catalog");
-            }
-            QVariantList entries;
-            for (const auto& value : paths) entries.push_back(inspectModel(value));
+            const auto entries = inspectAllModels(*settings_);
             post([entries](QueueController& c) { c.models_ = entries; c.verifyingModels_ = false; c.state_ = "ready"; c.detail_.clear(); emit c.modelsChanged(); emit c.changed(); });
         } catch (const std::exception& error) {
             post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
@@ -233,13 +218,12 @@ public:
             const auto normalizedPath = canonical(directory);
             auto entry = inspectModel(normalizedPath);
             if (!entry.value("valid").toBool()) throw std::invalid_argument(utf8(entry.value("error").toString()));
-            auto paths = settings_->value("modelCatalog/paths").toStringList();
-            for (auto& value : paths) value = canonical(value);
+            const auto catalogKey = entry.value("family").toString() == QStringLiteral("video-restoration")
+                ? QStringLiteral("restorationCatalog/paths") : QStringLiteral("modelCatalog/paths");
+            auto paths = normalizedCatalogPaths(*settings_,catalogKey);
             if (std::none_of(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,normalizedPath); })) paths.push_back(normalizedPath);
-            settings_->setValue("modelCatalog/paths",paths); settings_->sync();
-            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not save local model catalog");
-            paths = settings_->value("modelCatalog/paths").toStringList();
-            QVariantList entries; for (const auto& value : paths) entries.push_back(inspectModel(value));
+            saveCatalogPaths(*settings_,catalogKey,paths);
+            const auto entries = inspectAllModels(*settings_);
             post([entries,id=entry.value("id").toString()](QueueController& c) {
                 c.models_ = entries; c.verifyingModels_ = false; c.state_ = "ready"; c.detail_ = tr("已校验并加入本地模型：") + id;
                 emit c.modelsChanged(); emit c.changed(); emit c.operationFinished("model_added");
@@ -253,19 +237,12 @@ public:
             if (!settings_) throw std::runtime_error("Local model catalog is unavailable");
             settings_->sync();
             if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not read local model catalog settings");
-            const auto storedPaths = settings_->value("modelCatalog/paths").toStringList();
-            QStringList paths;
-            for (const auto& value : storedPaths) {
-                const auto normalized = canonical(value);
-                if (std::none_of(paths.begin(),paths.end(),[&](const QString& path) { return samePath(path,normalized); })) paths.push_back(normalized);
+            for (const auto& key : {QStringLiteral("modelCatalog/paths"),QStringLiteral("restorationCatalog/paths")}) {
+                auto paths = normalizedCatalogPaths(*settings_,key);
+                paths.erase(std::remove_if(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,directory); }),paths.end());
+                saveCatalogPaths(*settings_,key,paths);
             }
-            paths.erase(std::remove_if(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,directory); }),paths.end());
-            settings_->setValue("modelCatalog/paths",paths); settings_->sync();
-            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not update local model catalog");
-            QVariantList entries; for (const auto& value : paths) entries.push_back(inspectModel(value));
-            const auto selected = settings_->value("model").toUrl();
-            if (selected.isLocalFile() && std::none_of(paths.begin(),paths.end(),[&](const QString& value) { return samePath(value,selected.toLocalFile()); }))
-                entries.push_back(inspectModel(selected.toLocalFile()));
+            const auto entries = inspectAllModels(*settings_);
             post([entries](QueueController& c) { c.models_ = entries; c.verifyingModels_ = false; c.state_ = "ready"; emit c.modelsChanged(); emit c.changed(); });
         } catch (const std::exception& error) {
             post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
@@ -351,24 +328,113 @@ private:
     static QVariantMap inspectModel(const QString& directory) {
         QVariantMap entry{{"directory",directory},{"valid",false}};
         try {
-            const auto model = inference::loadModelPack(path(directory));
-            QStringList validatedBackends;
-            for (const auto& backend : model.validatedBackends) validatedBackends.push_back(text(backend));
-            QStringList supportedProfiles;
-            for (const auto& profile : model.supportedInputProfiles) supportedProfiles.push_back(text(profile));
-            entry["valid"] = true; entry["id"] = text(model.id); entry["displayName"] = text(model.displayName);
-            entry["family"] = text(model.family); entry["version"] = text(model.version); entry["sha256"] = text(model.sha256);
-            entry["schemaVersion"] = model.schemaVersion; entry["licenseId"] = text(model.licenseId);
-            entry["licenseSha256"] = text(model.licenseSha256); entry["numericalProfile"] = text(model.numericalProfile);
-            entry["validatedBackends"] = validatedBackends; entry["supportedInputProfiles"] = supportedProfiles;
-            entry["hdrQualified"] = model.hdrQualified; entry["metadataIntegrityVerified"] = model.metadataIntegrityVerified;
-            entry["sourceRepository"] = text(model.sourceRepository); entry["upstreamCommit"] = text(model.upstreamCommit);
-            entry["licenseScopeEvidence"] = text(model.licenseScopeEvidence);
-            entry["sourceManifestSha256"] = text(model.sourceManifestSha256); entry["validationSha256"] = text(model.validationSha256);
-            entry["directory"] = QString::fromStdWString(model.directory.wstring());
+            QFile descriptor(QDir(directory).filePath(QStringLiteral("model.json")));
+            constexpr qsizetype descriptorLimit = 256 * 1024;
+            if (!descriptor.open(QIODevice::ReadOnly)) throw std::runtime_error("Could not open local model descriptor");
+            const auto bytes = descriptor.read(descriptorLimit + 1);
+            if (bytes.size() > descriptorLimit) throw std::runtime_error("Local model descriptor exceeds its size limit");
+            QJsonParseError parseError;
+            const auto json = QJsonDocument::fromJson(bytes,&parseError);
+            if (parseError.error != QJsonParseError::NoError || !json.isObject())
+                throw std::invalid_argument("Local model descriptor is not a valid JSON object");
+            const auto family = json.object().value(QStringLiteral("family")).toString();
+            if (family == QStringLiteral("rife")) {
+                const auto model = inference::loadModelPack(path(directory));
+                QStringList validatedBackends;
+                for (const auto& backend : model.validatedBackends) validatedBackends.push_back(text(backend));
+                QStringList supportedProfiles;
+                for (const auto& profile : model.supportedInputProfiles) supportedProfiles.push_back(text(profile));
+                entry["valid"] = true; entry["id"] = text(model.id); entry["displayName"] = text(model.displayName);
+                entry["family"] = text(model.family); entry["version"] = text(model.version); entry["sha256"] = text(model.sha256);
+                entry["schemaVersion"] = model.schemaVersion; entry["licenseId"] = text(model.licenseId);
+                entry["licenseSha256"] = text(model.licenseSha256); entry["numericalProfile"] = text(model.numericalProfile);
+                entry["validatedBackends"] = validatedBackends; entry["supportedInputProfiles"] = supportedProfiles;
+                entry["hdrQualified"] = model.hdrQualified; entry["metadataIntegrityVerified"] = model.metadataIntegrityVerified;
+                entry["sourceRepository"] = text(model.sourceRepository); entry["upstreamCommit"] = text(model.upstreamCommit);
+                entry["licenseScopeEvidence"] = text(model.licenseScopeEvidence);
+                entry["sourceManifestSha256"] = text(model.sourceManifestSha256); entry["validationSha256"] = text(model.validationSha256);
+                entry["directory"] = QString::fromStdWString(model.directory.wstring());
+            } else if (family == QStringLiteral("video-restoration")) {
+                const auto model = restoration::loadModelPack(path(directory));
+                QStringList validatedBackends, supportedProfiles, tasks, placements;
+                for (const auto& backend : model.validatedBackends) validatedBackends.push_back(text(backend));
+                for (const auto& profile : model.capabilities.supportedInputProfiles) supportedProfiles.push_back(text(profile));
+                for (const auto task : model.capabilities.tasks) {
+                    switch (task) {
+                        case restoration::Task::denoise: tasks.push_back(QStringLiteral("denoise")); break;
+                        case restoration::Task::deblur: tasks.push_back(QStringLiteral("deblur")); break;
+                        case restoration::Task::deblock: tasks.push_back(QStringLiteral("deblock")); break;
+                        case restoration::Task::superResolution: tasks.push_back(QStringLiteral("super-resolution")); break;
+                    }
+                }
+                for (const auto placement : model.capabilities.placements) {
+                    switch (placement) {
+                        case restoration::Placement::sourceRateBeforeInterpolation: placements.push_back(QStringLiteral("source-rate-before-interpolation")); break;
+                        case restoration::Placement::outputRateAfterInterpolation: placements.push_back(QStringLiteral("output-rate-after-interpolation")); break;
+                    }
+                }
+                entry["valid"] = true; entry["id"] = text(model.id); entry["displayName"] = text(model.displayName);
+                entry["family"] = QStringLiteral("video-restoration"); entry["version"] = text(model.version);
+                entry["sha256"] = text(model.graphSha256); entry["schemaVersion"] = 1;
+                entry["licenseId"] = text(model.licenseId); entry["licenseSha256"] = text(model.licenseSha256);
+                entry["numericalProfile"] = text(model.numericalProfile); entry["validatedBackends"] = validatedBackends;
+                entry["supportedInputProfiles"] = supportedProfiles; entry["hdrQualified"] = false;
+                entry["metadataIntegrityVerified"] = model.metadataIntegrityVerified;
+                entry["sourceRepository"] = text(model.sourceRepository); entry["upstreamCommit"] = text(model.upstreamCommit);
+                entry["licenseScopeEvidence"] = text(model.licenseScopeEvidence);
+                entry["sourceManifestSha256"] = text(model.sourceManifestSha256); entry["validationSha256"] = text(model.validationSha256);
+                entry["tasks"] = tasks; entry["placements"] = placements;
+                entry["temporalFramesBefore"] = QVariant::fromValue<qulonglong>(model.capabilities.temporalFramesBefore);
+                entry["temporalFramesAfter"] = QVariant::fromValue<qulonglong>(model.capabilities.temporalFramesAfter);
+                entry["scaleNumerator"] = model.capabilities.scaleNumerator;
+                entry["scaleDenominator"] = model.capabilities.scaleDenominator;
+                entry["supportsBoundaryPadding"] = model.capabilities.supportsBoundaryPadding;
+                entry["adapterId"] = text(model.capabilities.adapterId);
+                entry["adapterVersion"] = model.capabilities.adapterVersion;
+                entry["directory"] = QString::fromStdWString(model.directory.wstring());
+            } else {
+                throw std::invalid_argument("Unsupported local model family");
+            }
             entry["error"] = QString();
         } catch (const std::exception& error) { entry["error"] = text(error.what()); }
         return entry;
+    }
+    static QStringList normalizedCatalogPaths(QSettings& settings, const QString& key) {
+        const auto stored = settings.value(key).toStringList();
+        QStringList paths;
+        for (const auto& value : stored) {
+            const auto normalized = canonical(value);
+            if (std::none_of(paths.begin(),paths.end(),[&](const QString& item) { return samePath(item,normalized); }))
+                paths.push_back(normalized);
+        }
+        return paths;
+    }
+    static void saveCatalogPaths(QSettings& settings, const QString& key, const QStringList& paths) {
+        if (settings.value(key).toStringList() == paths) return;
+        settings.setValue(key,paths);
+        settings.sync();
+        if (settings.status() != QSettings::NoError) throw std::runtime_error("Could not save local model catalog");
+    }
+    static QVariantList inspectAllModels(QSettings& settings) {
+        settings.sync();
+        if (settings.status() != QSettings::NoError) throw std::runtime_error("Could not read local model catalog settings");
+        auto rifePaths = normalizedCatalogPaths(settings,QStringLiteral("modelCatalog/paths"));
+        const auto selected = settings.value("model").toUrl();
+        if (selected.isLocalFile()) {
+            const auto selectedPath = canonical(selected.toLocalFile());
+            if (std::none_of(rifePaths.begin(),rifePaths.end(),[&](const QString& value) { return samePath(value,selectedPath); }))
+                rifePaths.push_back(selectedPath);
+        }
+        saveCatalogPaths(settings,QStringLiteral("modelCatalog/paths"),rifePaths);
+        const auto restorationPaths = normalizedCatalogPaths(settings,QStringLiteral("restorationCatalog/paths"));
+        saveCatalogPaths(settings,QStringLiteral("restorationCatalog/paths"),restorationPaths);
+        QVariantList entries;
+        for (const auto& value : rifePaths) entries.push_back(inspectModel(value));
+        for (const auto& value : restorationPaths) {
+            if (std::none_of(rifePaths.begin(),rifePaths.end(),[&](const QString& pathValue) { return samePath(pathValue,value); }))
+                entries.push_back(inspectModel(value));
+        }
+        return entries;
     }
     void snapshot() {
         std::vector<UiTaskRow> rows; if (queue_) for (const auto& row : queue_->list()) rows.push_back(uiRow(row));
@@ -572,7 +638,8 @@ void QueueController::setDefaultModel(const QUrl& directory) {
     const auto target = QFileInfo(directory.toLocalFile()).absoluteFilePath();
     const bool verified = std::any_of(models_.begin(),models_.end(),[&](const QVariant& value) {
         const auto entry = value.toMap();
-        return entry.value("valid").toBool() && QFileInfo(entry.value("directory").toString()).absoluteFilePath().compare(target,Qt::CaseInsensitive) == 0;
+        return entry.value("valid").toBool() && entry.value("family").toString() == QStringLiteral("rife") &&
+            QFileInfo(entry.value("directory").toString()).absoluteFilePath().compare(target,Qt::CaseInsensitive) == 0;
     });
     if (!verified) { setError(tr("请先校验该模型包，再将其设为默认模型。")); return; }
     saveDefaults(defaults_.value("rate","60").toString(),directory,defaults_.value("runtime").toUrl(),
@@ -586,7 +653,8 @@ bool QueueController::supportsModelInputProfile(const QUrl& directory, const QSt
     const auto selectedPath = directory.toLocalFile();
     for (const auto& value : models_) {
         const auto entry = value.toMap();
-        if (!entry.value("valid").toBool() || !samePath(entry.value("directory").toString(),selectedPath)) continue;
+        if (!entry.value("valid").toBool() || entry.value("family").toString() != QStringLiteral("rife") ||
+            !samePath(entry.value("directory").toString(),selectedPath)) continue;
         const auto profiles = entry.value("supportedInputProfiles").toStringList();
         if (profiles.contains(profile)) return true;
         return profile.endsWith(QStringLiteral("-sdr8")) && profiles.contains(QStringLiteral("legacy-unverified"));

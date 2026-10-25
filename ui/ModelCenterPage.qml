@@ -21,7 +21,7 @@ Item {
 
     FolderDialog {
         id: addModelDialog
-        title: qsTr("选择本地 RIFE 模型包目录")
+        title: qsTr("选择本地模型包目录")
         onAccepted: page.queueController.addLocalModel(selectedFolder)
     }
 
@@ -34,7 +34,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Label { text: qsTr("本地模型中心"); font.pixelSize: 27; font.bold: true }
-                Label { text: qsTr("管理已校验的 RIFE 模型包。模型文件只从本机目录读取；此页面不会联网或下载权重。"); color: "#697B8B"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: qsTr("管理本机的 RIFE 插帧模型和画质修复模型。模型只从本机目录读取；此页面不会联网或下载权重。"); color: "#697B8B"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             ActionButton { text: qsTr("重新校验"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels; onClicked: page.queueController.refreshModels() }
             ActionButton { text: qsTr("添加本地模型"); primary: true; highlighted: true; enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels; onClicked: addModelDialog.open() }
@@ -82,10 +82,16 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Label {
-                            text: valid ? (modelData.displayName || modelData.id || qsTr("RIFE 模型")) + "  ·  " + (modelData.version || "") : qsTr("模型校验失败")
+                            text: valid ? (modelData.displayName || modelData.id || qsTr("本地模型")) + "  ·  " + (modelData.version || "") : qsTr("模型校验失败")
                             font.bold: true
                             Layout.fillWidth: true
                             textFormat: Text.PlainText
+                        }
+                        Label {
+                            visible: valid
+                            text: modelData.family === "rife" ? qsTr("插帧") : qsTr("画质修复")
+                            color: modelData.family === "rife" ? "#245EAE" : "#8A4A82"
+                            font.pixelSize: 11
                         }
                         Label { visible: page.isDefault(directory); text: qsTr("默认模型"); color: "#13836B"; font.bold: true }
                         Label { visible: !valid; text: qsTr("不可用"); color: "#B33B44"; font.bold: true }
@@ -122,6 +128,17 @@ Item {
                         visible: valid && (modelData.validatedBackends || []).length > 0
                         text: qsTr("已记录的验证后端  ") + (modelData.validatedBackends || []).join("、")
                         color: "#697B8B"
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                    }
+                    Label {
+                        visible: valid && modelData.family === "video-restoration"
+                        text: qsTr("修复任务：") + (modelData.tasks || []).join("、") +
+                              qsTr("；前/后文帧数：") + (modelData.temporalFramesBefore || 0) + " / " + (modelData.temporalFramesAfter || 0) +
+                              qsTr("；空间倍率：") + (modelData.scaleNumerator || 1) + " / " + (modelData.scaleDenominator || 1)
+                        color: "#52697A"
                         font.pixelSize: 11
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
@@ -172,7 +189,7 @@ Item {
                         ActionButton {
                             objectName: "setDefaultModelButton"
                             text: qsTr("设为默认模型")
-                            visible: valid && !page.isDefault(directory)
+                            visible: valid && modelData.family === "rife" && !page.isDefault(directory)
                             enabled: !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels
                             onClicked: {
                                 const selected = page.queueController.localUrl(directory)
@@ -192,7 +209,7 @@ Item {
             Label {
                 anchors.centerIn: parent
                 visible: !page.queueController.verifyingModels && (!page.queueController.models || page.queueController.models.length === 0)
-                text: qsTr("尚未登记本地模型\n添加包含 model.json 的已校验模型包")
+                text: qsTr("尚未登记本地模型\n添加包含 model.json 的 RIFE 或画质修复模型包")
                 color: "#70818F"
                 horizontalAlignment: Text.AlignHCenter
                 lineHeight: 1.5
@@ -200,7 +217,7 @@ Item {
         }
         Label {
             Layout.fillWidth: true
-            text: qsTr("目录校验会检查模型张量契约与所声明的文件哈希。后端列表和数值档案描述已有验证范围；它们不代表感知画质排名，HDR 支持只会在独立色彩与模型测试完成后标记。")
+            text: qsTr("目录校验会检查模型权重、许可、来源、能力和本地验证记录的文件哈希。哈希一致不代表作者身份或画质排名；未完成独立色彩与模型测试的路径不会标记为 HDR。移除只会从目录列表中取消登记，不会删除本机模型文件。")
             color: "#70818F"
             wrapMode: Text.WordWrap
             font.pixelSize: 12

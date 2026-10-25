@@ -2,6 +2,7 @@
 #include "queue_controller.hpp"
 #include "encoding_settings.hpp"
 #include "language_settings.hpp"
+#include "inference/model_pack.hpp"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -18,6 +19,7 @@
 #include <QDir>
 #include <QTemporaryDir>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSettings>
 #include <iostream>
@@ -25,6 +27,7 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
+#include <span>
 
 namespace {
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -60,6 +63,55 @@ QObject* findVisual(QQuickItem* parent, const QString& name) {
     if (parent->objectName() == name && parent->isVisible()) return parent;
     for (auto* child : parent->childItems()) if (auto* found = findVisual(child,name)) return found;
     return nullptr;
+}
+QByteArray jsonBytes(const QJsonObject& object) { return QJsonDocument(object).toJson(QJsonDocument::Indented); }
+std::string hashBytes(const QByteArray& value) {
+    const auto bytes = std::span<const char>(value.constData(),static_cast<std::size_t>(value.size()));
+    return rifelove::inference::sha256(std::as_bytes(bytes));
+}
+void writeBytes(const QString& path, const QByteArray& bytes) {
+    QFile output(path);
+    require(output.open(QIODevice::WriteOnly | QIODevice::Truncate) && output.write(bytes) == bytes.size(),
+        "Could not write local restoration-pack fixture");
+}
+void makeRestorationPack(const QString& directory) {
+    require(QDir().mkpath(directory), "Could not create local restoration-pack fixture folder");
+    const QByteArray graph("local restoration graph fixture");
+    const QByteArray license("MIT restoration fixture license");
+    const auto manifest = jsonBytes(QJsonObject{
+        {"schemaVersion",1}, {"modelId","desktop-test-restoration"},
+        {"upstreamRepository","https://example.invalid/restoration"}, {"upstreamCommit","abcdef0123456789"},
+        {"license","MIT"}, {"licenseScopeEvidence","https://example.invalid/license-scope"}
+    });
+    const QJsonObject capabilities{
+        {"tasks",QJsonArray{"denoise"}}, {"placements",QJsonArray{"source-rate-before-interpolation"}},
+        {"supportedInputProfiles",QJsonArray{"bt709-sdr8"}},
+        {"temporalFramesBefore",1}, {"temporalFramesAfter",1},
+        {"scaleNumerator",1}, {"scaleDenominator",1}, {"supportsBoundaryPadding",true}
+    };
+    const QJsonArray backends{"onnxruntime_cpu"};
+    const auto validation = jsonBytes(QJsonObject{
+        {"status","passed_cpu_reference"}, {"model_sha256",QString::fromStdString(hashBytes(graph))},
+        {"model_adapter",QJsonObject{{"id","fixture-denoiser-v1"},{"version",1}}},
+        {"numerical_profile","sdr8-reference"}, {"validated_backends",backends},
+        {"capabilities",capabilities}, {"cases",QJsonArray{QJsonObject{{"case_id","paired-small"},{"passed",true}}}}
+    });
+    writeBytes(QDir(directory).filePath("weights.onnx"),graph);
+    writeBytes(QDir(directory).filePath("LICENSE.txt"),license);
+    writeBytes(QDir(directory).filePath("source-manifest.json"),manifest);
+    writeBytes(QDir(directory).filePath("validation.json"),validation);
+    const auto descriptor = jsonBytes(QJsonObject{
+        {"schemaVersion",1}, {"id","desktop-test-restoration"}, {"displayName","Desktop Test Denoiser"},
+        {"family","video-restoration"}, {"version","1.0"},
+        {"adapter",QJsonObject{{"id","fixture-denoiser-v1"},{"version",1}}},
+        {"modelFile","weights.onnx"}, {"sha256",QString::fromStdString(hashBytes(graph))},
+        {"license",QJsonObject{{"id","MIT"},{"file","LICENSE.txt"},{"sha256",QString::fromStdString(hashBytes(license))}}},
+        {"provenance",QJsonObject{{"manifestFile","source-manifest.json"},{"manifestSha256",QString::fromStdString(hashBytes(manifest))}}},
+        {"capabilities",capabilities},
+        {"validation",QJsonObject{{"reportFile","validation.json"},{"reportSha256",QString::fromStdString(hashBytes(validation))},
+            {"numericalProfile","sdr8-reference"},{"validatedBackends",backends}}}
+    });
+    writeBytes(QDir(directory).filePath("model.json"),descriptor);
 }
 }
 int main(int argc, char** argv) {
@@ -617,9 +669,25 @@ int main(int argc, char** argv) {
                 registeredModel.value("validatedBackends").toStringList().contains("onnxruntime_cpu") &&
                 !registeredModel.value("hdrQualified").toBool(),
             "Model center did not expose verified v2 provenance, license and capability metadata");
+        const auto restorationDirectory = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-restoration-model");
+        makeRestorationPack(restorationDirectory);
+        taskQueue.addLocalModel(QUrl::fromLocalFile(restorationDirectory));
+        waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 2; },
+            "Local restoration model import or integrity verification failed",20000);
+        QVariantMap restorationEntry;
+        for (const auto& model : taskQueue.models()) {
+            const auto entry = model.toMap();
+            if (entry.value("family").toString() == "video-restoration") restorationEntry = entry;
+        }
+        require(restorationEntry.value("valid").toBool() && restorationEntry.value("id").toString() == "desktop-test-restoration" &&
+                restorationEntry.value("tasks").toStringList().contains("denoise") &&
+                !taskQueue.supportsModelInputProfile(QUrl::fromLocalFile(restorationDirectory),QStringLiteral("bt709-sdr8")) &&
+                QFileInfo(taskQueue.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
+                !findVisual(window->contentItem(),"setDefaultModelButton"),
+            "Restoration pack became an RIFE interpolation default or lacked its declared local capabilities");
         const auto localModelCopy = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-model-copy");
         taskQueue.addLocalModel(QUrl::fromLocalFile(localModelCopy));
-        waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 2; }, "Local model import or integrity verification failed",20000);
+        waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 3; }, "Local model import or integrity verification failed",20000);
         const auto copiedModel = QUrl::fromLocalFile(localModelCopy);
         auto* setDefaultButton = findVisual(window->contentItem(),"setDefaultModelButton");
         require(setDefaultButton && setDefaultButton->property("enabled").toBool(), "A verified alternative model cannot be selected in the model center");
@@ -646,7 +714,7 @@ int main(int argc, char** argv) {
         require(catalogReload.available(), qPrintable(catalogReload.detail()));
         catalogReload.refreshModels();
         waitUntil([&] { return !catalogReload.verifyingModels(); }, "Saved model catalog re-verification did not finish",20000);
-        if (catalogReload.models().size() != 2) {
+        if (catalogReload.models().size() != 3) {
             QSettings persisted(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("preferences.ini"),QSettings::IniFormat);
             persisted.sync();
             const auto paths = persisted.value("modelCatalog/paths").toStringList();
@@ -659,12 +727,16 @@ int main(int argc, char** argv) {
         const auto corruptModel = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("corrupt-model-copy");
         catalogReload.addLocalModel(QUrl::fromLocalFile(corruptModel));
         waitUntil([&] { return !catalogReload.verifyingModels(); }, "Corrupt model rejection did not finish",20000);
-        require(catalogReload.state() == "error" && catalogReload.detail().contains("SHA-256 mismatch") && catalogReload.models().size() == 2,
+        require(catalogReload.state() == "error" && catalogReload.detail().contains("SHA-256 mismatch") && catalogReload.models().size() == 3,
                 "Model center accepted a package whose ONNX hash no longer matches its manifest");
         catalogReload.refreshModels();
-        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 2; }, "Model catalog did not recover after a rejected package",20000);
+        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 3; }, "Model catalog did not recover after a rejected package",20000);
         catalogReload.removeLocalModel(QUrl::fromLocalFile(arguments[3]));
-        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 1; }, "Removing an unused local model did not update the catalog",20000);
+        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 2; }, "Removing an unused local model did not update the catalog",20000);
+        catalogReload.removeLocalModel(QUrl::fromLocalFile(restorationDirectory));
+        waitUntil([&] { return !catalogReload.verifyingModels() && catalogReload.models().size() == 1; }, "Removing a restoration model did not update the catalog",20000);
+        require(QFileInfo::exists(QDir(restorationDirectory).filePath("model.json")),
+            "Removing a restoration model deleted the user's local model files");
         QueueController finalReload(QDir(QFileInfo(arguments[2]).absolutePath()).filePath("model-catalog-final.sqlite"));
         waitUntil([&] { return finalReload.available() || finalReload.state() == "error"; }, "Final model catalog persistence check did not initialize");
         require(finalReload.available(), qPrintable(finalReload.detail()));
@@ -675,7 +747,7 @@ int main(int argc, char** argv) {
         QEventLoop modelPaint; QTimer::singleShot(120,&modelPaint,&QEventLoop::quit); modelPaint.exec();
         require(window->grabWindow().save(arguments[6] + QStringLiteral(".models.png")), "Local model center screenshot failed");
         QFile report(arguments[7]); require(report.open(QIODevice::WriteOnly | QIODevice::Truncate), "Could not write workflow report");
-        report.write(QString("{\"success\":true,\"outputFrames\":36,\"aiFrames\":%1,\"responsiveTicks\":%2,\"existingOutputProtected\":true,\"cancelledWithoutOutput\":true,\"queueCompleted\":3,\"recursiveBatch\":true,\"duplicateInputsDeduplicated\":true,\"unsupportedHdrReported\":true,\"controllerRetry\":true,\"controllerQueuedCancel\":true,\"localModelShaValidated\":true,\"invalidModelRejected\":true,\"modelRemovalPersisted\":true,\"modelCatalogEntries\":1,\"defaultModelReloaded\":true}\n").arg(aiFrames).arg(responsiveTicks).toUtf8());
+        report.write(QString("{\"success\":true,\"outputFrames\":36,\"aiFrames\":%1,\"responsiveTicks\":%2,\"existingOutputProtected\":true,\"cancelledWithoutOutput\":true,\"queueCompleted\":3,\"recursiveBatch\":true,\"duplicateInputsDeduplicated\":true,\"unsupportedHdrReported\":true,\"controllerRetry\":true,\"controllerQueuedCancel\":true,\"localModelShaValidated\":true,\"localRestorationPackValidated\":true,\"restorationModelRemovalPreservesFiles\":true,\"invalidModelRejected\":true,\"modelRemovalPersisted\":true,\"modelCatalogEntries\":1,\"defaultModelReloaded\":true}\n").arg(aiFrames).arg(responsiveTicks).toUtf8());
         std::cout << "Desktop QML studio, persistent queue and offline model catalog workflows passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

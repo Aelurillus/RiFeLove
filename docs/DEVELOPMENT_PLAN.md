@@ -86,7 +86,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
   - Tagged BT.709/BT.601-family 8/10-bit SDR conversion now uses explicit matrix/range handling, maps source profiles into the selected model contract and preserves source bit depth when the chosen encoder accepts it. 10-bit tests currently cover synthetic CPU color conversion; HDR and real-content 10-bit quality remain open.
 - [x] Define the independent temporal restoration request/result contract and a versioned local backend registry, with exact timestamp, color-profile, temporal-window, boundary and output-scale validation.
 - [x] Define and verify a declarative local restoration-pack schema with streamed ONNX hashing, confined file paths, hash-bound license/source/validation sidecars, adapter/capability matching and passed-case checks.
-- [ ] Implement the offline restoration inference stage and local model lifecycle for denoising, deblurring, deblocking and super-resolution; bind placement, memory limits, provenance and weight rights. Require real-content temporal-flicker review before enabling a model in normal use.
+- [x] Add a separate offline restoration-pack catalog to Model Center with persisted registration, declared task/window/scale details, RIFE-default protection and non-destructive unregister; verify import, restart, invalid-pack rejection and removal in the desktop workflow.
+- [ ] Implement the restoration inference stage for denoising, deblurring, deblocking and super-resolution; bind placement, memory limits, provenance and weight rights. Require real-content temporal-flicker review before enabling a model in normal use.
 - [ ] Add animation/text/HUD temporal QA and seam/flicker regression fixtures.
 - [ ] Publish objective and blind-review benchmark protocol.
 
