@@ -17,6 +17,7 @@ $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("rifelove-package-state-{0}" -
 $oldRoot = Join-Path $testRoot "old"
 $newRoot = Join-Path $testRoot "new"
 $linkedTarget = Join-Path $testRoot "linked-target"
+$runtimeRoot = Join-Path $testRoot "runtime"
 
 try {
     New-Item -ItemType Directory -Path (Join-Path $newRoot "data") -Force | Out-Null
@@ -52,6 +53,19 @@ try {
     Assert-Equal "custom-model" (Get-Content -LiteralPath (Join-Path $newRoot "models/default-model.txt") -Raw).Trim() "Existing valid default model survives an upgrade"
     Assert-Equal "custom-weights" (Get-Content -LiteralPath (Join-Path $newRoot "models/custom-model/model.onnx") -Raw).Trim() "User-installed model survives an upgrade"
     Assert-Equal '{"id":"balanced","version":"new"}' (Get-Content -LiteralPath (Join-Path $newRoot "models/balanced/model.json") -Raw).Trim() "A newly bundled model takes precedence over an older copy"
+
+    Write-TestFile (Join-Path $newRoot "RifeLove.exe") "desktop-binary"
+    Write-TestFile (Join-Path $newRoot "licenses/RifeLove-MIT.txt") "license-notice"
+    Write-TestFile (Join-Path $newRoot "SHA256SUMS.txt") "previous-manifest"
+    Write-TestFile (Join-Path $runtimeRoot "onnxruntime.dll") "runtime-binary"
+    Write-TestFile (Join-Path $runtimeRoot "providers/cuda.dll") "provider-binary"
+    $manifest = @(New-PackageChecksumManifest -PackageRoot $newRoot -RuntimeRoot $runtimeRoot -QualificationEvidencePath (Join-Path $newRoot "data/tensorrt-validation.json"))
+    foreach ($path in @("RifeLove.exe","licenses/RifeLove-MIT.txt","models/custom-model/model.onnx","data/tensorrt-validation.json","runtime/onnxruntime.dll","runtime/providers/cuda.dll")) {
+        if (-not ($manifest | Where-Object { $_ -match ("  " + [regex]::Escape($path) + '$') })) { throw "Package checksum manifest is missing $path." }
+    }
+    if ($manifest | Where-Object { $_ -match '  (data/)?preferences\.ini$|  data/queue\.sqlite$|  SHA256SUMS\.txt$' }) {
+        throw "Mutable user data and the manifest itself must be excluded from the package checksum list."
+    }
 
     Assert-PackageNotRunning -TargetPath (Join-Path $testRoot "no-running-package")
 

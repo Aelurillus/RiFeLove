@@ -146,3 +146,43 @@ function Promote-PackageDirectory {
         catch { Write-Warning "The new package is active, but the previous package could not be cleaned up: $backupRoot" }
     }
 }
+
+function New-PackageChecksumManifest {
+    param(
+        [Parameter(Mandatory=$true)][string]$PackageRoot,
+        [Parameter(Mandatory=$true)][string]$RuntimeRoot,
+        [Parameter(Mandatory=$true)][string]$QualificationEvidencePath)
+
+    $packageRootFull = [IO.Path]::GetFullPath($PackageRoot)
+    $runtimeRootFull = [IO.Path]::GetFullPath($RuntimeRoot)
+    $runtimeItem = Get-Item -LiteralPath $runtimeRootFull -Force
+    if (-not $runtimeItem.PSIsContainer -or ($runtimeItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "The runtime checksum root must be a local, non-linked directory: $runtimeRootFull"
+    }
+
+    $checksums = @{}
+    foreach ($file in @(Get-PackageTreeItemsWithoutFollowingLinks -Path $packageRootFull | Where-Object { -not $_.PSIsContainer -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) })) {
+        $relative = $file.FullName.Substring($packageRootFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ($relative -ieq "SHA256SUMS.txt" -or $relative -match '^(data[\\/])') { continue }
+        $manifestPath = $relative.Replace([IO.Path]::DirectorySeparatorChar, '/')
+        $checksums[$manifestPath] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $evidenceFull = [IO.Path]::GetFullPath($QualificationEvidencePath)
+    if (-not $evidenceFull.StartsWith($packageRootFull.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Qualification evidence must be inside the package: $evidenceFull"
+    }
+    if (-not (Test-Path -LiteralPath $evidenceFull -PathType Leaf)) { throw "Qualification evidence is missing: $evidenceFull" }
+    $evidenceRelative = $evidenceFull.Substring($packageRootFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace([IO.Path]::DirectorySeparatorChar, '/')
+    $checksums[$evidenceRelative] = (Get-FileHash -LiteralPath $evidenceFull -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    foreach ($file in @(Get-PackageTreeItemsWithoutFollowingLinks -Path $runtimeRootFull | Where-Object { -not $_.PSIsContainer -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) })) {
+        $relative = $file.FullName.Substring($runtimeRootFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        $manifestPath = (Join-Path "runtime" $relative).Replace([IO.Path]::DirectorySeparatorChar, '/')
+        $checksums[$manifestPath] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $manifest = @("RifeLove local bundle SHA-256")
+    foreach ($path in ($checksums.Keys | Sort-Object)) { $manifest += "$($checksums[$path])  $path" }
+    return $manifest
+}

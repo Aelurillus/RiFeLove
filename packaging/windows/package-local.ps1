@@ -270,22 +270,7 @@ Remove-Item -LiteralPath $qualificationDirectory -Recurse -Force
 Assert-PackageNotRunning -TargetPath $target
 Preserve-PackageUserState -OldRoot $target -NewRoot $packageRoot
 
-$manifest = @(
-    "RifeLove local bundle SHA-256",
-    ((Get-FileHash -LiteralPath (Join-Path $packageRoot "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe"),
-    ((Get-FileHash -LiteralPath (Join-Path $packageRoot "rifelove-cli.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  rifelove-cli.exe"),
-    ((Get-FileHash -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Algorithm SHA256).Hash.ToLowerInvariant() + "  models/default-model.txt"),
-    ((Get-FileHash -LiteralPath $qualificationEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant() + "  data/tensorrt-validation.json"),
-    ((Get-FileHash -LiteralPath (Join-Path $runtimeTarget "tensorrt-runtime.version") -Algorithm SHA256).Hash.ToLowerInvariant() + "  runtime/tensorrt-runtime.version"),
-    ((Get-FileHash -LiteralPath (Join-Path $runtimeTarget "onnxruntime.dll") -Algorithm SHA256).Hash.ToLowerInvariant() + "  runtime/onnxruntime.dll"),
-    ((Get-FileHash -LiteralPath (Join-Path $runtimeTarget "nvinfer_10.dll") -Algorithm SHA256).Hash.ToLowerInvariant() + "  runtime/nvinfer_10.dll")
-)
-foreach ($pack in $modelPacks) {
-    foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
-        $relative = "models/$($pack.descriptor.id)/$name"
-        $manifest += (Get-FileHash -LiteralPath (Join-Path $packageRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant() + "  $relative"
-    }
-}
+$manifest = New-PackageChecksumManifest -PackageRoot $packageRoot -RuntimeRoot $inferenceRuntime -QualificationEvidencePath $qualificationEvidencePath
 Set-Content -LiteralPath (Join-Path $packageRoot "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
 
 # Copy mutable local state only after package qualification succeeds. Refuse to
