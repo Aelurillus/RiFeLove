@@ -488,6 +488,16 @@
         <translation>フレーム補間中</translation>
     </message>
     <message>
+        <location filename="../Main.qml" line="177" />
+        <source>等待 GPU 输出新帧</source>
+        <translation>GPUから新しいフレームが届くのを待っています</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="600" />
+        <source>超过 60 秒没有新帧；可能是 GPU 资源竞争或推理卡住。输出尚未完成验证。</source>
+        <translation>60秒以上、新しいフレームが届いていません。ほかのアプリがGPUを使用しているか、推論が応答していない可能性があります。出力はまだ検証されていません。</translation>
+    </message>
+    <message>
         <location filename="../Main.qml" line="176" />
         <source>正在编码</source>
         <translation>動画をエンコードしています</translation>

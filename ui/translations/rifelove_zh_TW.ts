@@ -488,6 +488,16 @@
         <translation>正在補幀</translation>
     </message>
     <message>
+        <location filename="../Main.qml" line="177" />
+        <source>等待 GPU 输出新帧</source>
+        <translation>等待 GPU 輸出新影格</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="600" />
+        <source>超过 60 秒没有新帧；可能是 GPU 资源竞争或推理卡住。输出尚未完成验证。</source>
+        <translation>超過 60 秒沒有新影格；可能是 GPU 資源競爭或推論沒有回應。輸出尚未完成驗證。</translation>
+    </message>
+    <message>
         <location filename="../Main.qml" line="176" />
         <source>正在编码</source>
         <translation>正在編碼</translation>

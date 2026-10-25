@@ -1,6 +1,8 @@
 #pragma once
 #include "application/processing_service.hpp"
+#include "progress_watchdog.hpp"
 #include <QObject>
+#include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -11,6 +13,7 @@ class StudioController final : public QObject {
     Q_PROPERTY(QString output READ output NOTIFY changed)
     Q_PROPERTY(QString status READ status NOTIFY changed)
     Q_PROPERTY(QString detail READ detail NOTIFY changed)
+    Q_PROPERTY(bool progressStalled READ progressStalled NOTIFY changed)
     Q_PROPERTY(QVariantMap deviceInfo READ deviceInfo CONSTANT)
     Q_PROPERTY(QVariantMap media READ media NOTIFY changed)
     Q_PROPERTY(QVariantMap progress READ progress NOTIFY changed)
@@ -22,6 +25,7 @@ public:
     QString output() const { return output_; }
     QString status() const { return status_; }
     QString detail() const { return detail_; }
+    bool progressStalled() const { return progressStalled_; }
     QVariantMap deviceInfo() const { return deviceInfo_; }
     QVariantMap media() const { return media_; }
     QVariantMap progress() const { return progress_; }
@@ -44,4 +48,7 @@ private:
     std::optional<rifelove::media::MediaInfo> inspectedMedia_;
     QVariantMap deviceInfo_, media_, progress_;
     rifelove::application::ProcessingService service_;
+    rifelove::desktop::ProgressWatchdog progressWatchdog_;
+    QTimer progressWatchdogTimer_;
+    bool progressStalled_ = false;
 };

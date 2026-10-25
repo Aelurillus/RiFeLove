@@ -65,6 +65,13 @@ QVariantMap timingMap(const rifelove::PipelineTimingBreakdown& value) {
 }
 }
 StudioController::StudioController(QObject* parent) : QObject(parent) {
+    progressWatchdogTimer_.setInterval(1000);
+    connect(&progressWatchdogTimer_,&QTimer::timeout,this,[this] {
+        const bool stalled = busy_ && status_ == QStringLiteral("processing") &&
+            progressWatchdog_.stalled(rifelove::desktop::ProgressWatchdog::Clock::now(),std::chrono::seconds(60));
+        if (stalled != progressStalled_) { progressStalled_ = stalled; emit changed(); }
+    });
+    progressWatchdogTimer_.start();
     try {
         rifelove::gpu::CudaDevice device;
         const auto& info = device.info();
@@ -82,7 +89,10 @@ StudioController::StudioController(QObject* parent) : QObject(parent) {
 }
 StudioController::~StudioController() { service_.cancel(); }
 QUrl StudioController::localUrl(const QString& value) const { return QUrl::fromLocalFile(value); }
-void StudioController::fail(const QString& detail) { busy_ = false; status_ = "failed"; detail_ = detail; emit changed(); emit operationFinished(status_); }
+void StudioController::fail(const QString& detail) {
+    busy_ = false; progressStalled_ = false; progressWatchdog_.reset(); status_ = "failed"; detail_ = detail;
+    emit changed(); emit operationFinished(status_);
+}
 rifelove::application::ProcessingService::Callback StudioController::callback() {
     return [this](rifelove::application::ProcessingEvent event) {
         QMetaObject::invokeMethod(this, [this, event = std::move(event)]() mutable { receive(std::move(event)); }, Qt::QueuedConnection);
@@ -182,6 +192,7 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
             if (!capability.contextOpened)
                 throw std::invalid_argument("The selected encoder could not open for the requested output frame rate and settings: " + capability.reason);
         }
+        progressWatchdog_.reset(); progressStalled_ = false;
         busy_ = true; status_ = "loading_model"; detail_.clear(); progress_.clear();
         if (!preflightEncoderFallback.isEmpty()) {
             progress_["encoderFallbackReason"] = preflightEncoderFallback;
@@ -197,11 +208,16 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         if (!service_.submit(std::move(job), callback())) fail(tr("请等待当前操作结束。"));
     } catch (const std::exception& error) { fail(text(error.what())); }
 }
-void StudioController::cancel() { if (busy_) { status_ = "cancelling"; emit changed(); service_.cancel(); } }
+void StudioController::cancel() {
+    if (busy_) { progressStalled_ = false; status_ = "cancelling"; emit changed(); service_.cancel(); }
+}
 void StudioController::receive(rifelove::application::ProcessingEvent event) {
     using Kind = rifelove::application::ProcessingEvent::Kind;
     if (event.kind == Kind::progress || event.kind == Kind::prepared) {
         if (status_ != "cancelling") status_ = text(event.stage);
+        if (event.stage == "processing") {
+            if (progressWatchdog_.observe(event.outputFrames)) progressStalled_ = false;
+        } else progressStalled_ = false;
         progress_["frames"] = QVariant::fromValue<qulonglong>(event.outputFrames);
         progress_["aiFrames"] = QVariant::fromValue<qulonglong>(event.aiFrames);
         progress_["fps"] = event.processingFps;
@@ -222,7 +238,7 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         else if (event.stage != "encoder_fallback" && !event.detail.empty()) detail_ = text(event.detail);
         else detail_.clear();
     } else {
-        busy_ = false;
+        busy_ = false; progressStalled_ = false; progressWatchdog_.reset();
         if (event.kind == Kind::inspected && event.media) {
             inspectedMedia_ = *event.media;
             status_ = "inspected";

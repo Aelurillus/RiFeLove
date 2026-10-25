@@ -173,6 +173,8 @@ ApplicationWindow {
     }
 
     function stateText(value) {
+        if (value === "processing" && processingAvailable && studio.progressStalled)
+            return qsTr("等待 GPU 输出新帧")
         if (value === "inspected" && window.info.width) {
             if (!window.info.supportedColor) return qsTr("色彩格式暂不支持")
             if (!window.info.gpuAvailable) return qsTr("NVIDIA GPU 不可用")
@@ -192,6 +194,7 @@ ApplicationWindow {
         return labels[value] || qsTr("正在处理")
     }
     function stateColor(value) {
+        if (value === "processing" && processingAvailable && studio.progressStalled) return "#f0c98a"
         if (value === "failed" || (value === "inspected" && window.info.width && !window.info.supportedColor)) return "#ffb3ad"
         if (value === "inspected" && !window.canStart) return "#f0c98a"
         return "#9ee6c8"
@@ -591,7 +594,18 @@ ApplicationWindow {
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
-                    Label { text: processingAvailable ? studio.detail : qsTr("请使用启用媒体和 ONNX CUDA 的桌面构建。"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: window.state === "failed" ? "#ffb3ad" : "#b9c9dd"; font.pixelSize: 12 }
+                    Label {
+                        text: {
+                            const detail = processingAvailable ? studio.detail : qsTr("请使用启用媒体和 ONNX CUDA 的桌面构建。")
+                            if (!processingAvailable || window.state !== "processing" || !studio.progressStalled) return detail
+                            const warning = qsTr("超过 60 秒没有新帧；可能是 GPU 资源竞争或推理卡住。输出尚未完成验证。")
+                            return detail.length > 0 ? detail + "\n" + warning : warning
+                        }
+                        wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                        color: window.state === "failed" ? "#ffb3ad" : studio.progressStalled ? "#f0c98a" : "#b9c9dd"
+                        font.pixelSize: 12
+                    }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 12

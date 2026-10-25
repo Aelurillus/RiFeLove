@@ -488,6 +488,16 @@
         <translation>Interpolating frames</translation>
     </message>
     <message>
+        <location filename="../Main.qml" line="177" />
+        <source>等待 GPU 输出新帧</source>
+        <translation>Waiting for a new frame from the GPU</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="600" />
+        <source>超过 60 秒没有新帧；可能是 GPU 资源竞争或推理卡住。输出尚未完成验证。</source>
+        <translation>No new frame has arrived for over 60 seconds. Another app may be using the GPU, or inference may be unresponsive. The output has not passed validation.</translation>
+    </message>
+    <message>
         <location filename="../Main.qml" line="176" />
         <source>正在编码</source>
         <translation>Encoding video</translation>

@@ -304,7 +304,7 @@ if(RIFELOVE_BUILD_TESTS)
     target_sources(rifelove-tests PRIVATE tests/unit/language_settings_test.cpp)
     target_include_directories(rifelove-tests PRIVATE apps/desktop)
     target_link_libraries(rifelove-tests PRIVATE rifelove_localization)
-    target_sources(rifelove-tests PRIVATE tests/unit/profile_store_test.cpp apps/desktop/profile_store.cpp)
+    target_sources(rifelove-tests PRIVATE tests/unit/profile_store_test.cpp apps/desktop/profile_store.cpp tests/unit/progress_watchdog_test.cpp)
     target_include_directories(rifelove-tests PRIVATE apps/desktop)
 
     add_executable(rifelove-translation-check tests/integration/translation_catalog.cpp)
