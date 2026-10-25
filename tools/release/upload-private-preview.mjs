@@ -4,6 +4,11 @@ import { createRequire } from "node:module";
 import { lstat, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  parsePrivatePreviewArguments,
+  removeVerifiedArchive,
+  validateArchiveRemovalTarget,
+} from "./private-preview-archive.mjs";
 import { validateVersion } from "./release-manifest.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -11,11 +16,14 @@ const siteRoot = path.join(repoRoot, "release-site");
 const requireFromReleaseSite = createRequire(path.join(siteRoot, "package.json"));
 const OSS = requireFromReleaseSite("ali-oss");
 const storage = JSON.parse(await readFile(path.join(siteRoot, "storage.json"), "utf8"));
-const options = parseArguments(process.argv.slice(2));
+const options = parsePrivatePreviewArguments(process.argv.slice(2));
 const version = validateVersion(options.version);
 const archivePath = path.resolve(options.archive);
 const fileName = `RifeLove-${version}-win-x64.zip`;
 if (path.basename(archivePath) !== fileName) throw new Error(`Archive must be named ${fileName}`);
+const archiveRemovalTarget = options.removeLocalAfterVerify
+  ? await validateArchiveRemovalTarget(archivePath, repoRoot, version)
+  : null;
 const archiveInfo = await stat(archivePath);
 if (!archiveInfo.isFile() || archiveInfo.size <= 0) throw new Error("Preview archive must be a non-empty file");
 const parallel = Number(process.env.OSS_UPLOAD_PARALLEL || 2);
@@ -81,7 +89,6 @@ if (existing) {
   });
   console.log("Multipart transfer complete; verifying remote size, hash, private ACL and anonymous access.");
 }
-
 await client.putACL(key, "private");
 const uploaded = await headObject(client, key);
 verifyObject(uploaded, archiveInfo.size, sha256);
@@ -90,6 +97,11 @@ if (acl.acl !== "private") throw new Error("The preview archive ACL is not priva
 await verifyAnonymousAccessDenied(`https://${bucket}.${region}.aliyuncs.com/${key.split("/").map(encodeURIComponent).join("/")}`);
 await rm(checkpointPath, { force: true });
 await rm(checkpointTempPath, { force: true });
+if (archiveRemovalTarget) {
+  const removed = await removeVerifiedArchive(archiveRemovalTarget);
+  if (removed) console.log("Removed the exact local release-candidate ZIP after remote verification.");
+  else console.warn("The OSS object was verified, but the local ZIP changed during upload and was kept.");
+}
 console.log(`Stored private RifeLove ${version} preview in OSS (${archiveInfo.size} bytes, SHA-256 ${sha256}).`);
 console.log("The update log remains non-downloadable until Windows distribution checks and dependency/model redistribution reviews pass.");
 
@@ -167,18 +179,4 @@ async function hashFile(filePath) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest("hex");
-}
-
-function parseArguments(args) {
-  const result = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const key = args[index];
-    if (!new Set(["--archive", "--version"]).has(key) || !args[index + 1]) {
-      throw new Error("Usage: node tools/release/upload-private-preview.mjs --archive <zip> --version <version>");
-    }
-    if (result[key.slice(2)]) throw new Error(`Specify ${key} only once`);
-    result[key.slice(2)] = args[++index];
-  }
-  if (!result.archive || !result.version) throw new Error("Specify exactly one --archive and one --version");
-  return result;
 }
