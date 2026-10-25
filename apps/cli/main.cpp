@@ -5,6 +5,7 @@
 #include "gpu/cuda_device.hpp"
 #ifdef RIFELOVE_HAS_PIPELINE
 #include "interpolation_commands.hpp"
+#include "local_profile.hpp"
 #include "queue_commands.hpp"
 #endif
 #ifdef RIFELOVE_HAS_MEDIA
@@ -97,8 +98,10 @@ void usage(std::ostream& out) {
         << "  rifelove-cli tasks-recover DATABASE (maintenance: all workers must be stopped)\n";
     out << "  rifelove-cli gpu-info [DEVICE_INDEX]\n";
 #ifdef RIFELOVE_HAS_PIPELINE
-    out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--encoder auto|NAME] [--pixel-format FORMAT] [--report JSON] [--progress]\n";
-    out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [encoding options]\n"
+    out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--encoder auto|NAME] [--pixel-format FORMAT] [--bitrate BPS] [--gop-size N] [--report JSON] [--progress]\n";
+    out << "  rifelove-cli profile-check PROFILE_JSON\n"
+        << "  rifelove-cli interpolate INPUT OUTPUT --profile PROFILE_JSON [encoding overrides]\n";
+    out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--profile PROFILE_JSON] [encoding options]\n"
         << "  rifelove-cli queue-run DATABASE [--progress]\n"
         << "  rifelove-cli queue-list|queue-export DATABASE\n"
         << "  rifelove-cli queue-report DATABASE [--output JSON]\n"
@@ -129,6 +132,13 @@ int main(int argc, char** argv) {
         try { (void)rifelove::logging::initialize(defaultLogPath()); } catch (...) { }
         rifelove::logging::write(rifelove::logging::Level::info,"cli","command.start","CLI command started",
             {{"command",command}});
+        if (command == "profile-check") {
+#ifdef RIFELOVE_HAS_PIPELINE
+            return rifelove::cli::runLocalProfileCheckCommand(args);
+#else
+            throw std::runtime_error("Local processing profiles require the media and ONNX CUDA build");
+#endif
+        }
         if (command.rfind("queue-",0) == 0) {
 #ifdef RIFELOVE_HAS_PIPELINE
             return runQueueCommand(args);

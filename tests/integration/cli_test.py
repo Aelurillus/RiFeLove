@@ -123,6 +123,90 @@ class LocalCliWorkflow(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("positive", result.stderr)
 
+    def test_desktop_local_profile_applies_to_queue_and_cli_options_override_it(self):
+        model = Path(self.directory.name) / "模型 包"
+        runtime = Path(self.directory.name) / "CUDA 运行库"
+        output_folder = Path(self.directory.name) / "导出"
+        model.mkdir()
+        runtime.mkdir()
+        output_folder.mkdir()
+        (model / "model.json").write_text(json.dumps({
+            "schemaVersion": 1, "family": "rife", "sha256": "0" * 64, "id": "test-rife", "version": "1",
+        }), encoding="utf-8")
+        source = Path(self.directory.name) / "输入 视频.mp4"
+        source.write_bytes(b"synthetic queue source")
+        profile = Path(self.directory.name) / "电影 配置.json"
+        profile.write_text(json.dumps({
+            "format": "rifelove-local-profile", "version": 1,
+            "profile": {
+                "name": "中文 电影", "rate": "120", "modelUrl": model.as_uri(),
+                "runtimeUrl": runtime.as_uri(), "outputUrl": output_folder.as_uri(),
+                "encoder": "h264_nvenc", "container": "mkv", "bitrateKbps": 8000,
+                "qualityMode": "cq", "quality": 19, "gopSize": 90,
+            },
+        }, ensure_ascii=False), encoding="utf-8")
+
+        summary = json.loads(self.run_cli("profile-check", profile).stdout)
+        self.assertEqual(summary["event"], "profile_valid")
+        self.assertEqual(summary["name"], "中文 电影")
+        self.assertEqual(summary["rate"], "120/1")
+        self.assertEqual(Path(summary["model_directory"]), model.resolve())
+        self.assertEqual(Path(summary["runtime_directory"]), runtime.resolve())
+        self.assertEqual(Path(summary["output_location"]), output_folder.resolve())
+        self.assertEqual(summary["quality_mode"], "cq")
+
+        output = output_folder / "补帧.mkv"
+        first = json.loads(self.run_cli("queue-add", self.database, source, output, "--profile", profile,
+                                        "--fps", "24000/1001", "--gop-size", "60").stdout)["ids"][0]
+        with closing(sqlite3.connect(self.database)) as database:
+            configuration = json.loads(database.execute("SELECT configuration FROM task_details WHERE task_id=?", (first,)).fetchone()[0])
+        self.assertEqual(configuration["targetRate"], "24000/1001")
+        self.assertEqual(Path(configuration["modelDirectory"]), model.resolve())
+        self.assertEqual(Path(configuration["runtimeDirectory"]), runtime.resolve())
+        self.assertEqual(configuration["encoding"]["encoder"], "h264_nvenc")
+        self.assertEqual(configuration["encoding"]["bitRate"], 0)
+        self.assertEqual(configuration["encoding"]["gopSize"], 60)
+        self.assertEqual(configuration["encoding"]["options"], {"rc": "vbr", "cq": "19"})
+
+        override_output = output_folder / "覆盖.mkv"
+        second = json.loads(self.run_cli("queue-add", self.database, source, override_output, "--profile", profile,
+                                         "--encoder", "libopenh264", "--bitrate", "4000000").stdout)["ids"][0]
+        with closing(sqlite3.connect(self.database)) as database:
+            configuration = json.loads(database.execute("SELECT configuration FROM task_details WHERE task_id=?", (second,)).fetchone()[0])
+        self.assertEqual(configuration["encoding"]["encoder"], "libopenh264")
+        self.assertEqual(configuration["encoding"]["bitRate"], 4000000)
+        self.assertEqual(configuration["encoding"]["options"], {})
+
+    def test_profile_rejects_remote_paths_and_mismatched_container(self):
+        profile = Path(self.directory.name) / "invalid-profile.json"
+        profile.write_text(json.dumps({
+            "format": "rifelove-local-profile", "version": 1,
+            "profile": {
+                "name": "Invalid", "rate": "60", "modelUrl": "https://example.invalid/model",
+                "runtimeUrl": "file:///C:/runtime", "outputUrl": "", "encoder": "auto", "container": "mkv",
+                "bitrateKbps": 8000, "qualityMode": "bitrate", "quality": 32, "gopSize": 120,
+            },
+        }), encoding="utf-8")
+        result = self.run_cli("profile-check", profile, expected_code=2)
+        self.assertIn("local file URLs", result.stderr)
+
+        source = Path(self.directory.name) / "source.mp4"
+        source.write_bytes(b"source")
+        model = Path(self.directory.name) / "model"
+        runtime = Path(self.directory.name) / "runtime"
+        model.mkdir()
+        runtime.mkdir()
+        (model / "model.json").write_text(json.dumps({
+            "schemaVersion": 1, "family": "rife", "sha256": "0" * 64, "id": "test-rife", "version": "1",
+        }), encoding="utf-8")
+        profile_data = json.loads(profile.read_text(encoding="utf-8"))
+        profile_data["profile"]["modelUrl"] = model.as_uri()
+        profile_data["profile"]["runtimeUrl"] = runtime.as_uri()
+        profile.write_text(json.dumps(profile_data), encoding="utf-8")
+        result = self.run_cli("queue-add", self.database, source, Path(self.directory.name) / "wrong.mp4",
+                              "--profile", profile, expected_code=2)
+        self.assertIn("extension must match", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

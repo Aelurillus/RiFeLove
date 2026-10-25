@@ -1,4 +1,5 @@
 #include "interpolation_commands.hpp"
+#include "local_profile.hpp"
 #include "common/json.hpp"
 #include "core/pipeline/video_pipeline.hpp"
 #include "application/job_serialization.hpp"
@@ -35,7 +36,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
     PipelineSettings settings;
-    std::string modelDirectory, runtimeDirectory;
+    std::filesystem::path modelDirectory, runtimeDirectory;
     std::optional<std::string> reportPathText;
     bool hasRate = false, showProgress = false;
     int ordinal = 0;
@@ -44,13 +45,24 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         if (option == "--progress") { showProgress = true; continue; }
         if (i + 1 >= args.size()) throw std::invalid_argument("Missing value for " + option);
         const auto& value = args[++i];
-        if (option == "--fps") { settings.targetRate = Rational::parse(value); hasRate = true; }
+        if (option == "--profile") {
+            const auto profile = cli::loadLocalProfile(path(value));
+            cli::applyLocalProfile(profile,settings,modelDirectory,runtimeDirectory);
+            cli::validateLocalProfileOutput(profile,path(args[3]));
+            hasRate = true;
+        }
+        else if (option == "--fps") { settings.targetRate = Rational::parse(value); hasRate = true; }
         else if (option == "--report") reportPathText = value;
-        else if (option == "--model-dir") modelDirectory = value;
-        else if (option == "--runtime-dir") runtimeDirectory = value;
-        else if (option == "--encoder") settings.encoding.encoder = value;
+        else if (option == "--model-dir") modelDirectory = path(value);
+        else if (option == "--runtime-dir") runtimeDirectory = path(value);
+        else if (option == "--encoder") cli::overrideEncoder(settings,value);
         else if (option == "--pixel-format") settings.encoding.pixelFormat = value;
-        else if (option == "--bitrate") settings.encoding.bitRate = integer(value);
+        else if (option == "--bitrate") cli::overrideBitrate(settings,integer(value));
+        else if (option == "--gop-size") {
+            const auto number = integer(value);
+            if (number < 0 || number > 1000) throw std::invalid_argument("GOP size must be between 0 and 1000");
+            settings.encoding.gopSize = static_cast<int>(number);
+        }
         else if (option == "--bframes") {
             const auto number = integer(value);
             if (number < 0 || number > 16) throw std::invalid_argument("B-frame count must be between 0 and 16");
@@ -71,7 +83,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             settings.scene.cutMeanDifference = threshold;
         } else throw std::invalid_argument("Unknown interpolate option: " + option);
     }
-    if (!hasRate || settings.targetRate <= Rational(0) || modelDirectory.empty() || runtimeDirectory.empty()) throw std::invalid_argument("A positive --fps, --model-dir and --runtime-dir are required");
+    if (!hasRate || settings.targetRate <= Rational(0) || modelDirectory.empty() || runtimeDirectory.empty()) throw std::invalid_argument("A positive --fps, --model-dir and --runtime-dir are required (or use --profile)");
     if (std::filesystem::exists(path(args[3]))) throw std::invalid_argument("Output already exists; choose a new path");
     std::unique_ptr<application::ProcessingReportFile> reportFile;
     if (reportPathText) {
@@ -89,9 +101,9 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
     const auto token = cancellation.token();
     try {
         if (showProgress) std::cout << "{\"event\":\"interpolation_progress\",\"stage\":\"loading_model\",\"output_frames\":0}\n" << std::flush;
-        const auto pack = inference::loadModelPack(path(modelDirectory));
+        const auto pack = inference::loadModelPack(modelDirectory);
         auto device = std::make_shared<gpu::CudaDevice>(ordinal);
-        inference::OnnxCudaConfig config; config.runtimeDirectory = path(runtimeDirectory);
+        inference::OnnxCudaConfig config; config.runtimeDirectory = runtimeDirectory;
         inference::OnnxCudaBackend backend(device,config);
         backend.loadModel(pack);
         const auto result = interpolateVideo(args[2],args[3],settings,*device,backend,showProgress ? std::function<void(const PipelineProgress&)>([&](const PipelineProgress& current) {

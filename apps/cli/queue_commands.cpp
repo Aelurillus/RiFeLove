@@ -3,6 +3,7 @@
 #include "application/task_queue.hpp"
 #include "application/job_serialization.hpp"
 #include "application/queue_report.hpp"
+#include "local_profile.hpp"
 #include "inference/model_pack.hpp"
 #include <nlohmann/json.hpp>
 #include <charconv>
@@ -65,12 +66,19 @@ int runQueueCommand(const std::vector<std::string>& args) {
             const auto& option = args[index];
             if (++index >= args.size()) throw std::invalid_argument("Missing queue option value");
             const auto& value = args[index];
-            if (option == "--fps") { job.settings.targetRate = Rational::parse(value); hasRate = true; }
+            if (option == "--profile") {
+                const auto profile = cli::loadLocalProfile(path(value));
+                cli::applyLocalProfile(profile,job.settings,job.modelDirectory,job.runtimeDirectory);
+                cli::validateLocalProfileOutput(profile,path(job.output));
+                hasRate = true;
+            }
+            else if (option == "--fps") { job.settings.targetRate = Rational::parse(value); hasRate = true; }
             else if (option == "--model-dir") job.modelDirectory = path(value);
             else if (option == "--runtime-dir") job.runtimeDirectory = path(value);
-            else if (option == "--encoder") job.settings.encoding.encoder = value;
+            else if (option == "--encoder") cli::overrideEncoder(job.settings,value);
             else if (option == "--pixel-format") job.settings.encoding.pixelFormat = value;
-            else if (option == "--bitrate") job.settings.encoding.bitRate = number<std::int64_t>(value);
+            else if (option == "--bitrate") cli::overrideBitrate(job.settings,number<std::int64_t>(value));
+            else if (option == "--gop-size") job.settings.encoding.gopSize = number<int>(value);
             else if (option == "--bframes") job.settings.encoding.maxBFrames = number<int>(value);
             else if (option == "--gpu") job.deviceOrdinal = number<int>(value);
             else if (option == "--stream") job.settings.encoding.videoStreamIndex = number<int>(value);

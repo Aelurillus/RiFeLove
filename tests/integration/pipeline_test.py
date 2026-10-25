@@ -158,6 +158,25 @@ class NativeRifePipeline(unittest.TestCase):
         size = 96*64*3//2
         for index in range(8): self.assertEqual(actual[index*size:(index+1)*size],source[(0 if index<4 else 2)*size:(1 if index<4 else 3)*size])
 
+    def test_desktop_exported_local_profile_drives_direct_interpolation(self):
+        profile_path = self.root / "本机 配置.json"
+        profile_path.write_text(json.dumps({
+            "format": "rifelove-local-profile", "version": 1,
+            "profile": {
+                "name": "本机 SDR", "rate": "60", "modelUrl": PACK.as_uri(),
+                "runtimeUrl": RUNTIME.as_uri(), "outputUrl": "", "encoder": "auto",
+                "container": "mkv", "bitrateKbps": 8000, "qualityMode": "bitrate",
+                "quality": 32, "gopSize": 120,
+            },
+        }, ensure_ascii=False), encoding="utf-8")
+        output = self.root / "profile-60.mkv"
+        response = invoke(CLI, "interpolate", self.bframes, output, "--profile", profile_path, "--progress")
+        events = [json.loads(line) for line in response.stdout.splitlines()]
+        self.assertEqual(events[-1]["event"], "interpolation_completed")
+        self.assertEqual(events[-1]["target_fps"], "60/1")
+        self.assertGreater(events[-1]["ai_frames"], 0)
+        self.verify_timing(output, events[-1])
+
     def test_auto_h264_fallback_and_fractional_mp4_timing(self):
         output = self.root / "auto.mp4"
         report_path = self.root / "auto-report.json"
