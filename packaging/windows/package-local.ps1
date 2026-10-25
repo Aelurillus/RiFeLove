@@ -25,6 +25,12 @@ $target = [IO.Path]::GetFullPath($OutputDirectory)
 if (-not $target.StartsWith($outputRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw "OutputDirectory must be inside the repository's ignored out directory."
 }
+$packageLeaf = Split-Path -Path $target -Leaf
+$packageParent = Split-Path -Path $target -Parent
+$packageRoot = Join-Path $packageParent (".{0}.staging-{1}" -f $packageLeaf, [Guid]::NewGuid().ToString("N"))
+$packageHelpers = Join-Path $scriptRoot "package-helpers.ps1"
+if (-not (Test-Path -LiteralPath $packageHelpers -PathType Leaf)) { throw "Required packaging helpers are missing: $packageHelpers" }
+. $packageHelpers
 
 $build = (Resolve-Path $BuildDirectory).Path
 $qt = (Resolve-Path $QtRoot).Path
@@ -80,20 +86,16 @@ foreach ($pack in $modelPacks) {
 if (Test-Path -LiteralPath $target) {
     $existingTarget = Get-Item -LiteralPath $target -Force
     if ($existingTarget.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing to replace a linked output path: $target" }
-    $existingRuntime = Join-Path $target "runtime"
-    if (Test-Path -LiteralPath $existingRuntime) {
-        $runtimeItem = Get-Item -LiteralPath $existingRuntime -Force
-        if ($runtimeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { [IO.Directory]::Delete($existingRuntime,$false) }
-    }
-    Remove-Item -LiteralPath $target -Recurse -Force
 }
-New-Item -ItemType Directory -Path $target | Out-Null
-Copy-Item -LiteralPath $executable -Destination $target
-Copy-Item -LiteralPath $cliExecutable -Destination $target
+Assert-PackageNotRunning -TargetPath $target
+if (Test-Path -LiteralPath $packageRoot) { throw "The unique package staging path already exists: $packageRoot" }
+New-Item -ItemType Directory -Path $packageRoot | Out-Null
+Copy-Item -LiteralPath $executable -Destination $packageRoot
+Copy-Item -LiteralPath $cliExecutable -Destination $packageRoot
 $savedPath = $env:PATH
 try {
     $env:PATH = "$qt/bin;$ffmpeg/bin;$savedPath"
-    & $deployTool --release --compiler-runtime --qmldir (Join-Path $repositoryRoot "ui") --dir $target (Join-Path $target "RifeLove.exe")
+    & $deployTool --release --compiler-runtime --qmldir (Join-Path $repositoryRoot "ui") --dir $packageRoot (Join-Path $packageRoot "RifeLove.exe")
     if ($LASTEXITCODE -ne 0) { throw "Qt runtime deployment failed with exit code $LASTEXITCODE" }
 } finally {
     $env:PATH = $savedPath
@@ -102,11 +104,11 @@ try {
 foreach ($name in @("avcodec-62.dll","avformat-62.dll","avutil-60.dll","swscale-9.dll","swresample-6.dll")) {
     $source = Join-Path $ffmpeg "bin/$name"
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required FFmpeg runtime is missing: $source" }
-    Copy-Item -LiteralPath $source -Destination $target
+    Copy-Item -LiteralPath $source -Destination $packageRoot
 }
 
 foreach ($pack in $modelPacks) {
-    $modelTarget = Join-Path $target ("models/{0}" -f $pack.descriptor.id)
+    $modelTarget = Join-Path $packageRoot ("models/{0}" -f $pack.descriptor.id)
     New-Item -ItemType Directory -Path $modelTarget -Force | Out-Null
     foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
         $source = Join-Path $pack.root $name
@@ -114,18 +116,18 @@ foreach ($pack in $modelPacks) {
         Copy-Item -LiteralPath $source -Destination $modelTarget
     }
 }
-$modelsDirectory = Join-Path $target "models"
+$modelsDirectory = Join-Path $packageRoot "models"
 Set-Content -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Value ([string]$defaultModelPack.descriptor.id) -Encoding UTF8
 
 # Keep NVIDIA CUDA/cuDNN under their local SDK installation; this device-local
 # link avoids silently redistributing those separately licensed binaries.
-$runtimeTarget = Join-Path $target "runtime"
+$runtimeTarget = Join-Path $packageRoot "runtime"
 New-Item -ItemType Junction -Path $runtimeTarget -Target $inferenceRuntime | Out-Null
-New-Item -ItemType File -Path (Join-Path $target "portable.flag") | Out-Null
-$platformTarget = Join-Path $target "platforms"
+New-Item -ItemType File -Path (Join-Path $packageRoot "portable.flag") | Out-Null
+$platformTarget = Join-Path $packageRoot "platforms"
 New-Item -ItemType Directory -Path $platformTarget -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $qt "plugins/platforms/qoffscreen.dll") -Destination $platformTarget
-$licenseTarget = Join-Path $target "licenses"
+$licenseTarget = Join-Path $packageRoot "licenses"
 New-Item -ItemType Directory -Path $licenseTarget | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination (Join-Path $licenseTarget "RifeLove-MIT.txt")
 Copy-Item -LiteralPath (Join-Path $ffmpeg "LICENSE.txt") -Destination (Join-Path $licenseTarget "FFmpeg-LICENSE.txt")
@@ -164,19 +166,19 @@ $readmeLines = @(
     '任务、偏好设置和模型中心目录保存在 data/preferences.ini 与 data/queue.sqlite.'
 )
 $readme = ($readmeLines -join [Environment]::NewLine) -f $modelNames, [string]$defaultModelPack.descriptor.displayName, [string]$defaultModelPack.descriptor.id
-Set-Content -LiteralPath (Join-Path $target "README-本机运行.txt") -Value $readme -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $packageRoot "README-本机运行.txt") -Value $readme -Encoding UTF8
 
 $savedQpa = $env:QT_QPA_PLATFORM
 $savedQuick = $env:QT_QUICK_BACKEND
 $savedFont = $env:QT_QPA_FONTDIR
 try {
-    $env:PATH = "$target;$qt/bin;$qt/Tools/mingw1510_64/mingw64/bin;$ffmpeg/bin;$onnx;$savedPath"
+    $env:PATH = "$packageRoot;$qt/bin;$qt/Tools/mingw1510_64/mingw64/bin;$ffmpeg/bin;$onnx;$savedPath"
     $env:QT_QPA_PLATFORM = "offscreen"
     $env:QT_QUICK_BACKEND = "software"
     $env:QT_QPA_FONTDIR = "C:/Windows/Fonts"
-    $screenshot = Join-Path $target "first-run.png"
+    $screenshot = Join-Path $packageRoot "first-run.png"
     $quotedScreenshot = '"' + $screenshot + '"'
-    $smoke = Start-Process -FilePath (Join-Path $target "RifeLove.exe") -ArgumentList "--smoke-screenshot $quotedScreenshot" -Wait -PassThru -WindowStyle Hidden
+    $smoke = Start-Process -FilePath (Join-Path $packageRoot "RifeLove.exe") -ArgumentList "--smoke-screenshot $quotedScreenshot" -Wait -PassThru -WindowStyle Hidden
     if ($smoke.ExitCode -ne 0) { throw "Packaged RifeLove startup check failed with exit code $($smoke.ExitCode)" }
 } finally {
     $env:PATH = $savedPath
@@ -184,16 +186,16 @@ try {
     $env:QT_QUICK_BACKEND = $savedQuick
     $env:QT_QPA_FONTDIR = $savedFont
 }
-if (-not (Test-Path -LiteralPath (Join-Path $target "data/preferences.ini") -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath (Join-Path $packageRoot "data/preferences.ini") -PathType Leaf)) {
     throw "Packaged RifeLove did not create its first-run preferences."
 }
-$cliHelp = & (Join-Path $target "rifelove-cli.exe") --help 2>&1
+$cliHelp = & (Join-Path $packageRoot "rifelove-cli.exe") --help 2>&1
 $cliExitCode = $LASTEXITCODE
 if ($cliExitCode -ne 0 -or (($cliHelp -join "`n") -notmatch "interpolate") -or (($cliHelp -join "`n") -notmatch "queue-run") -or (($cliHelp -join "`n") -notmatch "queue-report") -or (($cliHelp -join "`n") -notmatch "\[--report JSON\]")) {
     throw "Packaged RifeLove CLI did not expose the local interpolation and queue commands."
 }
 
-$preferences = Get-Content -LiteralPath (Join-Path $target "data/preferences.ini") -Raw
+$preferences = Get-Content -LiteralPath (Join-Path $packageRoot "data/preferences.ini") -Raw
 if ($preferences -notmatch [regex]::Escape([string]$defaultModelPack.descriptor.id) -or $preferences -notmatch "onnxruntime\.dll|runtime") {
     throw "Packaged first-run preferences do not contain the default bundled model and runtime."
 }
@@ -203,13 +205,13 @@ foreach ($pack in $modelPacks) {
     }
 }
 
-$qualificationDirectory = Join-Path $target "data/tensorrt-qualification"
+$qualificationDirectory = Join-Path $packageRoot "data/tensorrt-qualification"
 New-Item -ItemType Directory -Path $qualificationDirectory -Force | Out-Null
 $savedPath = $env:PATH
 $qualificationSummaries = @()
 try {
     $mingwRuntime = Join-Path $qt "Tools/mingw1510_64/mingw64/bin"
-    $env:PATH = "$build;$target;$qt/bin;$ffmpeg/bin;$inferenceRuntime;$mingwRuntime;$savedPath"
+    $env:PATH = "$build;$packageRoot;$qt/bin;$ffmpeg/bin;$inferenceRuntime;$mingwRuntime;$savedPath"
     foreach ($pack in $modelPacks) {
         $reportPath = Join-Path $qualificationDirectory ("{0}.json" -f $pack.descriptor.id)
         $validationOutput = & $validatorExecutable $pack.root $runtimeTarget $reportPath tensorrt 2>&1
@@ -261,14 +263,17 @@ $qualificationEvidence = [ordered]@{
     }
     models = @($qualificationSummaries)
 }
-$qualificationEvidencePath = Join-Path $target "data/tensorrt-validation.json"
+$qualificationEvidencePath = Join-Path $packageRoot "data/tensorrt-validation.json"
 $qualificationEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $qualificationEvidencePath -Encoding UTF8
 Remove-Item -LiteralPath $qualificationDirectory -Recurse -Force
 
+Assert-PackageNotRunning -TargetPath $target
+Preserve-PackageUserState -OldRoot $target -NewRoot $packageRoot
+
 $manifest = @(
     "RifeLove local bundle SHA-256",
-    ((Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe"),
-    ((Get-FileHash -LiteralPath (Join-Path $target "rifelove-cli.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  rifelove-cli.exe"),
+    ((Get-FileHash -LiteralPath (Join-Path $packageRoot "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  RifeLove.exe"),
+    ((Get-FileHash -LiteralPath (Join-Path $packageRoot "rifelove-cli.exe") -Algorithm SHA256).Hash.ToLowerInvariant() + "  rifelove-cli.exe"),
     ((Get-FileHash -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Algorithm SHA256).Hash.ToLowerInvariant() + "  models/default-model.txt"),
     ((Get-FileHash -LiteralPath $qualificationEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant() + "  data/tensorrt-validation.json"),
     ((Get-FileHash -LiteralPath (Join-Path $runtimeTarget "tensorrt-runtime.version") -Algorithm SHA256).Hash.ToLowerInvariant() + "  runtime/tensorrt-runtime.version"),
@@ -278,8 +283,13 @@ $manifest = @(
 foreach ($pack in $modelPacks) {
     foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
         $relative = "models/$($pack.descriptor.id)/$name"
-        $manifest += (Get-FileHash -LiteralPath (Join-Path $target $relative) -Algorithm SHA256).Hash.ToLowerInvariant() + "  $relative"
+        $manifest += (Get-FileHash -LiteralPath (Join-Path $packageRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant() + "  $relative"
     }
 }
-Set-Content -LiteralPath (Join-Path $target "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
-Write-Output "Packaged and launched local RifeLove build: $target"
+Set-Content -LiteralPath (Join-Path $packageRoot "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
+
+# Copy mutable local state only after package qualification succeeds. Refuse to
+# switch while either app from this exact package is open, so SQLite data and
+# loaded files remain stable throughout the upgrade.
+Promote-PackageDirectory -StagingPath $packageRoot -TargetPath $target
+Write-Output "Packaged local RifeLove build: $target"

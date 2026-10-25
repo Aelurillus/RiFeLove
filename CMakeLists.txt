@@ -333,6 +333,15 @@ if(RIFELOVE_BUILD_TESTS)
     TIMEOUT 60
     ENVIRONMENT_MODIFICATION "${rifelove_test_runtime_environment}")
   find_package(Python3 QUIET COMPONENTS Interpreter)
+  if(WIN32)
+    find_program(RIFELOVE_POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+    if(RIFELOVE_POWERSHELL_EXECUTABLE)
+      add_test(NAME Packaging.LocalUpgradeState
+        COMMAND "${RIFELOVE_POWERSHELL_EXECUTABLE}" -NoProfile -ExecutionPolicy Bypass -File
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/package_helpers_test.ps1")
+      set_tests_properties(Packaging.LocalUpgradeState PROPERTIES TIMEOUT 30)
+    endif()
+  endif()
   if(TARGET rifelove-desktop)
     add_test(NAME Desktop.Smoke COMMAND rifelove-desktop --smoke-screenshot "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke.png" --data-dir "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke-data")
     set_tests_properties(Desktop.Smoke PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
