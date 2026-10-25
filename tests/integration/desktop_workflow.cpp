@@ -166,6 +166,47 @@ int main(int argc, char** argv) {
         require(studioBitrate && studioBitrate->property("value").toInt() == 4500 && studioGop && studioGop->property("value").toInt() == 60 &&
                 studioQualityMode && studioQualityMode->property("currentIndex").toInt() == 0 && studioQuality,
                 "Studio did not restore saved advanced encoder settings");
+        auto* queuePage = root->findChild<QObject*>("queuePage");
+        auto* queueRate = root->findChild<QObject*>("queueTargetRate");
+        require(queuePage && queueRate && root->findChild<QObject*>("studioLocalProfiles") &&
+                queuePage->findChild<QObject*>("queueLocalProfiles"),
+            "The shared local profile controls are missing from Studio or Queue");
+        const auto originalProfileCount = taskQueue.profiles().size();
+        const QVariantMap workflowProfile{{"rate",QStringLiteral("144")},
+            {"model",QUrl::fromLocalFile(arguments[3])},{"runtime",QUrl::fromLocalFile(arguments[4])},
+            {"output",QUrl::fromLocalFile(queueFolder)},{"encoder",QStringLiteral("libopenh264")},
+            {"container",QStringLiteral("mkv")},{"bitrateKbps",5500},{"qualityMode",QStringLiteral("bitrate")},
+            {"quality",32},{"gopSize",90}};
+        taskQueue.saveProfile(QStringLiteral("Desktop Workflow Profile"),workflowProfile);
+        QVariantMap savedProfile;
+        waitUntil([&] {
+            for (const auto& candidate : taskQueue.profiles()) {
+                const auto profile = candidate.toMap();
+                if (profile.value("name").toString() == QStringLiteral("Desktop Workflow Profile")) {
+                    savedProfile = profile;
+                    return true;
+                }
+            }
+            return false;
+        },
+            "The desktop did not persist the local processing profile");
+        require(savedProfile.value("valid").toBool() && !savedProfile.value("id").toString().isEmpty(),
+            "The saved desktop profile was not validated");
+        taskQueue.applyProfile(savedProfile.value("id").toString());
+        require(targetRate->property("editText").toString() == QStringLiteral("144") &&
+                queueRate->property("editText").toString() == QStringLiteral("144") &&
+                root->property("selectedEncoderId").toString() == QStringLiteral("libopenh264") &&
+                queuePage->property("outputFolder").toUrl().toLocalFile() == queueFolder,
+            "Applying a local profile did not update both Studio and Queue settings");
+        taskQueue.removeProfile(savedProfile.value("id").toString());
+        waitUntil([&] { return taskQueue.profiles().size() == originalProfileCount; },
+            "The desktop did not remove the local processing profile");
+        taskQueue.saveDefaults(QStringLiteral("240"),QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),
+            QUrl::fromLocalFile(queueFolder),QStringLiteral("libopenh264"),QStringLiteral("mp4"),
+            {{"bitrateKbps",4500},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",60}});
+        waitUntil([&] { return taskQueue.defaults().value("rate").toString() == QStringLiteral("240") &&
+            taskQueue.defaults().value("container").toString() == QStringLiteral("mp4"); },
+            "The desktop did not restore its defaults after the profile workflow");
         // Confirm restoration above, then keep the synthetic workflow short.
         require(targetRate->setProperty("editText","60"), "Could not set the synthetic workflow FPS");
         const auto unverifiedModel = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("corrupt-model-copy");
@@ -380,7 +421,6 @@ int main(int argc, char** argv) {
         auto* homeWindow = qobject_cast<QQuickWindow*>(root);
         require(homeWindow && homeWindow->grabWindow().save(arguments[6] + QStringLiteral(".home.png")),
             "Home workspace screenshot failed");
-        auto* queuePage = root->findChild<QObject*>("queuePage");
         require(queuePage, "Queue page was not loaded into the desktop UI");
         queuePage->setProperty("modelFolder",QUrl::fromLocalFile(arguments[3]));
         queuePage->setProperty("runtimeFolder",QUrl::fromLocalFile(arguments[4]));
