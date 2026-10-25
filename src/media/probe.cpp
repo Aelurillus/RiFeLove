@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 
@@ -121,7 +122,10 @@ MediaInfo MediaEngine::probe(const std::string& path, std::stop_token stop) {
             const auto* name = av_packet_side_data_name(side.type);
             info.sideData.push_back({name ? name : "unknown", side.size});
             if (side.type == AV_PKT_DATA_DISPLAYMATRIX && side.size >= 9 * sizeof(std::int32_t)) {
-                const double rotation = av_display_rotation_get(reinterpret_cast<const std::int32_t*>(side.data));
+                std::array<std::int32_t, 9> matrix{};
+                std::memcpy(matrix.data(),side.data,sizeof(matrix));
+                info.displayMatrix = matrix;
+                const double rotation = av_display_rotation_get(matrix.data());
                 if (std::isfinite(rotation)) info.rotationDegrees = rotation;
             }
         }

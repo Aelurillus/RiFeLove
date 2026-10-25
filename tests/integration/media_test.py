@@ -51,6 +51,12 @@ class NativeMediaIntegration(unittest.TestCase):
                "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:v", "mpeg4", "-bf", "2", "-q:v", "4", "-c:a", "aac", cls.reordered)
         cls.rotated = cls.root / "rotated.mp4"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-display_rotation", "90", "-i", cls.reordered, "-c", "copy", cls.rotated)
+        cls.horizontal_flip_rotated = cls.root / "horizontal-flip-rotated.mp4"
+        invoke(FFMPEG, "-v", "error", "-nostdin", "-display_hflip", "-display_rotation", "90",
+               "-i", cls.reordered, "-c", "copy", cls.horizontal_flip_rotated)
+        cls.vertical_flip_rotated = cls.root / "vertical-flip-rotated.mp4"
+        invoke(FFMPEG, "-v", "error", "-nostdin", "-display_vflip", "-display_rotation", "270",
+               "-i", cls.reordered, "-c", "copy", cls.vertical_flip_rotated)
         cls.vfr = cls.root / "vfr.mkv"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=30:duration=0.4",
                "-vf", "setpts='if(lt(N,6),N,6+(N-6)*2)/(30*TB)'", "-fps_mode", "vfr", "-c:v", "ffv1", cls.vfr)
@@ -112,6 +118,32 @@ class NativeMediaIntegration(unittest.TestCase):
                     output_stream = self.probe(output)["streams"][0]
                     self.assertAlmostEqual(output_stream["rotation_degrees"], source["rotation_degrees"], delta=0.01)
                     self.assertTrue(any(side["name"] == "Display Matrix" for side in output_stream["side_data"]))
+
+    def test_display_matrix_preserves_horizontal_and_vertical_reflections(self):
+        fixtures = (("horizontal", self.horizontal_flip_rotated), ("vertical", self.vertical_flip_rotated))
+        for label, path in fixtures:
+            with self.subTest(reflection=label):
+                source = self.probe(path)["streams"][0]
+                source_reference = reference(path, "-show_streams")["streams"][0]
+                reference_data = next(side for side in source_reference["side_data_list"]
+                                      if side["side_data_type"] == "Display Matrix")
+                reference_text = reference_data["displaymatrix"]
+                reference_matrix = [int(value) for line in reference_text.strip().splitlines()
+                                    for value in line.split(":", 1)[1].split()]
+                self.assertEqual(source["display_matrix"], reference_matrix)
+                self.assertAlmostEqual(source["rotation_degrees"], reference_data["rotation"], delta=0.01)
+                self.assertEqual(len(source["display_matrix"]), 9)
+                for extension in ("mp4", "mov", "mkv"):
+                    for operation in ("remux", "transcode"):
+                        with self.subTest(operation=operation, extension=extension):
+                            output = self.root / f"display-matrix-{label}-{operation}.{extension}"
+                            if operation == "remux":
+                                invoke(CLI, "remux", path, output)
+                            else:
+                                invoke(CLI, "transcode", path, output, "--encoder", "libopenh264")
+                            result = self.probe(output)["streams"][0]
+                            self.assertEqual(result["display_matrix"], source["display_matrix"])
+                            self.assertAlmostEqual(result["rotation_degrees"], source["rotation_degrees"], delta=0.01)
 
     def test_fractional_cfr_is_not_confused_with_timestamp_quantization(self):
         records = self.scan(self.source)

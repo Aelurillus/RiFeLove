@@ -71,6 +71,15 @@ void writeProbe(std::ostream& out, const MediaInfo& info) {
             << ",\"rotation_degrees\":";
         if (stream.rotationDegrees) out << std::setprecision(16) << *stream.rotationDegrees;
         else out << "null";
+        out << ",\"display_matrix\":";
+        if (stream.displayMatrix) {
+            out << '[';
+            for (std::size_t i = 0; i < stream.displayMatrix->size(); ++i) {
+                if (i) out << ',';
+                out << (*stream.displayMatrix)[i];
+            }
+            out << ']';
+        } else out << "null";
         out << ",\"color\":"; writeColor(out, stream.color);
         out << ",\"metadata\":"; writeMetadata(out, stream.metadata);
         out << ",\"side_data\":[";
