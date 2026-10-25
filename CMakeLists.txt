@@ -197,7 +197,7 @@ if(RIFELOVE_BUILD_DESKTOP)
     target_link_libraries(rifelove_localization PUBLIC Qt6::Core)
     qt_add_executable(rifelove-desktop WIN32 apps/desktop/main.cpp)
     set_target_properties(rifelove-desktop PROPERTIES OUTPUT_NAME "RifeLove")
-    qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/ProgressEstimate.js ui/ActionButton.qml)
+    qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/LocalProfilePicker.qml ui/ProgressEstimate.js ui/ActionButton.qml)
     get_filename_component(rifelove_qt_root "${Qt6_DIR}/../../../" ABSOLUTE)
     find_program(RIFELOVE_LRELEASE_EXECUTABLE NAMES lrelease.exe lrelease HINTS "${rifelove_qt_root}/bin" REQUIRED)
     set(rifelove_translation_sources
@@ -225,7 +225,8 @@ if(RIFELOVE_BUILD_DESKTOP)
     target_link_libraries(rifelove-desktop PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia rifelove_core)
     if(TARGET rifelove_application)
       add_library(rifelove_studio apps/desktop/studio_controller.cpp apps/desktop/studio_controller.hpp
-        apps/desktop/queue_controller.cpp apps/desktop/queue_controller.hpp apps/desktop/task_list_model.cpp apps/desktop/task_list_model.hpp
+        apps/desktop/queue_controller.cpp apps/desktop/queue_controller.hpp apps/desktop/profile_store.cpp apps/desktop/profile_store.hpp
+        apps/desktop/task_list_model.cpp apps/desktop/task_list_model.hpp
         apps/desktop/comparison_preview.cpp apps/desktop/comparison_preview.hpp)
       target_include_directories(rifelove_studio PUBLIC apps/desktop)
       target_link_libraries(rifelove_studio PUBLIC Qt6::Quick rifelove_application)
@@ -303,6 +304,8 @@ if(RIFELOVE_BUILD_TESTS)
     target_sources(rifelove-tests PRIVATE tests/unit/language_settings_test.cpp)
     target_include_directories(rifelove-tests PRIVATE apps/desktop)
     target_link_libraries(rifelove-tests PRIVATE rifelove_localization)
+    target_sources(rifelove-tests PRIVATE tests/unit/profile_store_test.cpp apps/desktop/profile_store.cpp)
+    target_include_directories(rifelove-tests PRIVATE apps/desktop)
 
     add_executable(rifelove-translation-check tests/integration/translation_catalog.cpp)
     target_link_libraries(rifelove-translation-check PRIVATE Qt6::Core)

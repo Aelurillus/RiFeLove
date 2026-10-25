@@ -38,6 +38,8 @@ ApplicationWindow {
     property string selectedModelDisplayName: ""
     property bool selectedModelVerified: false
     property bool startupModelValidationStarted: false
+    readonly property var encoderIds: ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
+    readonly property string selectedEncoderId: encoderIds[encoder.currentIndex] || "auto"
     function resolveSelectedModelDisplayName() {
         selectedModelVerified = false
         if (!processingAvailable || !taskQueue || !taskQueue.defaults) return ""
@@ -65,12 +67,11 @@ ApplicationWindow {
     readonly property bool selectedEncoderReady: {
         if (!processingAvailable || !window.info.encoders) return false
         const probes = window.info.encoders
-        if (encoder.currentIndex === 0) {
+        if (window.selectedEncoderId === "auto") {
             const nvenc = probes.h264_nvenc
             return (!!nvenc && !!nvenc.contextOpened) || window.automaticSoftwareEncoder() !== ""
         }
-        const names = ["libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
-        const probe = probes[names[encoder.currentIndex - 1]]
+        const probe = probes[window.selectedEncoderId]
         return !!probe && !!probe.contextOpened
     }
     readonly property bool selectedModelSupportsInputProfile: {
@@ -83,13 +84,18 @@ ApplicationWindow {
         window.selectedModelSupportsInputProfile &&
         window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
 
-    function applyLocalDefaults() {
+    function applyLocalDefaults(profileValues) {
         if (!processingAvailable) return
-        const values = taskQueue.defaults || ({})
-        if (!modelFolder.toString() && values.model && values.model.toString()) modelFolder = values.model
-        if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
+        const values = profileValues || taskQueue.defaults || ({})
+        if (profileValues) {
+            modelFolder = values.model && values.model.toString() ? values.model : ""
+            runtimeFolder = values.runtime && values.runtime.toString() ? values.runtime : ""
+        } else {
+            if (!modelFolder.toString() && values.model && values.model.toString()) modelFolder = values.model
+            if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
+        }
         if (values.rate) rate.editText = values.rate
-        if (values.encoder) encoder.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder)
+        if (values.encoder) encoder.currentIndex = window.encoderIds.indexOf(values.encoder)
         studioBitrate.value = Number(values.bitrateKbps || 8000)
         studioQuality.value = Number(values.quality || 32)
         studioGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
@@ -122,9 +128,15 @@ ApplicationWindow {
     }
     function persistLocalDefaults() {
         if (!processingAvailable) return
-        const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
-            codecs[encoder.currentIndex] || "auto", taskQueue.defaults.container || "mkv", encodingOptions())
+            window.selectedEncoderId, taskQueue.defaults.container || "mkv", encodingOptions())
+    }
+    function localProfileValues() {
+        const options = encodingOptions()
+        return {rate: rate.editText, model: modelFolder, runtime: runtimeFolder,
+            output: taskQueue.defaults.output || "", encoder: window.selectedEncoderId,
+            container: taskQueue.defaults.container || "mkv", bitrateKbps: options.bitrateKbps,
+            qualityMode: options.qualityMode, quality: options.quality, gopSize: options.gopSize}
     }
     function ensureStartupModelValidation() {
         if (!processingAvailable || !taskQueue || !taskQueue.available || window.startupModelValidationStarted ||
@@ -155,6 +167,7 @@ ApplicationWindow {
     Connections {
         target: taskQueue
         function onDefaultsChanged() { window.applyLocalDefaults(); window.refreshSelectedModelDisplayName() }
+        function onProfileApplied(values) { window.applyLocalDefaults(values); window.refreshSelectedModelDisplayName(); window.ensureStartupModelValidation() }
         function onModelsChanged() { window.refreshSelectedModelDisplayName() }
         function onChanged() { window.ensureStartupModelValidation() }
     }
@@ -366,6 +379,13 @@ ApplicationWindow {
                             Label { visible: !!window.info.color; text: window.info.color || ""; color: "#9aaac0"; font.pixelSize: 12 }
                         }
                     }
+                    LocalProfilePicker {
+                        objectName: "studioLocalProfiles"
+                        Layout.fillWidth: true
+                        controller: taskQueue
+                        values: window.localProfileValues()
+                        available: processingAvailable && !window.active && taskQueue.available
+                    }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 16
@@ -539,7 +559,7 @@ ApplicationWindow {
                             highlighted: true
                             primary: true
                             onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder,
-                                ["auto", "libopenh264", "libkvazaar", "libaom-av1"][encoder.currentIndex], window.encodingOptions())
+                                window.selectedEncoderId, window.encodingOptions())
                         }
                     }
                     ProgressBar {

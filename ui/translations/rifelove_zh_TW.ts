@@ -1881,4 +1881,21 @@
         <translation>作業已取消，未發布部分影片。</translation>
     </message>
 </context>
+<context>
+    <name>LocalProfilePicker</name>
+    <message><source>本机配置</source><translation>本機設定</translation></message>
+    <message><source>选择要复用的设置</source><translation>選擇要重複使用的設定</translation></message>
+    <message><source>使用</source><translation>套用</translation></message>
+    <message><source>保存当前设置</source><translation>儲存目前設定</translation></message>
+    <message><source>删除</source><translation>刪除</translation></message>
+    <message><source>保存本机配置</source><translation>儲存本機設定</translation></message>
+    <message><source>给这组视频设置取一个容易辨认的名称。</source><translation>為這組影片設定取一個容易辨識的名稱。</translation></message>
+    <message><source>例如：手机视频 60 FPS</source><translation>例如：手機影片 60 FPS</translation></message>
+    <message><source>删除本机配置</source><translation>刪除本機設定</translation></message>
+    <message><source>删除后，这组配置将从本机列表中移除。</source><translation>刪除後，這組設定會從本機清單中移除。</translation></message>
+    <message><source>配置操作未完成，请检查名称和设置后重试！</source><translation>設定操作未完成，請檢查名稱與設定後重試！</translation></message>
+    <message><source>配置已保存在本机。</source><translation>已儲存至本機。</translation></message>
+    <message><source>本机配置已删除。</source><translation>已刪除本機設定。</translation></message>
+    <message><source>已应用本机配置。</source><translation>已套用本機設定。</translation></message>
+</context>
 </TS>

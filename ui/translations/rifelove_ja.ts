@@ -1881,4 +1881,21 @@ model.json を含む検証済みモデルパックを追加してください</t
         <translation>操作をキャンセルしました。未完成の動画は公開されていません。</translation>
     </message>
 </context>
+<context>
+    <name>LocalProfilePicker</name>
+    <message><source>本机配置</source><translation>ローカル設定</translation></message>
+    <message><source>选择要复用的设置</source><translation>再利用する設定を選択</translation></message>
+    <message><source>使用</source><translation>使用</translation></message>
+    <message><source>保存当前设置</source><translation>現在の設定を保存</translation></message>
+    <message><source>删除</source><translation>削除</translation></message>
+    <message><source>保存本机配置</source><translation>ローカル設定を保存</translation></message>
+    <message><source>给这组视频设置取一个容易辨认的名称。</source><translation>この動画設定を見分けやすい名前にします。</translation></message>
+    <message><source>例如：手机视频 60 FPS</source><translation>例：スマートフォン動画 60 FPS</translation></message>
+    <message><source>删除本机配置</source><translation>ローカル設定を削除</translation></message>
+    <message><source>删除后，这组配置将从本机列表中移除。</source><translation>選択した設定をこの端末から削除します。</translation></message>
+    <message><source>配置操作未完成，请检查名称和设置后重试！</source><translation>設定を実行できませんでした。名前と設定を確認して再試行してください！</translation></message>
+    <message><source>配置已保存在本机。</source><translation>ローカルに保存しました。</translation></message>
+    <message><source>本机配置已删除。</source><translation>ローカル設定を削除しました。</translation></message>
+    <message><source>已应用本机配置。</source><translation>ローカル設定を適用しました。</translation></message>
+</context>
 </TS>

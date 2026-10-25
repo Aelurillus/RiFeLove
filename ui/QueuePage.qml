@@ -20,12 +20,18 @@ Item {
     property bool encodingAdvancedOpen: false
     property var selectedSources: []
 
-    function applyDefaults() {
-        const values = queueController.defaults || ({})
+    function applyDefaults(profileValues) {
+        const values = profileValues || queueController.defaults || ({})
         if (values.rate) { targetRate = values.rate; rateBox.editText = values.rate }
-        if (values.model && values.model.toString()) modelFolder = values.model
-        if (values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
-        if (values.output && values.output.toString()) outputFolder = values.output
+        if (profileValues) {
+            modelFolder = values.model && values.model.toString() ? values.model : ""
+            runtimeFolder = values.runtime && values.runtime.toString() ? values.runtime : ""
+            outputFolder = values.output && values.output.toString() ? values.output : ""
+        } else {
+            if (values.model && values.model.toString()) modelFolder = values.model
+            if (values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
+            if (values.output && values.output.toString()) outputFolder = values.output
+        }
         if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
         encodingBitrate.value = Number(values.bitrateKbps || 8000)
@@ -44,6 +50,13 @@ Item {
         if (encodingQualityMode.currentIndex === 1)
             mode = encoderBox.currentIndex === 2 ? "qp" : encoderBox.currentIndex === 3 ? "crf" : "cq"
         return { bitrateKbps: encodingBitrate.value, qualityMode: mode, quality: encodingQuality.value, gopSize: encodingGop.value }
+    }
+    function localProfileValues() {
+        const options = encodingOptions()
+        return {rate: rateBox.editText, model: modelFolder, runtime: runtimeFolder,
+            output: outputFolder, encoder: encoder, container: containerBox.currentText || "mkv",
+            bitrateKbps: options.bitrateKbps, qualityMode: options.qualityMode,
+            quality: options.quality, gopSize: options.gopSize}
     }
     function add(sources) {
         if (!sources || sources.length === 0) return
@@ -72,6 +85,7 @@ Item {
     Connections {
         target: page.queueController
         function onDefaultsChanged() { page.applyDefaults() }
+        function onProfileApplied(values) { page.applyDefaults(values) }
     }
 
     FileDialog {
@@ -129,6 +143,13 @@ Item {
                     ActionButton { text: qsTr("选择文件夹"); enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing; onClicked: sourceFolderDialog.open() }
                 }
                 Label { text: qsTr("拖入视频文件或文件夹；自动检查媒体轨道和模型支持的色彩格式。重复文件、已有队列输出和输出目录中的已生成文件会跳过。"); color: "#9aaac0"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12 }
+                LocalProfilePicker {
+                    objectName: "queueLocalProfiles"
+                    Layout.fillWidth: true
+                    controller: page.queueController
+                    values: page.localProfileValues()
+                    available: page.queueController.available && !page.queueController.busy && !page.queueController.importing
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     ColumnLayout {

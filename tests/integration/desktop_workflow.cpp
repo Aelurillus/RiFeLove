@@ -154,6 +154,11 @@ int main(int argc, char** argv) {
         require(targetRate && targetRate->property("editText").toString() == QStringLiteral("240") &&
                 studioEncoder && studioEncoder->property("currentIndex").toInt() == 1,
                 "Studio did not restore the saved target FPS and encoder");
+        require(root->property("selectedEncoderId").toString() == QStringLiteral("libopenh264") &&
+                studioEncoder->setProperty("currentIndex",4) &&
+                root->property("selectedEncoderId").toString() == QStringLiteral("h264_nvenc") &&
+                studioEncoder->setProperty("currentIndex",1),
+                "Studio encoder selection did not map to the requested FFmpeg encoder");
         auto* studioBitrate = root->findChild<QObject*>("studioBitrateKbps");
         auto* studioGop = root->findChild<QObject*>("studioGopSize");
         auto* studioQualityMode = root->findChild<QObject*>("studioQualityMode");

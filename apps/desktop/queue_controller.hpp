@@ -18,6 +18,7 @@ class QueueController final : public QObject {
     Q_PROPERTY(QVariantMap counts READ counts NOTIFY changed)
     Q_PROPERTY(QVariantList recentTasks READ recentTasks NOTIFY changed)
     Q_PROPERTY(QVariantMap defaults READ defaults NOTIFY defaultsChanged)
+    Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
     Q_PROPERTY(QVariantList models READ models NOTIFY modelsChanged)
     Q_PROPERTY(bool verifyingModels READ verifyingModels NOTIFY changed)
 public:
@@ -32,6 +33,7 @@ public:
     QVariantMap counts() const { return counts_; }
     QVariantList recentTasks() const { return recentTasks_; }
     QVariantMap defaults() const { return defaults_; }
+    QVariantList profiles() const { return profiles_; }
     QVariantList models() const { return models_; }
     bool verifyingModels() const { return verifyingModels_; }
     Q_INVOKABLE void addItems(const QList<QUrl>& sources, const QUrl& outputFolder, const QString& rate,
@@ -50,6 +52,9 @@ public:
     Q_INVOKABLE void exportReport(const QUrl& destination);
     Q_INVOKABLE void saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
         const QString& encoder, const QString& container, const QVariantMap& encodingOptions);
+    Q_INVOKABLE void saveProfile(const QString& name, const QVariantMap& values);
+    Q_INVOKABLE void removeProfile(const QString& id);
+    Q_INVOKABLE void applyProfile(const QString& id);
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void addLocalModel(const QUrl& directory);
     Q_INVOKABLE void removeLocalModel(const QUrl& directory);
@@ -60,6 +65,9 @@ public:
 signals:
     void changed();
     void defaultsChanged();
+    void profilesChanged();
+    void profileApplied(const QVariantMap& values);
+    void profileOperationFinished(bool success, const QString& operation);
     void modelsChanged();
     void operationFinished(const QString& state);
 private:
@@ -73,6 +81,7 @@ private:
     bool available_ = false, busy_ = false, importing_ = false;
     QString state_ = "loading", detail_;
     QVariantMap counts_, defaults_;
+    QVariantList profiles_;
     QVariantList recentTasks_;
     QVariantList models_;
     bool verifyingModels_ = false;

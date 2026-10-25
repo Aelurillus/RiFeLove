@@ -6,6 +6,7 @@
 #include "application/import_service.hpp"
 #include "inference/model_pack.hpp"
 #include "timeline/timeline.hpp"
+#include "profile_store.hpp"
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -71,17 +72,19 @@ public:
             queue_ = std::make_unique<TaskQueue>(path(database_));
             settings_ = std::make_unique<QSettings>(QFileInfo(database_).dir().filePath("preferences.ini"),QSettings::IniFormat);
             settings_->setFallbacksEnabled(false);
-            const auto defaults = readDefaults(); const auto recovered = queue_->recoveredCount();
+            const auto defaults = readDefaults();
+            const auto profiles = rifelove::desktop::LocalProfileStore(*settings_).list();
+            const auto recovered = queue_->recoveredCount();
             const auto recoveredPublished = queue_->recoveredPublishedOutputCount();
-            post([defaults,recovered,recoveredPublished](QueueController& c) {
-                c.available_ = true; c.defaults_ = defaults; c.state_ = "ready";
+            post([defaults,profiles,recovered,recoveredPublished](QueueController& c) {
+                c.available_ = true; c.defaults_ = defaults; c.profiles_ = profiles; c.state_ = "ready";
                 QStringList recoveryMessages;
                 if (recoveredPublished)
                     recoveryMessages.push_back(tr("已校验并自动恢复 %1 个已发布结果。此处的恢复不需要重新补帧。").arg(recoveredPublished));
                 if (recovered)
                     recoveryMessages.push_back(tr("发现 %1 个仍中断的任务。可校验已完成片段后继续，也可选择新文件名从头生成。").arg(recovered));
                 c.detail_ = recoveryMessages.join('\n');
-                emit c.defaultsChanged(); emit c.changed(); emit c.operationFinished("ready");
+                emit c.defaultsChanged(); emit c.profilesChanged(); emit c.changed(); emit c.operationFinished("ready");
             });
             snapshot();
         } catch (const std::exception& error) {
@@ -142,6 +145,28 @@ public:
         if (!settings_) return;
         const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions);
         if (!warning.isEmpty()) post([warning](QueueController& c) { c.detail_ = warning; emit c.changed(); });
+    }
+    void saveProfile(QString name, QVariantMap values) {
+        try {
+            if (!settings_) throw std::runtime_error("Local settings are unavailable");
+            rifelove::desktop::LocalProfileStore store(*settings_);
+            (void)store.save(name,values);
+            const auto profiles = store.list();
+            post([profiles](QueueController& c) { c.profiles_ = profiles; emit c.profilesChanged(); emit c.profileOperationFinished(true,QStringLiteral("save")); });
+        } catch (const std::exception&) {
+            post([](QueueController& c) { emit c.profileOperationFinished(false,QStringLiteral("save")); });
+        }
+    }
+    void removeProfile(QString id) {
+        try {
+            if (!settings_) throw std::runtime_error("Local settings are unavailable");
+            rifelove::desktop::LocalProfileStore store(*settings_);
+            if (!store.remove(id)) throw std::invalid_argument("Local profile was not found");
+            const auto profiles = store.list();
+            post([profiles](QueueController& c) { c.profiles_ = profiles; emit c.profilesChanged(); emit c.profileOperationFinished(true,QStringLiteral("remove")); });
+        } catch (const std::exception&) {
+            post([](QueueController& c) { emit c.profileOperationFinished(false,QStringLiteral("remove")); });
+        }
     }
     void refreshModels() {
         try {
@@ -445,6 +470,31 @@ void QueueController::saveDefaults(const QString& rate, const QUrl& model, const
     if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions] {
         w->saveDefaults(rate,model,runtime,output,encoder,container,encodingOptions);
     },Qt::QueuedConnection);
+}
+void QueueController::saveProfile(const QString& name, const QVariantMap& values) {
+    if (!available_ || busy_ || importing_) { emit profileOperationFinished(false,QStringLiteral("save")); return; }
+    QMetaObject::invokeMethod(worker_,[w=worker_,name,values] { w->saveProfile(name,values); },Qt::QueuedConnection);
+}
+void QueueController::removeProfile(const QString& id) {
+    if (!available_ || busy_ || importing_) { emit profileOperationFinished(false,QStringLiteral("remove")); return; }
+    QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->removeProfile(id); },Qt::QueuedConnection);
+}
+void QueueController::applyProfile(const QString& id) {
+    if (!available_ || busy_ || importing_) { emit profileOperationFinished(false,QStringLiteral("apply")); return; }
+    const auto found = std::find_if(profiles_.cbegin(),profiles_.cend(),[&](const QVariant& value) {
+        const auto profile = value.toMap();
+        return profile.value("id").toString() == id && profile.value("valid").toBool();
+    });
+    if (found == profiles_.cend()) { emit profileOperationFinished(false,QStringLiteral("apply")); return; }
+    const auto profile = found->toMap();
+    QVariantMap options{{"bitrateKbps",profile.value("bitrateKbps",8000)},
+        {"qualityMode",profile.value("qualityMode","bitrate")},
+        {"quality",profile.value("quality",32)}, {"gopSize",profile.value("gopSize",120)}};
+    saveDefaults(profile.value("rate","60").toString(),profile.value("model").toUrl(),
+        profile.value("runtime").toUrl(),profile.value("output").toUrl(),
+        profile.value("encoder","auto").toString(),profile.value("container","mkv").toString(),options);
+    emit profileApplied(profile);
+    emit profileOperationFinished(true,QStringLiteral("apply"));
 }
 void QueueController::refreshModels() {
     if (!available_ || busy_ || importing_ || verifyingModels_) return;

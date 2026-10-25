@@ -1881,4 +1881,21 @@ Showing the first 50 details only.</translation>
         <translation>Operation cancelled. No partial video was published.</translation>
     </message>
 </context>
+<context>
+    <name>LocalProfilePicker</name>
+    <message><source>本机配置</source><translation>Local profile</translation></message>
+    <message><source>选择要复用的设置</source><translation>Choose settings to reuse</translation></message>
+    <message><source>使用</source><translation>Use</translation></message>
+    <message><source>保存当前设置</source><translation>Save current settings</translation></message>
+    <message><source>删除</source><translation>Delete</translation></message>
+    <message><source>保存本机配置</source><translation>Save local profile</translation></message>
+    <message><source>给这组视频设置取一个容易辨认的名称。</source><translation>Choose a recognizable name for these video settings.</translation></message>
+    <message><source>例如：手机视频 60 FPS</source><translation>For example: Phone video 60 FPS</translation></message>
+    <message><source>删除本机配置</source><translation>Delete local profile</translation></message>
+    <message><source>删除后，这组配置将从本机列表中移除。</source><translation>This removes the selected settings from this device.</translation></message>
+    <message><source>配置操作未完成，请检查名称和设置后重试！</source><translation>Profile action failed. Check the name and settings, then try again!</translation></message>
+    <message><source>配置已保存在本机。</source><translation>Profile saved on this device.</translation></message>
+    <message><source>本机配置已删除。</source><translation>Local profile deleted.</translation></message>
+    <message><source>已应用本机配置。</source><translation>Local profile applied.</translation></message>
+</context>
 </TS>
