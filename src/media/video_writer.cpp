@@ -175,6 +175,12 @@ public:
         detail::writeOutputHeader(output_.value, detail::pathToUtf8(temporary_.path), extension);
     }
 
+    Rational outputTimeBase() const {
+        if (!output_.value || outputVideoIndex_ < 0 || static_cast<unsigned>(outputVideoIndex_) >= output_.value->nb_streams)
+            throw std::logic_error("Video muxer has no initialized output stream");
+        return detail::rational(output_.value->streams[outputVideoIndex_]->time_base);
+    }
+
     void write(const DecodedFrame& input, Rational timestamp, Rational duration) {
         detail::checkStopped(stop_);
         if (!input.storage || input.width != codec_->width || input.height != codec_->height) throw std::invalid_argument("generated frame storage or dimensions are invalid");
@@ -369,6 +375,10 @@ private:
 VideoMuxWriter::VideoMuxWriter(const std::string& source, const std::string& output, const VideoEncodingSettings& settings, std::stop_token stop)
     : impl_(std::make_unique<Impl>(source, output, settings, stop)) {}
 VideoMuxWriter::~VideoMuxWriter() = default;
+Rational VideoMuxWriter::outputTimeBase() const {
+    if (!impl_) throw std::logic_error("video writer is closed");
+    return impl_->outputTimeBase();
+}
 void VideoMuxWriter::writeFrame(const DecodedFrame& frame, Rational timestamp, Rational duration) {
     if (!impl_) throw std::logic_error("video writer is closed");
     try { impl_->write(frame, timestamp, duration); }

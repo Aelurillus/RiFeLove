@@ -39,6 +39,7 @@ public:
     ~VideoMuxWriter();
     VideoMuxWriter(const VideoMuxWriter&) = delete;
     VideoMuxWriter& operator=(const VideoMuxWriter&) = delete;
+    [[nodiscard]] Rational outputTimeBase() const;
     void writeFrame(const DecodedFrame& frame, Rational timestamp, Rational duration);
     // Optional stronger validation sees the finalized temporary file before
     // no-replace publication. Throwing/cancellation removes the temporary file.

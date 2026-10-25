@@ -115,6 +115,34 @@ class NativeRifePipeline(unittest.TestCase):
             self.assertEqual(before,after)
         self.assertEqual(hashlib.sha256(self.complex.read_bytes()).digest(),original_hash)
 
+    def test_coarse_container_clock_reuses_source_frames_that_round_to_output_ticks(self):
+        source = self.root / "quantized-source-30.mkv"
+        output = self.root / "quantized-result-60.mkv"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i","testsrc2=size=96x64:rate=30:duration=0.8",
+               "-vf",self.color,"-fps_mode","cfr","-c:v","ffv1",source)
+        source_info = probe(source,"-select_streams","v:0","-show_streams","-show_frames",
+                            "-show_entries","stream=time_base:frame=best_effort_timestamp")
+        self.assertEqual(source_info["streams"][0]["time_base"],"1/1000")
+        result,_ = self.run_job(source,output,"60","--encoder","ffv1")
+        self.assertEqual((result["source_frames"],result["output_frames"]),(24,48))
+        self.assertEqual((result["original_frames"],result["ai_frames"],result["held_frames"]),(24,23,1))
+        self.verify_timing(output,result)
+
+        output_info = probe(output,"-select_streams","v:0","-show_streams","-show_frames",
+                            "-show_entries","stream=time_base:frame=best_effort_timestamp")
+        source_base = Fraction(source_info["streams"][0]["time_base"])
+        output_base = Fraction(output_info["streams"][0]["time_base"])
+        source_times = [int(frame["best_effort_timestamp"]) * source_base for frame in source_info["frames"]]
+        output_times = [int(frame["best_effort_timestamp"]) * output_base for frame in output_info["frames"]]
+        output_indexes = {timestamp:index for index,timestamp in enumerate(output_times)}
+        source_pixels,output_pixels = frame_bytes(source),frame_bytes(output)
+        frame_size = 96 * 64 * 3 // 2
+        for source_index,timestamp in enumerate(source_times):
+            self.assertIn(timestamp,output_indexes)
+            output_index = output_indexes[timestamp]
+            self.assertEqual(source_pixels[source_index*frame_size:(source_index+1)*frame_size],
+                             output_pixels[output_index*frame_size:(output_index+1)*frame_size])
+
     def test_vfr_noninteger_conversion_preserves_nonzero_origin_and_end(self):
         output = self.root / "vfr-144.mkv"
         result,_ = self.run_job(self.vfr,output,"144","--encoder","ffv1")

@@ -216,6 +216,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         }
     }
     if (!writer) writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop);
+    const auto outputTickTolerance = writer->outputTimeBase() / Rational(2);
     result.timings.encoderSetupSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - encoderSetupStarted).count();
     result.modelId = capabilities.modelId; result.backend = capabilities.backend;
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
@@ -329,7 +330,12 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 notify("resuming",timestamp,"Reusing a verified checkpoint segment");
                 continue;
             }
-            if (clock->timestamp() == *left.source.timestamp) { emit(left.source); ++result.originalFrames; }
+            const auto leftDelta = absolute(clock->timestamp() - *left.source.timestamp);
+            const auto rightDelta = absolute(clock->timestamp() - *right.source.timestamp);
+            const media::DecodedFrame* coincident = nullptr;
+            if (leftDelta <= outputTickTolerance && leftDelta <= rightDelta) coincident = &left.source;
+            else if (rightDelta <= outputTickTolerance) coincident = &right.source;
+            if (coincident) { emit(*coincident); ++result.originalFrames; }
             else if (analysis.action != quality::PairAction::interpolate) { emit(left.source); ++result.heldFrames; }
             else {
                 const auto time = (clock->timestamp() - *left.source.timestamp) / (*right.source.timestamp - *left.source.timestamp);
@@ -392,7 +398,9 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             notify("resuming",timestamp,"Reusing a verified checkpoint segment");
             continue;
         }
-        if (clock->timestamp() == *previous->source.timestamp) ++result.originalFrames; else ++result.heldFrames;
+        if (absolute(clock->timestamp() - *previous->source.timestamp) <= outputTickTolerance)
+            ++result.originalFrames;
+        else ++result.heldFrames;
         emit(previous->source);
     }
     if (!origin || end <= *origin) throw std::runtime_error("No valid final output frame boundary");
