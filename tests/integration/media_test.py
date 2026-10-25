@@ -14,9 +14,9 @@ CLI, FFMPEG, FFPROBE, METADATA_FIXTURE = (Path(argument).resolve() for argument 
 del sys.argv[1:5]
 
 
-def invoke(executable, *arguments, expected=0):
+def invoke(executable, *arguments, expected=0, binary=False):
     result = subprocess.run([str(executable), *(str(a) for a in arguments)],
-                            capture_output=True, encoding="utf-8", timeout=30)
+                            capture_output=True, encoding=None if binary else "utf-8", timeout=30)
     if result.returncode != expected:
         raise AssertionError(f"{executable.name} returned {result.returncode}: {result.stderr}")
     return result
@@ -61,6 +61,16 @@ class NativeMediaIntegration(unittest.TestCase):
         cls.reordered = cls.root / "reordered.mp4"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=24:duration=0.5",
                "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:v", "mpeg4", "-bf", "2", "-q:v", "4", "-c:a", "aac", cls.reordered)
+        cls.multi_audio = cls.root / "multi-audio-chapters.mkv"
+        invoke(FFMPEG, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=96x64:rate=24:duration=0.5",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.5",
+               "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=0.5",
+               "-f", "ffmetadata", "-i", cls.chapters,
+               "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map_chapters", "3",
+               "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited",
+               "-c:v", "mpeg4", "-bf", "2", "-q:v", "4", "-c:a", "aac",
+               "-metadata", "title=RifeLove multi-track fixture",
+               "-metadata:s:a:0", "language=zho", "-metadata:s:a:1", "language=jpn", cls.multi_audio)
         cls.rotated = cls.root / "rotated.mp4"
         invoke(FFMPEG, "-v", "error", "-nostdin", "-display_rotation", "90", "-i", cls.reordered, "-c", "copy", cls.rotated)
         cls.horizontal_flip_rotated = cls.root / "horizontal-flip-rotated.mp4"
@@ -267,6 +277,39 @@ class NativeMediaIntegration(unittest.TestCase):
                 expected_audio = reference(self.reordered, "-select_streams", "a:0", "-show_packets", "-show_entries", "packet=pts_time,dts_time,duration_time")
                 actual_audio = reference(output, "-select_streams", "a:0", "-show_packets", "-show_entries", "packet=pts_time,dts_time,duration_time")
                 self.assertEqual(expected_audio["packets"], actual_audio["packets"])
+
+    def test_mp4_and_mov_preserve_multiple_audio_tracks_and_chapters(self):
+        source = self.probe(self.multi_audio)
+        self.assertEqual([stream["type"] for stream in source["streams"]], ["video", "audio", "audio"])
+        self.assertEqual([source["streams"][index]["metadata"].get("language") for index in (1, 2)], ["zho", "jpn"])
+        for extension in ("mp4", "mov"):
+            for operation in ("remux", "transcode"):
+                with self.subTest(operation=operation, extension=extension):
+                    output = self.root / f"multi-audio-chapters-{operation}.{extension}"
+                    if operation == "remux":
+                        result = json.loads(invoke(CLI, "remux", self.multi_audio, output).stdout)
+                        self.assertEqual(result["copied_streams"], 3)
+                    else:
+                        events = [json.loads(line) for line in invoke(CLI, "transcode", self.multi_audio, output,
+                                                                      "--encoder", "libopenh264").stdout.splitlines()]
+                        self.assertEqual(events[-1]["event"], "transcode_completed")
+                    remuxed = self.probe(output)
+                    self.assertEqual([stream["type"] for stream in remuxed["streams"]], ["video", "audio", "audio", "data"])
+                    self.assertEqual([remuxed["streams"][index]["metadata"].get("language") for index in (1, 2)], ["chi", "jpn"])
+                    self.assertEqual(remuxed["metadata"].get("title"), "RifeLove multi-track fixture")
+                    self.assertEqual([chapter["metadata"].get("title") for chapter in remuxed["chapters"]], ["Opening"])
+                    for audio_index in (0, 1):
+                        before = reference(self.multi_audio, "-select_streams", f"a:{audio_index}", "-show_packets",
+                                           "-show_data_hash", "sha256", "-show_entries", "packet=data_hash")
+                        after = reference(output, "-select_streams", f"a:{audio_index}", "-show_packets",
+                                          "-show_data_hash", "sha256", "-show_entries", "packet=data_hash")
+                        self.assertEqual([packet["data_hash"] for packet in before["packets"]],
+                                         [packet["data_hash"] for packet in after["packets"]])
+                        source_pcm = invoke(FFMPEG, "-v", "error", "-i", self.multi_audio, "-map", f"0:a:{audio_index}",
+                                            "-f", "s16le", "-", binary=True).stdout
+                        output_pcm = invoke(FFMPEG, "-v", "error", "-i", output, "-map", f"0:a:{audio_index}",
+                                            "-f", "s16le", "-", binary=True).stdout
+                        self.assertEqual(source_pcm, output_pcm)
 
     def test_incompatible_container_fails_without_partial_output(self):
         output = self.root / "incompatible.mp4"

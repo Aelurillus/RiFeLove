@@ -21,6 +21,7 @@ struct OutputContext {
     AVFormatContext* value{};
 };
 void copyChapters(const AVFormatContext* input, AVFormatContext* output);
+void copyStreamMetadata(AVDictionary** destination, const AVDictionary* source, const std::string& extension);
 [[nodiscard]] std::string outputExtension(const std::filesystem::path& path);
 void writeOutputHeader(AVFormatContext* output, const std::string& temporaryPath, const std::string& extension);
 } // namespace rifelove::media::detail

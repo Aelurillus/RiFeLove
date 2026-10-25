@@ -1,8 +1,11 @@
 #include "media/output_helpers.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <random>
+#include <string_view>
 #include <system_error>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -67,6 +70,30 @@ void copyChapters(const AVFormatContext* input, AVFormatContext* output) {
         chapter->time_base = input->chapters[i]->time_base;
         check(av_dict_copy(&chapter->metadata, input->chapters[i]->metadata, 0), "copy chapter metadata");
     }
+}
+void copyStreamMetadata(AVDictionary** destination, const AVDictionary* source, const std::string& extension) {
+    check(av_dict_copy(destination, source, 0), "copy stream metadata");
+    if (extension != ".mp4" && extension != ".mov") return;
+
+    // libavformat documents MOV/MP4 stream language tags as ISO 639-2/B.
+    // Normalize the common ISO 639-2/T aliases before writing mdhd language
+    // fields, otherwise the muxer can silently replace them with "und".
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 20> terminologicalToBibliographic{{
+        {"bod", "tib"}, {"ces", "cze"}, {"cym", "wel"}, {"deu", "ger"}, {"ell", "gre"},
+        {"eus", "baq"}, {"fas", "per"}, {"fra", "fre"}, {"hye", "arm"}, {"isl", "ice"},
+        {"kat", "geo"}, {"mkd", "mac"}, {"mri", "mao"}, {"msa", "may"}, {"mya", "bur"},
+        {"nld", "dut"}, {"ron", "rum"}, {"slk", "slo"}, {"sqi", "alb"}, {"zho", "chi"},
+    }};
+    const auto* language = av_dict_get(source, "language", nullptr, 0);
+    if (!language || !language->value) return;
+    std::string normalized(language->value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char value) {
+        return static_cast<char>(std::tolower(value));
+    });
+    const auto alias = std::find_if(terminologicalToBibliographic.begin(), terminologicalToBibliographic.end(),
+        [&](const auto& mapping) { return mapping.first == normalized; });
+    if (alias != terminologicalToBibliographic.end())
+        check(av_dict_set(destination, "language", alias->second.data(), 0), "normalize stream language for MOV/MP4");
 }
 std::string outputExtension(const std::filesystem::path& path) {
     auto extension = path.extension().string();

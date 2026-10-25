@@ -26,7 +26,7 @@ RemuxResult MediaEngine::remux(const std::string& source, const std::string& des
         outgoing->avg_frame_rate = incoming->avg_frame_rate;
         outgoing->sample_aspect_ratio = incoming->sample_aspect_ratio;
         outgoing->disposition = incoming->disposition;
-        detail::check(av_dict_copy(&outgoing->metadata, incoming->metadata, 0), "copy stream metadata");
+        detail::copyStreamMetadata(&outgoing->metadata, incoming->metadata, extension);
     }
     const auto temporaryPath = detail::pathToUtf8(temporary.path);
     if (extension == ".mkv") {

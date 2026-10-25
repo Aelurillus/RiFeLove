@@ -188,7 +188,7 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
         outgoing->avg_frame_rate = static_cast<int>(i) == videoStreamIndex ? firstSegmentStream->avg_frame_rate : sourceStream->avg_frame_rate;
         outgoing->sample_aspect_ratio = static_cast<int>(i) == videoStreamIndex ? firstSegmentStream->sample_aspect_ratio : sourceStream->sample_aspect_ratio;
         outgoing->disposition = sourceStream->disposition;
-        detail::check(av_dict_copy(&outgoing->metadata,metadata,0),"copy segment assembly stream metadata");
+        detail::copyStreamMetadata(&outgoing->metadata,metadata,extension);
     }
     if (extension == ".mkv") {
         const auto padding = detail::initialAudioPadding(source,stop);

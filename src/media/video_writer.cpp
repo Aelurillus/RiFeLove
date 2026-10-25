@@ -162,7 +162,7 @@ public:
             outgoing->codecpar->codec_tag = 0;
             outgoing->sample_aspect_ratio = incoming->sample_aspect_ratio;
             outgoing->disposition = incoming->disposition;
-            detail::check(av_dict_copy(&outgoing->metadata, incoming->metadata, 0), "copy encoding stream metadata");
+            detail::copyStreamMetadata(&outgoing->metadata, incoming->metadata, extension);
             if (replaced) detail::check(av_dict_set(&outgoing->metadata,"encoder",("RifeLove / " + settings_.encoder).c_str(),0),"record selected video encoder");
         }
         if (settings_.copyAuxiliaryStreams && extension == ".mkv") {
