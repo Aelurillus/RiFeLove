@@ -34,11 +34,14 @@ void expectInferenceError(std::future<inference::InterpolationResult> future, in
 }
 }
 int wmain(int argc, wchar_t** argv) {
-    if (argc < 4 || argc > 5) { std::cerr << "Usage: rifelove-validate-cuda MODEL_PACK RUNTIME_DLL_DIRECTORY REPORT_JSON [cuda|tensorrt]\n"; return 2; }
+    if (argc < 4 || argc > 5) { std::cerr << "Usage: rifelove-validate-cuda MODEL_PACK RUNTIME_DLL_DIRECTORY REPORT_JSON [cuda|tensorrt|tensorrt-fp16]\n"; return 2; }
     try {
         static_assert(std::endian::native == std::endian::little);
         const std::wstring requestedProvider = argc == 5 ? argv[4] : L"cuda";
-        if (requestedProvider != L"cuda" && requestedProvider != L"tensorrt") throw std::invalid_argument("Provider must be cuda or tensorrt");
+        if (requestedProvider != L"cuda" && requestedProvider != L"tensorrt" && requestedProvider != L"tensorrt-fp16")
+            throw std::invalid_argument("Provider must be cuda, tensorrt or tensorrt-fp16");
+        const bool useTensorRt = requestedProvider != L"cuda";
+        const bool useFp16 = requestedProvider == L"tensorrt-fp16";
         const auto root = std::filesystem::absolute(std::filesystem::path(argv[1]));
         const auto reportPath = std::filesystem::absolute(std::filesystem::path(argv[3]));
         const auto pack = inference::loadModelPack(root);
@@ -48,12 +51,15 @@ int wmain(int argc, wchar_t** argv) {
         auto device = std::make_shared<gpu::CudaDevice>(0, 128 * 1024 * 1024);
         inference::OnnxCudaConfig config;
         config.runtimeDirectory = std::filesystem::absolute(std::filesystem::path(argv[2]));
-        config.providerPreference = requestedProvider == L"tensorrt" ? inference::ProviderPreference::requireTensorRt : inference::ProviderPreference::cudaOnly;
+        config.providerPreference = useTensorRt ? inference::ProviderPreference::requireTensorRt : inference::ProviderPreference::cudaOnly;
+        config.enableTensorRtFp16 = useFp16;
         config.profilePrefix = reportPath.parent_path() / "onnx-cuda-profile";
         inference::OnnxCudaBackend backend(device, config);
         backend.loadModel(pack);
         const auto capabilities = backend.capabilities();
-        json report = {{"backend",capabilities.backend}, {"requested_provider",requestedProvider == L"tensorrt" ? "tensorrt" : "cuda"},
+        if (useFp16) require(capabilities.fp16, "TensorRT FP16 was requested but the active backend did not enable it");
+        json report = {{"backend",capabilities.backend}, {"requested_provider",useTensorRt ? "tensorrt" : "cuda"},
+            {"requested_precision",useFp16 ? "fp16" : "fp32"}, {"fp16_enabled",capabilities.fp16},
             {"runtime", "1.22.0"}, {"model_sha256",pack.sha256},
             {"device",device->info().name}, {"compute_capability",std::to_string(device->info().computeMajor) + "." + std::to_string(device->info().computeMinor)},
             {"use_tf32",false}, {"convolution_algorithm_search","DEFAULT"}, {"arena_budget_bytes",config.arenaBudgetBytes}, {"cases",json::array()}};
@@ -152,7 +158,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (isTensorRt(provider)) tensorRtHeavy.insert(operation);
             }
         }
-        if (requestedProvider == L"tensorrt")
+        if (useTensorRt)
             require(!tensorRtHeavy.empty(), "TensorRT session ran without assigning any profiled image-compute operators to TensorRT");
         else
             require((gpuHeavy.contains("Conv") || gpuHeavy.contains("FusedConv")) && gpuHeavy.contains("ConvTranspose") && gpuHeavy.contains("GridSample"),
@@ -165,7 +171,7 @@ int wmain(int argc, wchar_t** argv) {
         report["contract_checks"] = contractChecks;
         report["max_abs_error_limit"] = maxLimit;
         report["minimum_psnr_db"] = psnrLimit;
-        const std::string backendName = requestedProvider == L"tensorrt" ? "tensorrt" : "cuda";
+        const std::string backendName = useFp16 ? "tensorrt_fp16" : useTensorRt ? "tensorrt" : "cuda";
         report["status"] = passed ? "passed_native_" + backendName + "_reference" : "failed_numerical_gate";
         std::ofstream output(reportPath, std::ios::binary);
         output << report.dump(2) << '\n';

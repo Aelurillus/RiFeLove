@@ -241,6 +241,9 @@ public:
           session(api.ReleaseSession), cudaMemory(api.ReleaseMemoryInfo) {
         if (!device || !config.arenaBudgetBytes || !config.tensorRtWorkspaceBytes || !config.maxQueuedRequests || config.maxQueuedRequests > 64)
             throw InferenceError(InferenceErrorKind::invalidRequest, "Invalid CUDA backend device, budget or queue limit");
+        if (config.enableTensorRtFp16 && config.providerPreference != ProviderPreference::requireTensorRt)
+            throw InferenceError(InferenceErrorKind::invalidRequest,
+                "TensorRT FP16 requires the TensorRT provider; silent fallback to CUDA FP32 is disabled");
         if (config.engineCacheDirectory.empty()) config.engineCacheDirectory = defaultEngineCacheDirectory();
         check(api, api.CreateMemoryInfo("Cuda", OrtDeviceAllocator, device->info().ordinal, OrtMemTypeDefault, &cudaMemory.value));
         timestep = device->allocate(sizeof(float));
@@ -272,7 +275,8 @@ public:
                 const auto version = runtime->tensorRtVersion();
                 const auto deviceInfo = device->info();
                 const auto cudaVersion = runtime->cudaRuntimeVersion();
-                const TensorRtCacheIdentity identity{"1.22.0",version,cudaVersion,"fp32","rife-v1-min64-opt720p-max4k",config.tensorRtWorkspaceBytes};
+                const TensorRtCacheIdentity identity{"1.22.0",version,cudaVersion,
+                    config.enableTensorRtFp16 ? "fp16" : "fp32","rife-v1-min64-opt720p-max4k",config.tensorRtWorkspaceBytes};
                 const auto prefix = tensorRtEngineCachePrefix(model,deviceInfo,identity);
                 const auto cacheDirectory = config.engineCacheDirectory / prefix;
                 std::error_code error;
@@ -286,9 +290,10 @@ public:
                 const char* profileMin = "frame0:1x3x64x64,frame1:1x3x64x64";
                 const char* profileOpt = "frame0:1x3x768x1280,frame1:1x3x768x1280";
                 const char* profileMax = "frame0:1x3x2176x3840,frame1:1x3x2176x3840";
+                const char* fp16Enabled = config.enableTensorRtFp16 ? "1" : "0";
                 const char* tensorRtKeys[] = {"device_id","trt_engine_cache_enable","trt_engine_cache_path","trt_engine_cache_prefix",
                     "trt_fp16_enable","trt_max_workspace_size","trt_profile_min_shapes","trt_profile_opt_shapes","trt_profile_max_shapes"};
-                const char* tensorRtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),prefix.c_str(),"0",tensorRtWorkspace.c_str(),
+                const char* tensorRtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),prefix.c_str(),fp16Enabled,tensorRtWorkspace.c_str(),
                     profileMin,profileOpt,profileMax};
                 check(api,api.UpdateTensorRTProviderOptions(tensorRt.value,tensorRtKeys,tensorRtValues,std::size(tensorRtKeys)));
                 check(api,api.SessionOptionsAppendExecutionProvider_TensorRT_V2(options.value,tensorRt.value));
@@ -350,7 +355,8 @@ public:
     }
     ModelCapabilities capabilities() const {
         std::lock_guard lock(mutex);
-        return {resolvedBackend, modelId, 64, true, false, fallbackReason, supportedInputProfiles};
+        const bool fp16 = config.enableTensorRtFp16 && resolvedBackend == "onnxruntime_tensorrt_cuda";
+        return {resolvedBackend, modelId, 64, true, fp16, fallbackReason, supportedInputProfiles};
     }
 private:
     InterpolationResult execute(InterpolationRequest& request, std::stop_token shutdown) {

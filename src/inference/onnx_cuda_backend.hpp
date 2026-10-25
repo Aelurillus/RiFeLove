@@ -12,6 +12,9 @@ struct OnnxCudaConfig {
     std::size_t maxQueuedRequests = 2;
     std::filesystem::path profilePrefix; // Empty disables profiling.
     ProviderPreference providerPreference = ProviderPreference::preferTensorRt;
+    // Enables TensorRT's mixed FP16 tactic selection. Kept opt-in until each
+    // model/profile passes native numerical and visual qualification.
+    bool enableTensorRtFp16 = false;
 };
 class OnnxCudaBackend final : public IInterpolationBackend {
 public:
