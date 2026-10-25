@@ -32,7 +32,7 @@ public:
     Q_INVOKABLE void openSource(const QUrl& url);
     Q_INVOKABLE void setOutput(const QUrl& url);
     Q_INVOKABLE void start(const QString& rate, const QUrl& modelDirectory, const QUrl& runtimeDirectory,
-        const QString& encoder, const QVariantMap& encodingOptions);
+        const QString& encoder, const QVariantMap& encodingOptions, const QString& inferenceBackend = QStringLiteral("auto"));
     Q_INVOKABLE void cancel();
     Q_INVOKABLE QUrl localUrl(const QString& path) const;
 signals:

@@ -137,12 +137,13 @@ class LocalCliWorkflow(unittest.TestCase):
         source.write_bytes(b"synthetic queue source")
         profile = Path(self.directory.name) / "电影 配置.json"
         profile.write_text(json.dumps({
-            "format": "rifelove-local-profile", "version": 1,
+            "format": "rifelove-local-profile", "version": 2,
             "profile": {
                 "name": "中文 电影", "rate": "120", "modelUrl": model.as_uri(),
                 "runtimeUrl": runtime.as_uri(), "outputUrl": output_folder.as_uri(),
                 "encoder": "h264_nvenc", "container": "mkv", "bitrateKbps": 8000,
                 "qualityMode": "cq", "quality": 19, "gopSize": 90,
+                "inferenceBackend": "cuda",
             },
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -154,6 +155,7 @@ class LocalCliWorkflow(unittest.TestCase):
         self.assertEqual(Path(summary["runtime_directory"]), runtime.resolve())
         self.assertEqual(Path(summary["output_location"]), output_folder.resolve())
         self.assertEqual(summary["quality_mode"], "cq")
+        self.assertEqual(summary["inference_backend"], "cuda")
 
         output = output_folder / "补帧.mkv"
         first = json.loads(self.run_cli("queue-add", self.database, source, output, "--profile", profile,
@@ -167,15 +169,17 @@ class LocalCliWorkflow(unittest.TestCase):
         self.assertEqual(configuration["encoding"]["bitRate"], 0)
         self.assertEqual(configuration["encoding"]["gopSize"], 60)
         self.assertEqual(configuration["encoding"]["options"], {"rc": "vbr", "cq": "19"})
+        self.assertEqual(configuration["inferenceBackend"], "cuda")
 
         override_output = output_folder / "覆盖.mkv"
         second = json.loads(self.run_cli("queue-add", self.database, source, override_output, "--profile", profile,
-                                         "--encoder", "libopenh264", "--bitrate", "4000000").stdout)["ids"][0]
+                                         "--encoder", "libopenh264", "--bitrate", "4000000", "--backend", "tensorrt").stdout)["ids"][0]
         with closing(sqlite3.connect(self.database)) as database:
             configuration = json.loads(database.execute("SELECT configuration FROM task_details WHERE task_id=?", (second,)).fetchone()[0])
         self.assertEqual(configuration["encoding"]["encoder"], "libopenh264")
         self.assertEqual(configuration["encoding"]["bitRate"], 4000000)
         self.assertEqual(configuration["encoding"]["options"], {})
+        self.assertEqual(configuration["inferenceBackend"], "tensorrt")
 
     def test_profile_rejects_remote_paths_and_mismatched_container(self):
         profile = Path(self.directory.name) / "invalid-profile.json"

@@ -119,7 +119,8 @@ int integer(const Json& object, const char* key, int minimum, int maximum) {
     return static_cast<int>(value);
 }
 
-void requireExactFields(const Json& object, const std::array<std::string_view, 11>& fields) {
+template<std::size_t N>
+void requireExactFields(const Json& object, const std::array<std::string_view, N>& fields) {
     if (!object.is_object() || object.size() != fields.size())
         throw std::invalid_argument("Profile file contains unsupported or missing fields");
     for (const auto field : fields)
@@ -134,14 +135,21 @@ LocalProfile loadLocalProfile(const std::filesystem::path& file) {
         reinterpret_cast<const char*>(bytes.data() + bytes.size()));
     if (!json.is_object() || json.size() != 3 || !json.contains("format") || !json.contains("version") || !json.contains("profile") ||
         !json.at("format").is_string() || json.at("format") != "rifelove-local-profile" ||
-        !json.at("version").is_number_integer() || json.at("version") != 1)
+        !json.at("version").is_number_integer() || (json.at("version") != 1 && json.at("version") != 2))
         throw std::invalid_argument("Local profile format or version is not supported");
 
     const auto& value = json.at("profile");
     constexpr std::array<std::string_view, 11> fields{"name", "rate", "modelUrl", "runtimeUrl", "outputUrl", "encoder", "container", "bitrateKbps", "qualityMode", "quality", "gopSize"};
-    requireExactFields(value, fields);
+    const int version = json.at("version").get<int>();
+    if (version == 1) requireExactFields(value, fields);
+    else {
+        constexpr std::array<std::string_view, 12> fieldsV2{"name", "rate", "modelUrl", "runtimeUrl", "outputUrl", "encoder", "container", "bitrateKbps", "qualityMode", "quality", "gopSize", "inferenceBackend"};
+        requireExactFields(value, fieldsV2);
+    }
     for (const auto key : {"name", "rate", "encoder", "container", "qualityMode"})
         if (!value.at(key).is_string()) throw std::invalid_argument("Profile contains a field with the wrong type");
+    if (version >= 2 && !value.at("inferenceBackend").is_string())
+        throw std::invalid_argument("Profile contains a field with the wrong type");
 
     LocalProfile profile;
     profile.name = value.at("name").get<std::string>();
@@ -159,6 +167,9 @@ LocalProfile loadLocalProfile(const std::filesystem::path& file) {
     const auto encoder = value.at("encoder").get<std::string>();
     profile.container = value.at("container").get<std::string>();
     profile.qualityMode = value.at("qualityMode").get<std::string>();
+    profile.inferenceBackend = version >= 2 ? value.at("inferenceBackend").get<std::string>() : "auto";
+    if (profile.inferenceBackend != "auto" && profile.inferenceBackend != "cuda" && profile.inferenceBackend != "tensorrt")
+        throw std::invalid_argument("Profile inference backend is not supported");
     constexpr std::array<std::string_view, 5> encoders{"auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"};
     constexpr std::array<std::string_view, 3> containers{"mkv", "mp4", "mov"};
     if (std::find(encoders.begin(), encoders.end(), encoder) == encoders.end())
@@ -198,6 +209,7 @@ void applyLocalProfile(const LocalProfile& profile, PipelineSettings& settings,
     if (profile.modelDirectory.empty() || profile.runtimeDirectory.empty())
         throw std::invalid_argument("Local profile must include model and ONNX Runtime folders");
     settings.targetRate = profile.targetRate;
+    settings.inferenceBackend = profile.inferenceBackend;
     settings.encoding = profile.encoding;
     modelDirectory = profile.modelDirectory;
     runtimeDirectory = profile.runtimeDirectory;
@@ -231,10 +243,11 @@ void validateLocalProfileOutput(const LocalProfile& profile, const std::filesyst
 }
 
 std::string serializeLocalProfileSummary(const LocalProfile& profile) {
-    Json output = {{"event", "profile_valid"}, {"name", profile.name}, {"version", 1},
+    Json output = {{"event", "profile_valid"}, {"name", profile.name}, {"version", 2},
         {"rate", profile.targetRate.toString()}, {"model_directory", pathUtf8(profile.modelDirectory)},
         {"runtime_directory", pathUtf8(profile.runtimeDirectory)}, {"output_location", pathUtf8(profile.outputLocation)},
         {"encoder", profile.encoding.encoder}, {"container", profile.container}, {"quality_mode", profile.qualityMode},
+        {"inference_backend", profile.inferenceBackend},
         {"quality", profile.quality}, {"bitrate_kbps", profile.bitrateKbps}, {"gop_size", profile.gopSize}};
     return output.dump();
 }

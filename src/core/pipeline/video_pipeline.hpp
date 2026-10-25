@@ -21,6 +21,9 @@ struct PipelineCheckpoint {
 struct PipelineSettings {
     PipelineSettings() { encoding.encoder = "auto"; }
     Rational targetRate{60};
+    // auto: TensorRT first with CUDA fallback; cuda: CUDA provider only;
+    // tensorrt: require TensorRT and fail clearly when it cannot initialize.
+    std::string inferenceBackend = "auto";
     media::VideoEncodingSettings encoding;
     quality::SceneSettings scene;
     // Runtime-only extension registry; omitted from serialized user settings.

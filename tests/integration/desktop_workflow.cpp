@@ -205,7 +205,9 @@ int main(int argc, char** argv) {
                 "Studio did not restore saved advanced encoder settings");
         auto* queuePage = root->findChild<QObject*>("queuePage");
         auto* queueRate = root->findChild<QObject*>("queueTargetRate");
-        require(queuePage && queueRate && root->findChild<QObject*>("studioLocalProfiles") &&
+        auto* studioBackend = root->findChild<QObject*>("studioInferenceBackend");
+        auto* queueBackend = queuePage ? queuePage->findChild<QObject*>("queueInferenceBackend") : nullptr;
+        require(queuePage && queueRate && studioBackend && queueBackend && root->findChild<QObject*>("studioLocalProfiles") &&
                 queuePage->findChild<QObject*>("queueLocalProfiles") &&
                 root->findChild<QObject*>("localProfileImportButton") &&
                 root->findChild<QObject*>("localProfileExportButton") &&
@@ -217,7 +219,7 @@ int main(int argc, char** argv) {
             {"model",QUrl::fromLocalFile(arguments[3])},{"runtime",QUrl::fromLocalFile(arguments[4])},
             {"output",QUrl::fromLocalFile(queueFolder)},{"encoder",QStringLiteral("libopenh264")},
             {"container",QStringLiteral("mkv")},{"bitrateKbps",5500},{"qualityMode",QStringLiteral("bitrate")},
-            {"quality",32},{"gopSize",90}};
+            {"quality",32},{"gopSize",90},{"inferenceBackend",QStringLiteral("cuda")}};
         taskQueue.saveProfile(QStringLiteral("Desktop Workflow Profile"),workflowProfile);
         QVariantMap savedProfile;
         waitUntil([&] {
@@ -258,6 +260,9 @@ int main(int argc, char** argv) {
         require(targetRate->property("editText").toString() == QStringLiteral("144") &&
                 queueRate->property("editText").toString() == QStringLiteral("144") &&
                 root->property("selectedEncoderId").toString() == QStringLiteral("libopenh264") &&
+                root->property("inferenceBackend").toString() == QStringLiteral("cuda") &&
+                studioBackend->property("currentIndex").toInt() == 1 && queuePage->property("inferenceBackend").toString() == QStringLiteral("cuda") &&
+                queueBackend->property("currentIndex").toInt() == 1 &&
                 queuePage->property("outputFolder").toUrl().toLocalFile() == queueFolder,
             "Applying a local profile did not update both Studio and Queue settings");
         taskQueue.removeProfile(savedProfile.value("id").toString());
@@ -265,7 +270,7 @@ int main(int argc, char** argv) {
             "The desktop did not remove the local processing profile");
         taskQueue.saveDefaults(QStringLiteral("240"),QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),
             QUrl::fromLocalFile(queueFolder),QStringLiteral("libopenh264"),QStringLiteral("mp4"),
-            {{"bitrateKbps",4500},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",60}});
+            {{"bitrateKbps",4500},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",60}},QStringLiteral("auto"));
         waitUntil([&] { return taskQueue.defaults().value("rate").toString() == QStringLiteral("240") &&
             taskQueue.defaults().value("container").toString() == QStringLiteral("mp4"); },
             "The desktop did not restore its defaults after the profile workflow");
@@ -482,7 +487,7 @@ int main(int argc, char** argv) {
         const auto batchFolder = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("queue-input");
         const QVariantMap queueEncoding{{"bitrateKbps",3200},{"qualityMode","bitrate"},{"quality",32},{"gopSize",48}};
         taskQueue.addItems({QUrl::fromLocalFile(batchFolder),QUrl::fromLocalFile(arguments[1]),QUrl::fromLocalFile(arguments[1])},QUrl::fromLocalFile(queueFolder),"60",
-            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",queueEncoding,true);
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",queueEncoding,true,QStringLiteral("cuda"));
         waitUntil([&] { return !taskQueue.importing(); }, "Desktop queue import timed out");
         require(taskQueue.tasks()->rowCount() == 2, qPrintable(taskQueue.detail()));
         auto* importedRows = qobject_cast<TaskListModel*>(taskQueue.tasks());
@@ -531,6 +536,7 @@ int main(int argc, char** argv) {
         waitUntil([&] { return reopened.available() || reopened.state() == "error"; }, "Saved desktop preferences did not reload");
         require(reopened.available() && reopened.defaults().value("rate").toString() == "60" &&
                 reopened.defaults().value("bitrateKbps").toInt() == 3200 && reopened.defaults().value("gopSize").toInt() == 48 &&
+                reopened.defaults().value("inferenceBackend").toString() == "cuda" &&
                 QFileInfo(reopened.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("runtime").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[4]).absoluteFilePath() &&
                 QFileInfo(reopened.defaults().value("output").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(queueFolder).absoluteFilePath(),

@@ -57,6 +57,10 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     checkpoint();
     auto device = std::make_shared<gpu::CudaDevice>(job.deviceOrdinal);
     inference::OnnxCudaConfig config; config.runtimeDirectory = job.runtimeDirectory;
+    if (job.settings.inferenceBackend == "auto") config.providerPreference = inference::ProviderPreference::preferTensorRt;
+    else if (job.settings.inferenceBackend == "cuda") config.providerPreference = inference::ProviderPreference::cudaOnly;
+    else if (job.settings.inferenceBackend == "tensorrt") config.providerPreference = inference::ProviderPreference::requireTensorRt;
+    else throw std::invalid_argument("Unsupported inference backend preference");
     inference::OnnxCudaBackend backend(device,config); backend.loadModel(pack);
     const auto capabilities = backend.capabilities();
     ProcessingIdentity processingIdentity{std::move(identity),pack.id,pack.version,pack.sha256,device->info(),capabilities.backend,

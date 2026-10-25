@@ -306,6 +306,18 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         auto actual = Json::parse(saved);
         const auto wanted = Json::parse(expected);
         if (actual == wanted) return true;
+        if (actual.is_object() && wanted.is_object() && actual.value("schemaVersion",0) == 2 &&
+            wanted.value("schemaVersion",0) == 2 && actual.contains("job") && wanted.contains("job") &&
+            actual.contains("identity") && wanted.contains("identity") && actual.at("job").is_object() && wanted.at("job").is_object()) {
+            auto& oldJob = actual["job"];
+            if (oldJob.value("schemaVersion",0) == 2 && wanted.at("job").value("schemaVersion",0) == 3 &&
+                actual.at("identity") == wanted.at("identity") && wanted.at("job").value("inferenceBackend",std::string()) == "auto") {
+                oldJob["inferenceBackend"] = "auto";
+                oldJob["schemaVersion"] = 3;
+                return actual == wanted;
+            }
+            return false;
+        }
         if (!actual.is_object() || !wanted.is_object() || actual.value("schemaVersion",0) != 1 ||
             wanted.value("schemaVersion",0) != 2 || !actual.contains("job") || !actual.contains("identity") ||
             !actual.at("job").is_object() || !actual.at("identity").is_object()) return false;
@@ -320,7 +332,8 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
             oldIdentity.at("model").contains("adapter")) return false;
         oldJob["expectedModelAdapterId"] = "rife-sdr-v1";
         oldJob["expectedModelAdapterVersion"] = 1;
-        oldJob["schemaVersion"] = 2;
+        oldJob["inferenceBackend"] = "auto";
+        oldJob["schemaVersion"] = 3;
         oldIdentity["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
         oldIdentity["schemaVersion"] = 2;
         actual["schemaVersion"] = 2;

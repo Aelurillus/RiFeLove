@@ -12,7 +12,8 @@ QVariantMap validProfile() {
     return {{"rate",QStringLiteral("60000/1001")},{"model",QUrl::fromLocalFile("C:/models/rife")},
         {"runtime",QUrl::fromLocalFile("C:/runtime")},{"output",QUrl::fromLocalFile("C:/renders")},
         {"encoder",QStringLiteral("libopenh264")},{"container",QStringLiteral("mkv")},
-        {"bitrateKbps",8000},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",120}};
+        {"bitrateKbps",8000},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",120},
+        {"inferenceBackend",QStringLiteral("cuda")}};
 }
 }
 
@@ -34,6 +35,7 @@ TEST(LocalProfileStore, SavesListsAndRemovesPersistentNamedProfiles) {
         EXPECT_EQ(value.value("name").toString(),QStringLiteral("Smooth 60"));
         EXPECT_EQ(value.value("rate").toString(),QStringLiteral("60000/1001"));
         EXPECT_EQ(value.value("encoder").toString(),QStringLiteral("libopenh264"));
+        EXPECT_EQ(value.value("inferenceBackend").toString(),QStringLiteral("cuda"));
         EXPECT_EQ(value.value("bitrateKbps").toInt(),8000);
     }
     {
@@ -96,6 +98,7 @@ TEST(LocalProfileStore, ExportsAndImportsOneLocalProfileWithoutItsDatabaseId) {
         EXPECT_EQ(imported.value("runtime").toUrl(),validProfile().value("runtime").toUrl());
         EXPECT_EQ(imported.value("output").toUrl(),validProfile().value("output").toUrl());
         EXPECT_EQ(imported.value("encoder").toString(),QStringLiteral("libopenh264"));
+        EXPECT_EQ(imported.value("inferenceBackend").toString(),QStringLiteral("cuda"));
         EXPECT_EQ(imported.value("gopSize").toInt(),120);
     }
 }
@@ -111,7 +114,7 @@ TEST(LocalProfileStore, RejectsUnsupportedOrNonLocalProfileFilesWithoutChangingS
     const auto badVersionPath = temporary.filePath(QStringLiteral("bad-version.json"));
     QFile badVersion(badVersionPath);
     ASSERT_TRUE(badVersion.open(QIODevice::WriteOnly));
-    ASSERT_GT(badVersion.write(R"({"format":"rifelove-local-profile","version":2,"profile":{}})"),0);
+    ASSERT_GT(badVersion.write(R"({"format":"rifelove-local-profile","version":3,"profile":{}})"),0);
     badVersion.close();
     EXPECT_THROW((void)profiles.importFromFile(badVersionPath),std::invalid_argument);
     EXPECT_EQ(profiles.list().size(),1);
@@ -124,6 +127,25 @@ TEST(LocalProfileStore, RejectsUnsupportedOrNonLocalProfileFilesWithoutChangingS
     remote.close();
     EXPECT_THROW((void)profiles.importFromFile(remotePath),std::invalid_argument);
     EXPECT_EQ(profiles.list().size(),1);
+}
+
+TEST(LocalProfileStore, ImportsVersionOneProfileWithAutomaticInferenceBackend) {
+    QTemporaryDir temporary;
+    ASSERT_TRUE(temporary.isValid());
+    QSettings settings(temporary.filePath(QStringLiteral("preferences.ini")),QSettings::IniFormat);
+    settings.setFallbacksEnabled(false);
+    rifelove::desktop::LocalProfileStore profiles(settings);
+    const auto profilePath = temporary.filePath(QStringLiteral("legacy.json"));
+    QFile legacy(profilePath);
+    ASSERT_TRUE(legacy.open(QIODevice::WriteOnly));
+    const QByteArray json = R"({"format":"rifelove-local-profile","version":1,"profile":{"name":"Legacy","rate":"60","modelUrl":"file:///C:/models/rife","runtimeUrl":"file:///C:/runtime","outputUrl":"","encoder":"auto","container":"mkv","bitrateKbps":8000,"qualityMode":"bitrate","quality":32,"gopSize":120}})";
+    ASSERT_EQ(legacy.write(json),json.size());
+    legacy.close();
+    ASSERT_NO_THROW((void)profiles.importFromFile(profilePath));
+    const auto entries = profiles.list();
+    ASSERT_EQ(entries.size(),1);
+    EXPECT_TRUE(entries.front().toMap().value("valid").toBool());
+    EXPECT_EQ(entries.front().toMap().value("inferenceBackend").toString(),QStringLiteral("auto"));
 }
 
 TEST(LocalProfileStore, RejectsImportNameCollisionsAndExportOfInvalidSelections) {

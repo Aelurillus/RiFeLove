@@ -982,6 +982,42 @@
         <source>RIFE 推理由 CUDA 驱动</source>
         <translation>RIFE 推論は CUDA で実行</translation>
     </message>
+    <message>
+        <source>RIFELOVE  /  MOTION STUDIO</source>
+        <translation>RIFELOVE  /  MOTION STUDIO</translation>
+    </message>
+    <message>
+        <source>源帧     ·     RIFE 生成     ·     补帧输出</source>
+        <translation>入力フレーム     ·     RIFE 補間     ·     出力動画</translation>
+    </message>
+    <message>
+        <source>●  本地模型已校验 · CUDA 推理</source>
+        <translation>●  ローカルモデル検証済み · CUDA 推論</translation>
+    </message>
+    <message>
+        <source>●  CUDA 推理</source>
+        <translation>●  CUDA 推論</translation>
+    </message>
+    <message>
+        <source>推理后端</source>
+        <translation>推論バックエンド</translation>
+    </message>
+    <message>
+        <source>自动：TensorRT 优先，失败时回退 CUDA</source>
+        <translation>自動：TensorRT を優先し、失敗時は CUDA に切り替え</translation>
+    </message>
+    <message>
+        <source>仅 ONNX Runtime CUDA</source>
+        <translation>ONNX Runtime CUDA のみ</translation>
+    </message>
+    <message>
+        <source>必须使用 TensorRT</source>
+        <translation>TensorRT を必須にする</translation>
+    </message>
+    <message>
+        <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
+        <translation>推論精度は FP32 に固定されています。FP16 は数値と画質の検証に合格していないため、処理には使用されません。</translation>
+    </message>
 </context>
 <context>
     <name>ModelCenterPage</name>
@@ -1647,6 +1683,26 @@ model.json を含む検証済みモデルパックを追加してください</t
         <translation>キューは空です
 複数の動画またはフォルダーを読み込んで開始してください</translation>
     </message>
+    <message>
+        <source>推理后端</source>
+        <translation>推論バックエンド</translation>
+    </message>
+    <message>
+        <source>自动：TensorRT 优先，失败时回退 CUDA</source>
+        <translation>自動：TensorRT を優先し、失敗時は CUDA に切り替え</translation>
+    </message>
+    <message>
+        <source>仅 ONNX Runtime CUDA</source>
+        <translation>ONNX Runtime CUDA のみ</translation>
+    </message>
+    <message>
+        <source>必须使用 TensorRT</source>
+        <translation>TensorRT を必須にする</translation>
+    </message>
+    <message>
+        <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
+        <translation>FP32 のみ。FP16 は数値と画質の検証に合格していません。</translation>
+    </message>
 </context>
 <context>
     <name>QueueWorker</name>
@@ -1772,6 +1828,10 @@ model.json を含む検証済みモデルパックを追加してください</t
         <location filename="../../apps/desktop/queue_controller.cpp" line="384" />
         <source>任务可继续使用，但默认设置未能保存。</source>
         <translation>タスクは続行できますが、既定の設定を保存できませんでした。</translation>
+    </message>
+    <message>
+        <source>推理后端选择无效，默认设置未保存。</source>
+        <translation>推論バックエンドの選択が無効なため、既定設定を保存できませんでした。</translation>
     </message>
 </context>
 <context>

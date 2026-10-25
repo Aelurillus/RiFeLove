@@ -75,6 +75,11 @@ int runQueueCommand(const std::vector<std::string>& args) {
             else if (option == "--fps") { job.settings.targetRate = Rational::parse(value); hasRate = true; }
             else if (option == "--model-dir") job.modelDirectory = path(value);
             else if (option == "--runtime-dir") job.runtimeDirectory = path(value);
+            else if (option == "--backend") {
+                if (value != "auto" && value != "cuda" && value != "tensorrt")
+                    throw std::invalid_argument("Inference backend must be auto, cuda or tensorrt");
+                job.settings.inferenceBackend = value;
+            }
             else if (option == "--encoder") cli::overrideEncoder(job.settings,value);
             else if (option == "--pixel-format") job.settings.encoding.pixelFormat = value;
             else if (option == "--bitrate") cli::overrideBitrate(job.settings,number<std::int64_t>(value));

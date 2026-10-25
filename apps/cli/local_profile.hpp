@@ -18,6 +18,7 @@ struct LocalProfile final {
     std::filesystem::path outputLocation;
     std::string container;
     std::string qualityMode;
+    std::string inferenceBackend = "auto";
     int bitrateKbps = 8000;
     int quality = 32;
     int gopSize = 120;

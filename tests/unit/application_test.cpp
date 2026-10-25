@@ -18,6 +18,7 @@ ProcessingJob configuredJob() {
     job.settings.targetRate = Rational(60000,1001); job.deviceOrdinal = 1;
     job.sourceDurationEstimate = Rational(1001,24000);
     job.settings.hostFloatBufferLimit = 256 * 1024 * 1024;
+    job.settings.inferenceBackend = "cuda";
     job.expectedModelId = "rife-4.25"; job.expectedModelVersion = "4.25"; job.expectedModelSha256 = std::string(64,'a'); job.expectedSourceSha256 = std::string(64,'b');
     auto& e = job.settings.encoding; e.encoder = "hevc_nvenc"; e.pixelFormat = "p010le"; e.videoStreamIndex = 2;
     e.timeBase = Rational(1,120000); e.frameRate = job.settings.targetRate; e.bitRate = 12345678; e.gopSize = 48; e.maxBFrames = 3;
@@ -31,6 +32,7 @@ TEST(ProcessingConfiguration, RoundTripsAllAdvancedSettingsAndPinnedIdentity) {
     EXPECT_EQ(restored.source,job.source); EXPECT_EQ(restored.output,job.output);
     EXPECT_EQ(serializeJob(restored),encoded);
     EXPECT_EQ(restored.settings.targetRate,Rational(60000,1001)); EXPECT_EQ(restored.settings.encoding.timeBase,Rational(1,120000));
+    EXPECT_EQ(restored.settings.inferenceBackend,"cuda");
     EXPECT_EQ(restored.sourceDurationEstimate,job.sourceDurationEstimate);
     EXPECT_EQ(restored.settings.encoding.encoderOptions.at("preset"),"p5"); EXPECT_EQ(restored.settings.encoding.maxBFrames,3);
 }
@@ -47,6 +49,7 @@ TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThreshold
     EXPECT_THROW((void)parseJob(job.source,job.output,json.dump()),std::invalid_argument);
     auto bad = job; bad.expectedSourceSha256 = "unverified"; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.scene.cutMeanDifference = -0.1; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.inferenceBackend = "fp16"; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.encoding.frameRate = Rational(24); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.expectedModelAdapterId = "bad/id"; bad.expectedModelAdapterVersion = 1;
     EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
@@ -59,9 +62,18 @@ TEST(ProcessingConfiguration, ReadsLegacyVersionOneJobsWithoutAnAdapterPin) {
     legacy["schemaVersion"] = 1;
     legacy.erase("expectedModelAdapterId");
     legacy.erase("expectedModelAdapterVersion");
+    legacy.erase("inferenceBackend");
     const auto restored = parseJob(job.source,job.output,legacy.dump());
     EXPECT_TRUE(restored.expectedModelAdapterId.empty());
     EXPECT_EQ(restored.expectedModelAdapterVersion,0);
+}
+TEST(ProcessingConfiguration, ReadsLegacyVersionTwoJobsWithAutomaticBackendDefault) {
+    const auto job = configuredJob();
+    auto legacy = nlohmann::json::parse(serializeJob(job));
+    legacy["schemaVersion"] = 2;
+    legacy.erase("inferenceBackend");
+    const auto restored = parseJob(job.source,job.output,legacy.dump());
+    EXPECT_EQ(restored.settings.inferenceBackend,"auto");
 }
 TEST(ProcessingConfiguration, PinsVersionTwoModelDescriptorForPersistentJobs) {
     const auto directory = std::filesystem::temp_directory_path() /

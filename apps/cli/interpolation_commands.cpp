@@ -55,6 +55,11 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         else if (option == "--report") reportPathText = value;
         else if (option == "--model-dir") modelDirectory = path(value);
         else if (option == "--runtime-dir") runtimeDirectory = path(value);
+        else if (option == "--backend") {
+            if (value != "auto" && value != "cuda" && value != "tensorrt")
+                throw std::invalid_argument("Inference backend must be auto, cuda or tensorrt");
+            settings.inferenceBackend = value;
+        }
         else if (option == "--encoder") cli::overrideEncoder(settings,value);
         else if (option == "--pixel-format") settings.encoding.pixelFormat = value;
         else if (option == "--bitrate") cli::overrideBitrate(settings,integer(value));
@@ -104,6 +109,8 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         const auto pack = inference::loadModelPack(modelDirectory);
         auto device = std::make_shared<gpu::CudaDevice>(ordinal);
         inference::OnnxCudaConfig config; config.runtimeDirectory = runtimeDirectory;
+        if (settings.inferenceBackend == "cuda") config.providerPreference = inference::ProviderPreference::cudaOnly;
+        else if (settings.inferenceBackend == "tensorrt") config.providerPreference = inference::ProviderPreference::requireTensorRt;
         inference::OnnxCudaBackend backend(device,config);
         backend.loadModel(pack);
         const auto result = interpolateVideo(args[2],args[3],settings,*device,backend,showProgress ? std::function<void(const PipelineProgress&)>([&](const PipelineProgress& current) {

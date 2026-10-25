@@ -105,13 +105,16 @@ void validate(const ProcessingJob& job) {
     for (const auto& [key,value] : e.encoderOptions) { text(key,256); text(value,4096,false); }
     const auto& s = job.settings.scene;
     threshold(s.cutMeanDifference); threshold(s.cutHistogramDistance); threshold(s.abnormalMeanDifference); threshold(s.duplicateMaximumDifference);
+    if (job.settings.inferenceBackend != "auto" && job.settings.inferenceBackend != "cuda" && job.settings.inferenceBackend != "tensorrt")
+        throw std::invalid_argument("Unsupported inference backend preference");
 }
 }
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",2},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",3},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"runtimeDirectory",utf8(job.runtimeDirectory)},{"deviceOrdinal",job.deviceOrdinal},{"hostFloatBufferLimit",job.settings.hostFloatBufferLimit},
+        {"inferenceBackend",job.settings.inferenceBackend},
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
         {"expectedModelAdapterId",job.expectedModelAdapterId},{"expectedModelAdapterVersion",job.expectedModelAdapterVersion},
         {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
@@ -123,12 +126,13 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion != 1 && schemaVersion != 2) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 3) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
     job.modelDirectory = path(json.at("modelDirectory").get<std::string>()); job.runtimeDirectory = path(json.at("runtimeDirectory").get<std::string>());
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
+    if (schemaVersion >= 3) job.settings.inferenceBackend = json.at("inferenceBackend").get<std::string>();
     job.expectedSourceSha256 = json.at("expectedSourceSha256").get<std::string>(); job.expectedModelSha256 = json.at("expectedModelSha256").get<std::string>();
     job.expectedModelId = json.at("expectedModelId").get<std::string>(); job.expectedModelVersion = json.at("expectedModelVersion").get<std::string>();
     if (schemaVersion >= 2) {

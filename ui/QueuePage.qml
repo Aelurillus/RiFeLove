@@ -14,6 +14,7 @@ Item {
     property url outputFolder: ""
     property string targetRate: "60"
     property string encoder: "auto"
+    property string inferenceBackend: "auto"
     property string container: "mkv"
     property bool recursive: false
     property bool advancedOpen: false
@@ -34,6 +35,7 @@ Item {
         }
         if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
+        inferenceBackend = ["auto", "cuda", "tensorrt"].includes(values.inferenceBackend) ? values.inferenceBackend : "auto"
         encodingBitrate.value = Number(values.bitrateKbps || 8000)
         encodingQuality.value = Number(values.quality || 32)
         encodingGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
@@ -56,19 +58,19 @@ Item {
         return {rate: rateBox.editText, model: modelFolder, runtime: runtimeFolder,
             output: outputFolder, encoder: encoder, container: containerBox.currentText || "mkv",
             bitrateKbps: options.bitrateKbps, qualityMode: options.qualityMode,
-            quality: options.quality, gopSize: options.gopSize}
+            quality: options.quality, gopSize: options.gopSize, inferenceBackend: inferenceBackend}
     }
     function add(sources) {
         if (!sources || sources.length === 0) return
         selectedSources = sources
         queueController.addItems(sources, outputFolder, rateBox.editText, modelFolder, runtimeFolder,
-                                 encoder, container, encodingOptions(), recursive)
+                                 encoder, container, encodingOptions(), recursive, inferenceBackend)
         selectedSources = []
     }
     function persistDefaults() {
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
-            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions())
+            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions(), inferenceBackend)
     }
     function statusText(value) {
         const labels = {queued: qsTr("等待处理"), running: qsTr("正在处理"), paused: qsTr("已暂停"),
@@ -248,6 +250,20 @@ Item {
                     Label { text: qsTr("CUDA 运行库"); Layout.preferredWidth: 75 }
                     TextField { objectName: "queueRuntimePath"; Layout.fillWidth: true; readOnly: true; text: page.runtimeFolder.toString(); placeholderText: qsTr("选择 ONNX Runtime 与 CUDA DLL 目录"); selectByMouse: true }
                     ActionButton { text: qsTr("选择"); enabled: !page.queueController.busy && !page.queueController.importing; onClicked: runtimeDialog.open() }
+                }
+                RowLayout {
+                    visible: page.advancedOpen
+                    Layout.fillWidth: true
+                    Label { text: qsTr("推理后端"); Layout.preferredWidth: 75 }
+                    ComboBox {
+                        objectName: "queueInferenceBackend"
+                        Layout.fillWidth: true
+                        model: [qsTr("自动：TensorRT 优先，失败时回退 CUDA"), qsTr("仅 ONNX Runtime CUDA"), qsTr("必须使用 TensorRT")]
+                        currentIndex: ["auto", "cuda", "tensorrt"].indexOf(page.inferenceBackend)
+                        enabled: !page.queueController.busy && !page.queueController.importing
+                        onActivated: { page.inferenceBackend = ["auto", "cuda", "tensorrt"][currentIndex]; page.persistDefaults() }
+                    }
+                    Label { text: qsTr("FP32 固定；FP16 尚未通过数值与画质验证。"); color: "#9aaac0"; font.pixelSize: 12; Layout.preferredWidth: 260; wrapMode: Text.WordWrap }
                 }
                 RowLayout {
                     CheckBox { text: qsTr("扫描子文件夹"); checked: page.recursive; onToggled: page.recursive = checked; enabled: !page.queueController.busy && !page.queueController.importing }

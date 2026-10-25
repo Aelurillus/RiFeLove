@@ -982,6 +982,42 @@
         <source>RIFE 推理由 CUDA 驱动</source>
         <translation>RIFE 推論由 CUDA 驅動</translation>
     </message>
+    <message>
+        <source>RIFELOVE  /  MOTION STUDIO</source>
+        <translation>RIFELOVE  /  MOTION STUDIO</translation>
+    </message>
+    <message>
+        <source>源帧     ·     RIFE 生成     ·     补帧输出</source>
+        <translation>來源影格     ·     RIFE 補幀     ·     輸出影片</translation>
+    </message>
+    <message>
+        <source>●  本地模型已校验 · CUDA 推理</source>
+        <translation>●  本機模型已驗證 · CUDA 推論</translation>
+    </message>
+    <message>
+        <source>●  CUDA 推理</source>
+        <translation>●  CUDA 推論</translation>
+    </message>
+    <message>
+        <source>推理后端</source>
+        <translation>推理後端</translation>
+    </message>
+    <message>
+        <source>自动：TensorRT 优先，失败时回退 CUDA</source>
+        <translation>自動：優先使用 TensorRT，失敗時回退至 CUDA</translation>
+    </message>
+    <message>
+        <source>仅 ONNX Runtime CUDA</source>
+        <translation>僅使用 ONNX Runtime CUDA</translation>
+    </message>
+    <message>
+        <source>必须使用 TensorRT</source>
+        <translation>必須使用 TensorRT</translation>
+    </message>
+    <message>
+        <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
+        <translation>推論精度目前固定為 FP32。FP16 尚未通過數值與畫質驗證，因此不會用於處理。</translation>
+    </message>
 </context>
 <context>
     <name>ModelCenterPage</name>
@@ -1647,6 +1683,26 @@
         <translation>佇列是空的
 匯入多個影片或整個資料夾以開始處理</translation>
     </message>
+    <message>
+        <source>推理后端</source>
+        <translation>推理後端</translation>
+    </message>
+    <message>
+        <source>自动：TensorRT 优先，失败时回退 CUDA</source>
+        <translation>自動：優先使用 TensorRT，失敗時回退至 CUDA</translation>
+    </message>
+    <message>
+        <source>仅 ONNX Runtime CUDA</source>
+        <translation>僅使用 ONNX Runtime CUDA</translation>
+    </message>
+    <message>
+        <source>必须使用 TensorRT</source>
+        <translation>必須使用 TensorRT</translation>
+    </message>
+    <message>
+        <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
+        <translation>固定使用 FP32；FP16 尚未通過數值與畫質驗證。</translation>
+    </message>
 </context>
 <context>
     <name>QueueWorker</name>
@@ -1772,6 +1828,10 @@
         <location filename="../../apps/desktop/queue_controller.cpp" line="384" />
         <source>任务可继续使用，但默认设置未能保存。</source>
         <translation>任務可繼續使用，但預設設定未能儲存。</translation>
+    </message>
+    <message>
+        <source>推理后端选择无效，默认设置未保存。</source>
+        <translation>推論後端選擇無效，預設設定未儲存。</translation>
     </message>
 </context>
 <context>

@@ -108,12 +108,22 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
         {"mediaRuntime","ffmpeg fixture"},{"framesPerSegment",256}};
     Json current = legacy;
     current["schemaVersion"] = 2;
-    current["job"]["schemaVersion"] = 2;
+    current["job"]["schemaVersion"] = 3;
+    current["job"]["inferenceBackend"] = "auto";
     current["job"]["expectedModelAdapterId"] = "rife-sdr-v1";
     current["job"]["expectedModelAdapterVersion"] = 1;
     current["identity"]["schemaVersion"] = 2;
     current["identity"]["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
     EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+
+    Json versionTwo = current;
+    versionTwo["schemaVersion"] = 2;
+    versionTwo["job"]["schemaVersion"] = 2;
+    versionTwo["job"].erase("inferenceBackend");
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(versionTwo.dump(),current.dump()));
+    auto changedBackend = current;
+    changedBackend["job"]["inferenceBackend"] = "cuda";
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(versionTwo.dump(),changedBackend.dump()));
 
     current["job"]["expectedModelAdapterId"] = "custom-adapter";
     current["job"]["expectedModelAdapterVersion"] = 2;

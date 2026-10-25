@@ -120,7 +120,6 @@ NVIDIA GPU 不可用|NVIDIA GPU unavailable|NVIDIA GPU 無法使用|NVIDIA GPU �
 离线视频工作台|Offline video workspace|離線影片工作區|オフライン動画ワークスペース
 工作区|Workspace|工作區|ワークスペース
 ⌂     工作区|⌂     Workspace|⌂     工作區|⌂     ワークスペース
-▶     插帧工作室|▶     Interpolation Studio|▶     補幀工作室|▶     フレーム補間スタジオ
 ≋     任务队列|≋     Task Queue|≋     任務佇列|≋     タスク キュー
 ◈     模型中心|◈     Model Center|◈     模型中心|◈     モデルセンター
 ▣     对比预览|▣     Comparison Viewer|▣     比較預覽|▣     比較プレビュー
@@ -130,10 +129,8 @@ NVENC 不可用 · 自动使用%1|NVENC unavailable · using %1 automatically|NV
 NVENC 编码器可初始化|NVENC encoder initialized|NVENC 編碼器已初始化|NVENC エンコーダーを初期化しました
 H.264 编码器不可用|H.264 encoder unavailable|H.264 編碼器無法使用|H.264 エンコーダーは利用できません
 源文件不会被修改|Source files are never modified|來源檔案不會被修改|ソースファイルは変更されません
-插帧工作室|Interpolation Studio|補幀工作室|フレーム補間スタジオ
 让每一段运动都更流畅|Make every movement smoother|讓每一段動作都更流暢|すべての動きをよりなめらかに
 选择视频与目标帧率，RifeLove 会保留原片并生成新文件。|Choose a video and target frame rate. RifeLove keeps the original and creates a new file.|選擇影片與目標影格率，RifeLove 會保留原片並建立新檔案。|動画と目標フレームレートを選択してください。RifeLove は元動画を保持し、新しいファイルを作成します。
-●  RIFE 4.25 · CUDA|●  RIFE 4.25 · CUDA|●  RIFE 4.25 · CUDA|●  RIFE 4.25 · CUDA
 选择文件|Choose file|選擇檔案|ファイルを選択
 将一个视频拖到这里，或选择文件|Drop a video here or choose a file|將影片拖曳到此處，或選擇檔案|ここに動画をドロップするか、ファイルを選択してください
 目标帧率|Target frame rate|目標影格率|目標フレームレート
@@ -189,12 +186,6 @@ CPU 软件|CPU software|CPU 軟體|CPU ソフトウェア
 累计耗时：RIFE 推理 %1 秒 · 视频编码 %2 秒 · 解码 %3 秒 · 预处理/色彩 %4 秒|Elapsed: RIFE inference %1 s · video encoding %2 s · decoding %3 s · preprocessing/color %4 s|累計耗時：RIFE 推論 %1 秒 · 影片編碼 %2 秒 · 解碼 %3 秒 · 前處理/色彩 %4 秒|経過時間：RIFE 推論 %1 秒 · 動画エンコード %2 秒 · デコード %3 秒 · 前処理/色調 %4 秒
  · 输出验证 %1 秒| · output validation %1 s| · 輸出驗證 %1 秒| · 出力検証 %1 秒
 请使用启用媒体和 ONNX CUDA 的桌面构建。|Use a desktop build with media and ONNX CUDA enabled.|請使用已啟用媒體與 ONNX CUDA 的桌面建置版本。|メディアと ONNX CUDA を有効にしたデスクトップ ビルドを使用してください。
-完全本地|Fully local|完全本機|完全ローカル
-视频与模型只在本机处理|Videos and models are processed only on this device|影片與模型只在本機處理|動画とモデルはこの PC 内でのみ処理
-安全输出|Safe output|安全輸出|安全な出力
-保留原片，生成独立文件|Keep the original and create a separate file|保留原片並建立獨立檔案|元動画を保持し、別ファイルを作成
-NVIDIA 加速|NVIDIA acceleration|NVIDIA 加速|NVIDIA アクセラレーション
-RIFE 推理由 CUDA 驱动|RIFE inference powered by CUDA|RIFE 推論由 CUDA 驅動|RIFE 推論は CUDA で実行
 选择本地 RIFE 模型包目录|Select local RIFE model-pack folder|選擇本機 RIFE 模型套件資料夾|ローカル RIFE モデルパックのフォルダーを選択
 本地模型中心|Local Model Center|本機模型中心|ローカル モデルセンター
 管理已校验的 RIFE 模型包。模型文件只从本机目录读取；此页面不会联网或下载权重。|Manage verified RIFE model packs. Model files are read only from local folders; this page does not connect to the internet or download weights.|管理已驗證的 RIFE 模型套件。模型檔案只會從本機資料夾讀取；此頁面不會連線或下載權重。|検証済みの RIFE モデルパックを管理します。モデルファイルはローカルフォルダーからのみ読み込み、このページからネット接続や重みのダウンロードは行いません。
@@ -327,6 +318,17 @@ TensorRT 未能启动，已使用 ONNX Runtime CUDA 完成推理。|TensorRT cou
 无法保存界面语言设置。|Could not save the interface language setting.|無法儲存介面語言設定。|表示言語の設定を保存できませんでした。
 界面语言已保存；关闭并重新启动 RifeLove 后生效。|Language saved. Restart RifeLove to apply it.|介面語言已儲存；關閉並重新啟動 RifeLove 後生效。|言語設定を保存しました。RifeLove を再起動すると反映されます。
 界面语言设置只保存在本机。|The interface language setting is stored only on this device.|介面語言設定只會儲存在本機。|表示言語の設定はこの PC にのみ保存されます。
+推理后端|Inference backend|推理後端|推論バックエンド
+自动：TensorRT 优先，失败时回退 CUDA|Automatic: prefer TensorRT and fall back to CUDA|自動：優先使用 TensorRT，失敗時回退至 CUDA|自動：TensorRT を優先し、失敗時は CUDA に切り替え
+仅 ONNX Runtime CUDA|ONNX Runtime CUDA only|僅使用 ONNX Runtime CUDA|ONNX Runtime CUDA のみ
+必须使用 TensorRT|Require TensorRT|必須使用 TensorRT|TensorRT を必須にする
+推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。|Inference precision is fixed to FP32. FP16 has not passed numerical and image-quality validation, so it is not used for processing.|推論精度目前固定為 FP32。FP16 尚未通過數值與畫質驗證，因此不會用於處理。|推論精度は FP32 に固定されています。FP16 は数値と画質の検証に合格していないため、処理には使用されません。
+FP32 固定；FP16 尚未通过数值与画质验证。|FP32 only; FP16 has not passed numerical and image-quality validation.|固定使用 FP32；FP16 尚未通過數值與畫質驗證。|FP32 のみ。FP16 は数値と画質の検証に合格していません。
+推理后端选择无效，默认设置未保存。|Invalid inference backend selection; defaults were not saved.|推論後端選擇無效，預設設定未儲存。|推論バックエンドの選択が無効なため、既定設定を保存できませんでした。
+RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO
+源帧     ·     RIFE 生成     ·     补帧输出|Source frames     ·     RIFE interpolation     ·     output|來源影格     ·     RIFE 補幀     ·     輸出影片|入力フレーム     ·     RIFE 補間     ·     出力動画
+●  本地模型已校验 · CUDA 推理|●  Local model verified · CUDA inference|●  本機模型已驗證 · CUDA 推論|●  ローカルモデル検証済み · CUDA 推論
+●  CUDA 推理|●  CUDA inference|●  CUDA 推論|●  CUDA 推論
 """
 
 
@@ -358,12 +360,14 @@ def main() -> None:
             source = message.findtext("source", default="")
             sources.add(source)
             translation = entries.get(source, {}).get(locale)
+            node = message.find("translation")
+            if translation is None and node is not None and node.text:
+                translation = node.text
             if translation is None:
                 missing.append(source)
                 continue
             if sorted(expected_placeholders.findall(source)) != sorted(expected_placeholders.findall(translation)):
                 raise ValueError(f"Placeholder mismatch in {locale} translation for {source!r}")
-            node = message.find("translation")
             if node is None:
                 node = ET.SubElement(message, "translation")
             node.attrib.pop("type", None)

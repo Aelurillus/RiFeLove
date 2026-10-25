@@ -116,7 +116,7 @@ void StudioController::setOutput(const QUrl& url) {
     output_ = QDir::toNativeSeparators(QFileInfo(url.toLocalFile()).absoluteFilePath()); emit changed();
 }
 void StudioController::start(const QString& rate, const QUrl& modelDirectory, const QUrl& runtimeDirectory,
-    const QString& encoder, const QVariantMap& encodingOptions) {
+    const QString& encoder, const QVariantMap& encodingOptions, const QString& inferenceBackend) {
     if (busy_) return;
     try {
         if (source_.isEmpty() || media_.isEmpty() || !inspectedMedia_) throw std::invalid_argument("Select and inspect a source video first");
@@ -139,6 +139,7 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         job.sourceDurationEstimate = sourceDurationEstimate_;
         job.settings.encoding = rifelove::desktop::makeVideoEncodingSettings(resolvedEncoder, encodingOptions);
         job.settings.targetRate = targetRate;
+        job.settings.inferenceBackend = utf8(inferenceBackend);
         job.settings.encoding.videoStreamIndex = inspectedMedia_->preferredVideoStream;
         job.settings.encoding.frameRate = targetRate;
         const auto sourceBaseDenominator = selectedStream->timeBase.denominator();

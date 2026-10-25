@@ -982,6 +982,42 @@
         <source>RIFE 推理由 CUDA 驱动</source>
         <translation>RIFE inference powered by CUDA</translation>
     </message>
+    <message>
+        <source>RIFELOVE  /  MOTION STUDIO</source>
+        <translation>RIFELOVE  /  MOTION STUDIO</translation>
+    </message>
+    <message>
+        <source>源帧     ·     RIFE 生成     ·     补帧输出</source>
+        <translation>Source frames     ·     RIFE interpolation     ·     output</translation>
+    </message>
+    <message>
+        <source>●  本地模型已校验 · CUDA 推理</source>
+        <translation>●  Local model verified · CUDA inference</translation>
+    </message>
+    <message>
+        <source>●  CUDA 推理</source>
+        <translation>●  CUDA inference</translation>
+    </message>
+    <message>
+        <source>推理后端</source>
+        <translation>Inference backend</translation>
+    </message>
+    <message>
+        <source>自动：TensorRT 优先，失败时回退 CUDA</source>
+        <translation>Automatic: prefer TensorRT and fall back to CUDA</translation>
+    </message>
+    <message>
+        <source>仅 ONNX Runtime CUDA</source>
+        <translation>ONNX Runtime CUDA only</translation>
+    </message>
+    <message>
+        <source>必须使用 TensorRT</source>
+        <translation>Require TensorRT</translation>
+    </message>
+    <message>
+        <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
+        <translation>Inference precision is fixed to FP32. FP16 has not passed numerical and image-quality validation, so it is not used for processing.</translation>
+    </message>
 </context>
 <context>
     <name>ModelCenterPage</name>
@@ -1647,6 +1683,26 @@ Add a verified model pack containing model.json</translation>
         <translation>The queue is empty
 Import multiple videos or a folder to get started</translation>
     </message>
+    <message>
+        <source>推理后端</source>
+        <translation>Inference backend</translation>
+    </message>
+    <message>
+        <source>自动：TensorRT 优先，失败时回退 CUDA</source>
+        <translation>Automatic: prefer TensorRT and fall back to CUDA</translation>
+    </message>
+    <message>
+        <source>仅 ONNX Runtime CUDA</source>
+        <translation>ONNX Runtime CUDA only</translation>
+    </message>
+    <message>
+        <source>必须使用 TensorRT</source>
+        <translation>Require TensorRT</translation>
+    </message>
+    <message>
+        <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
+        <translation>FP32 only; FP16 has not passed numerical and image-quality validation.</translation>
+    </message>
 </context>
 <context>
     <name>QueueWorker</name>
@@ -1772,6 +1828,10 @@ Showing the first 50 details only.</translation>
         <location filename="../../apps/desktop/queue_controller.cpp" line="384" />
         <source>任务可继续使用，但默认设置未能保存。</source>
         <translation>The task can continue, but default settings could not be saved.</translation>
+    </message>
+    <message>
+        <source>推理后端选择无效，默认设置未保存。</source>
+        <translation>Invalid inference backend selection; defaults were not saved.</translation>
     </message>
 </context>
 <context>
