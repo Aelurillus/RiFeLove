@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mergePublishedRelease, validateVersion } from "./release-manifest.mjs";
 import { assertPublicObjectAccessAllowed } from "./oss-public-access.mjs";
+import { verifyAnonymousObject } from "./anonymous-object-verification.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");
@@ -74,7 +75,7 @@ if (existingOss) {
 } else {
   await uploadToOss(oss, archivePath, key, fileName, archiveInfo.size, sha256);
 }
-await verifyAnonymousDownload(downloadUrl, archiveInfo.size);
+await verifyAnonymousObject(downloadUrl, archiveInfo.size, sha256);
 
 if (metadata.storjBackup) {
   const storjBucket = process.env.STORJ_BUCKET || storage.backup?.storjBucket;
@@ -117,7 +118,7 @@ async function uploadToOss(client, filePath, objectKey, objectFileName, sizeByte
       parallel: 2,
       partSize: 64 * 1024 * 1024,
       mime: "application/zip",
-      meta: { sha256: fileHash },
+      meta: { sha256: fileHash, product: "RifeLove", "size-bytes": String(sizeBytes) },
       headers: {
         "Content-Disposition": `attachment; filename="${objectFileName}"`,
         "Cache-Control": "public, max-age=31536000, immutable",
@@ -205,17 +206,6 @@ async function headStorjObject(client, targetBucket, objectKey) {
 function verifyObject(actualSize, actualHash, expectedSize, expectedHash, provider) {
   if (Number(actualSize) !== expectedSize || actualHash !== expectedHash) {
     throw new Error(`${provider} already has an object at this release key with different contents`);
-  }
-}
-
-async function verifyAnonymousDownload(url, expectedSize) {
-  try {
-    const response = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(20_000) });
-    if (!response.ok || Number(response.headers.get("content-length")) !== expectedSize) {
-      throw new Error("public object check failed");
-    }
-  } catch {
-    throw new Error("OSS upload exists, but anonymous download is unavailable; check this object's public-read permission and endpoint");
   }
 }
 

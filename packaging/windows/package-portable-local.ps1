@@ -114,7 +114,11 @@ This is a private local-use bundle generated from the current workstation packag
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         $hashLines += "$hash  $relative"
     }
-    Set-Content -LiteralPath (Join-Path $target "SHA256SUMS.txt") -Value $hashLines -Encoding ASCII
+    [IO.File]::WriteAllLines(
+        (Join-Path $target "SHA256SUMS.txt"),
+        [string[]]$hashLines,
+        [Text.UTF8Encoding]::new($false)
+    )
     if (Get-ChildItem -LiteralPath $target -Force -Recurse | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) {
         throw "The offline package still contains a linked file or directory."
     }

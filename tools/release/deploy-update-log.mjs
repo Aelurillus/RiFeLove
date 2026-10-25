@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateReleaseManifest } from "./release-manifest.mjs";
 import { assertPublicObjectAccessAllowed } from "./oss-public-access.mjs";
+import { verifyAnonymousObject } from "./anonymous-object-verification.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");
@@ -18,6 +19,7 @@ validateReleaseManifest(manifest);
 const bucket = process.env.OSS_BUCKET || storage.primary?.bucket;
 const region = process.env.OSS_REGION || storage.primary?.region;
 const endpoint = process.env.OSS_ENDPOINT || storage.primary?.endpoint || `https://${region}.aliyuncs.com`;
+const publicBaseUrl = normalizePublicBaseUrl(process.env.OSS_UPDATELOG_PUBLIC_BASE_URL || storage.primary?.publicBaseUrl);
 const prefix = (process.env.OSS_UPDATELOG_PREFIX || storage.primary?.updateLogPrefix || "rifelove-updatelog")
   .replace(/^\/+|\/+$/g, "");
 const accessKeyId = process.env.OSS_ACCESS_KEY_ID;
@@ -59,7 +61,12 @@ if (dryRun) {
   for (const item of planned) console.log(`${item.key} (${item.sizeBytes} bytes)`);
   console.log(`Current URL: ${siteUrl}`);
   console.log(`Dated URL: ${versionUrl}`);
+  if (!publicBaseUrl) console.log("Online HTML needs a custom HTTPS domain bound to this OSS bucket; the default OSS domain forces downloads.");
   process.exit(0);
+}
+
+if (!publicBaseUrl) {
+  throw new Error("Refusing to publish an unusable OSS update page: bind a custom HTTPS domain to the bucket and set OSS_UPDATELOG_PUBLIC_BASE_URL.");
 }
 
 if (!accessKeyId || !accessKeySecret) {
@@ -85,7 +92,8 @@ for (const item of planned) {
   if (existing && existing.product !== "RifeLove") {
     throw new Error(`Refusing to overwrite an OSS object not marked as a RifeLove update-log object: ${item.key}`);
   }
-  if (existing && existing.sizeBytes === item.sizeBytes && existing.sha256 === sha256) {
+  if (existing && existing.sizeBytes === item.sizeBytes && existing.sha256 === sha256 &&
+      existing.product === "RifeLove" && existing.declaredSize === item.sizeBytes && existing.contentDisposition === "inline") {
     continue;
   }
   if (item.key.startsWith(`${datedPrefix}/`) && existing) {
@@ -94,25 +102,29 @@ for (const item of planned) {
   await client.put(item.key, item.filePath, {
     headers: {
       "Content-Type": contentType(item.relative),
+      "Content-Disposition": "inline",
       "Cache-Control": item.relative === "index.html" || item.relative === "releases.json"
         ? "public, max-age=60, must-revalidate"
         : "public, max-age=31536000, immutable",
       "x-oss-object-acl": storage.primary?.publicObjectAcl || "public-read",
     },
-    meta: { sha256, product: "RifeLove" },
+    meta: { sha256, product: "RifeLove", "size-bytes": String(item.sizeBytes) },
   });
   await client.putACL(item.key, storage.primary?.publicObjectAcl || "public-read");
   const uploaded = await headObject(client, item.key);
-  if (!uploaded || uploaded.sizeBytes !== item.sizeBytes || uploaded.sha256 !== sha256) {
+  if (!uploaded || uploaded.sizeBytes !== item.sizeBytes || uploaded.declaredSize !== item.sizeBytes ||
+      uploaded.sha256 !== sha256 || uploaded.product !== "RifeLove" || uploaded.contentDisposition !== "inline") {
     throw new Error(`OSS verification failed for ${item.key}`);
   }
-  await verifyAnonymousDownload(makePublicObjectUrl(bucket, region, item.key), item.sizeBytes);
+  await verifyAnonymousObject(makePublicObjectUrl(bucket, region, item.key), item.sizeBytes, sha256, fetch, {
+    requireInlineHtml: contentType(item.relative) === "text/html; charset=utf-8",
+  });
   console.log(`Verified OSS object ${item.key} (${item.sizeBytes} bytes, SHA-256 ${sha256})`);
 }
 
 for (const [url, file] of [[siteUrl, "index.html"], [versionUrl, "index.html"]]) {
   const expected = files.find(item => item.relative === file);
-  await verifyAnonymousDownload(url, expected.sizeBytes);
+  await verifyAnonymousObject(url, expected.sizeBytes, await hashFile(expected.filePath), fetch, { requireInlineHtml: true });
 }
 console.log(`Update log is available at ${siteUrl}`);
 console.log(`Version snapshot (${latest.version}, ${latest.date}) is available at ${versionUrl}`);
@@ -147,21 +159,12 @@ async function headObject(oss, key) {
       sizeBytes: Number(headers["content-length"]),
       sha256: headers["x-oss-meta-sha256"],
       product: headers["x-oss-meta-product"],
+      declaredSize: Number(headers["x-oss-meta-size-bytes"] ?? headers["x-oss-meta-sizebytes"]),
+      contentDisposition: headers["content-disposition"],
     };
   } catch (error) {
     if (error?.status === 404 || error?.code === "NoSuchKey" || error?.code === "NotFound") return null;
     throw new Error(`Could not safely inspect the OSS update-log object (${error?.code || "storage error"})`);
-  }
-}
-
-async function verifyAnonymousDownload(url, expectedSize) {
-  try {
-    const response = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(20_000) });
-    if (!response.ok || Number(response.headers.get("content-length")) !== expectedSize) {
-      throw new Error("anonymous object check failed");
-    }
-  } catch {
-    throw new Error(`OSS update-log object is not publicly readable or has the wrong size: ${url}`);
   }
 }
 
@@ -179,9 +182,24 @@ function contentType(fileName) {
   })[extension];
 }
 
+function normalizePublicBaseUrl(value) {
+  if (!value) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("OSS_UPDATELOG_PUBLIC_BASE_URL must be a valid HTTPS URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash ||
+      url.hostname.toLowerCase().endsWith(".aliyuncs.com")) {
+    throw new Error("OSS_UPDATELOG_PUBLIC_BASE_URL must be a custom HTTPS domain without credentials, query or fragment");
+  }
+  return url.toString().replace(/\/+$/, "");
+}
+
 function makePublicObjectUrl(targetBucket, targetRegion, objectKey) {
   const encodedKey = objectKey.split("/").map(encodeURIComponent).join("/");
-  return `https://${targetBucket}.${targetRegion}.aliyuncs.com/${encodedKey}`;
+  return `${publicBaseUrl || `https://${targetBucket}.${targetRegion}.aliyuncs.com`}/${encodedKey}`;
 }
 
 async function hashFile(filePath) {
