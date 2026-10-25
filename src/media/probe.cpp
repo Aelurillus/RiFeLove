@@ -109,10 +109,19 @@ MediaInfo MediaEngine::probe(const std::string& path, std::stop_token stop) {
         info.declaredFrameCount = stream->nb_frames;
         info.bitRate = parameters->bit_rate;
         info.disposition = stream->disposition;
+        info.defaultTrack = (stream->disposition & AV_DISPOSITION_DEFAULT) != 0;
+        info.forcedTrack = (stream->disposition & AV_DISPOSITION_FORCED) != 0;
         info.width = parameters->width;
         info.height = parameters->height;
         info.sampleRate = parameters->sample_rate;
         info.channels = parameters->ch_layout.nb_channels;
+        if (parameters->codec_type == AVMEDIA_TYPE_AUDIO) {
+            if (const auto* sampleFormat = av_get_sample_fmt_name(static_cast<AVSampleFormat>(parameters->format)))
+                info.sampleFormat = sampleFormat;
+            std::array<char, 128> channelLayout{};
+            if (av_channel_layout_describe(&parameters->ch_layout,channelLayout.data(),channelLayout.size()) >= 0)
+                info.channelLayout = channelLayout.data();
+        }
         info.metadata = detail::metadata(stream->metadata);
         info.declaredEnd = detail::declaredEnd(context,stream);
         info.initialPadding = parameters->initial_padding;

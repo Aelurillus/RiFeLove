@@ -157,7 +157,12 @@ TEST(VideoMuxWriter, WritesVideoOnlyKeyframedSegmentsAtTheGlobalTimelineOrigin) 
     ASSERT_EQ(std::system(command.c_str()),0) << "Could not create local segment fixture with FFmpeg";
     const auto sourceInfo = MediaEngine::probe(source.string());
     ASSERT_EQ(sourceInfo.streams.size(),2U);
-    ASSERT_EQ(std::count_if(sourceInfo.streams.begin(),sourceInfo.streams.end(),[](const auto& stream) { return stream.type == "audio"; }),1);
+    const auto audio = std::find_if(sourceInfo.streams.begin(),sourceInfo.streams.end(),[](const auto& stream) { return stream.type == "audio"; });
+    ASSERT_NE(audio,sourceInfo.streams.end());
+    EXPECT_EQ(audio->sampleRate,48000);
+    EXPECT_EQ(audio->channels,1);
+    EXPECT_EQ(audio->channelLayout,"mono");
+    EXPECT_FALSE(audio->sampleFormat.empty());
     DecodedFrame retained{};
     (void)MediaEngine::decodeVideo(source.string(),[&](const DecodedFrame& frame) { if (!retained.storage) retained = frame; });
     rifelove::media::VideoEncodingSettings settings;

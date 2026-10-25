@@ -14,7 +14,7 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add structured local logging for desktop, CLI, queue and processing pipeline.
   - spdlog writes timestamped JSONL records to a bounded rotating file; Qt messages, encoder fallback, completion and failure events are covered. Long-running processing now records path-free output/AI frame counts, throughput, selected encoder and cumulative inference/encode time every 15 seconds. The desktop smoke test parses the generated local log and unit tests cover JSON escaping and file rotation.
 - [ ] Complete configuration/profile and service/backend interface coverage.
-  - Qt 6.12 / MinGW 15.1 Studio builds locally, with a background processing service and real QML workflow tests. Named local settings profiles can now be saved, validated, listed, applied and removed from Studio and Queue; profile storage and input validation have focused unit coverage. Model/profile service boundaries, profile import/export, broader settings coverage and backend interface work remain open.
+  - Qt 6.12 / MinGW 15.1 Studio builds locally, with a background processing service and real QML workflow tests. Named local settings profiles can now be saved, validated, listed, applied, removed and transferred as versioned JSON from Studio and Queue; profile storage and import validation have focused unit coverage. Model/profile service boundaries, broader settings coverage and backend interface work remain open.
 - [x] Add offline-by-default local build/test runner and local JSON/JUnit reports.
 - [x] Add read-only queue inspection and Windows Unicode CLI regression coverage.
 - [x] Preserve the original complete Master Plan and add SRS/ADD requirement evidence documents.
@@ -24,6 +24,8 @@ Current execution mode: local project, local Git, local builds/tests and local r
 ## Phase 2 — media engine (active, incomplete)
 
 - [x] Bind a pinned local FFmpeg shared SDK and probe streams, rational time bases, metadata and color.
+- [x] Present probed container and stream details in Studio and CLI, including audio sample format/layout, track language/title, chapter count, video rate/color data, rotation and available static HDR metadata.
+  - The UI shows a collapsed local-only details list and the native CLI emits the corresponding fields as JSON. The desktop workflow covers video/audio track display; unit media checks cover the generated audio format/layout. Full codec/container/HDR and subtitle fixture coverage remains open.
 - [x] Decode software frames with presentation reordering/drain and retained original-precision storage.
 - [x] Scan actual timestamp cadence with fractional-CFR quantization handling and VFR fixtures.
 - [x] Stream-copy remux MP4/MOV/MKV with compatible audio/subtitles, chapters, no-overwrite publication and cancellation API.

@@ -341,6 +341,8 @@
 </context>
 <context>
     <name>Main</name>
+    <message><source>详细媒体信息（%1 条轨道）</source><translation>媒體詳細資訊（%1 條軌道）</translation></message>
+    <message><source>收起媒体详细信息</source><translation>收起媒體詳細資訊</translation></message>
     <message>
         <location filename="../Main.qml" line="53" />
         <source>模型校验失败</source>
@@ -1774,6 +1776,33 @@
 </context>
 <context>
     <name>StudioController</name>
+    <message><source>%1 秒</source><translation>%1 秒</translation></message>
+    <message><source>%1 kb/s</source><translation>%1 kb/s</translation></message>
+    <message><source>容器 %1 · 时长 %2 · 总码率 %3 · %4 条轨道 · %5 个章节</source><translation>容器 %1 · 時長 %2 · 總位元率 %3 · %4 條軌道 · %5 個章節</translation></message>
+    <message><source>视频</source><translation>影片</translation></message>
+    <message><source>音频</source><translation>音訊</translation></message>
+    <message><source>字幕</source><translation>字幕</translation></message>
+    <message><source>数据</source><translation>資料</translation></message>
+    <message><source>附件</source><translation>附件</translation></message>
+    <message><source>其他</source><translation>其他</translation></message>
+    <message><source>轨道 %1 · %2 · %3</source><translation>軌道 %1 · %2 · %3</translation></message>
+    <message><source>默认</source><translation>預設</translation></message>
+    <message><source>强制</source><translation>強制</translation></message>
+    <message><source>%1 × %2 · 平均 %3 FPS · 标称 %4 FPS · %5 · %6-bit</source><translation>%1 × %2 · 平均 %3 FPS · 標稱 %4 FPS · %5 · %6-bit</translation></message>
+    <message><source>色彩：%1 / %2 / %3 / %4</source><translation>色彩：%1 / %2 / %3 / %4</translation></message>
+    <message><source>HDR 传递函数</source><translation>HDR 傳遞函數</translation></message>
+    <message><source>峰值亮度 %1 cd/m²</source><translation>峰值亮度 %1 cd/m²</translation></message>
+    <message><source>最低亮度 %1 cd/m²</source><translation>最低亮度 %1 cd/m²</translation></message>
+    <message><source>显示器元数据：%1</source><translation>顯示器中繼資料：%1</translation></message>
+    <message><source>内容亮度 MaxCLL %1 / MaxFALL %2 cd/m²</source><translation>內容亮度 MaxCLL %1 / MaxFALL %2 cd/m²</translation></message>
+    <message><source>显示旋转 %1°</source><translation>顯示旋轉 %1°</translation></message>
+    <message><source>含显示变换矩阵</source><translation>包含顯示轉換矩陣</translation></message>
+    <message><source>%1 Hz · %2 声道 · %3 · %4</source><translation>%1 Hz · %2 聲道 · %3 · %4</translation></message>
+    <message><source>声道布局未知</source><translation>聲道配置未知</translation></message>
+    <message><source>采样格式未知</source><translation>取樣格式未知</translation></message>
+    <message><source>码率 %1 kb/s</source><translation>位元率 %1 kb/s</translation></message>
+    <message><source>语言：%1</source><translation>語言：%1</translation></message>
+    <message><source>标题：%1</source><translation>標題：%1</translation></message>
     <message>
         <location filename="../../apps/desktop/studio_controller.cpp" line="26" />
         <source>软件 H.264</source>

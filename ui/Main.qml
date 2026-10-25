@@ -31,6 +31,7 @@ ApplicationWindow {
     property url runtimeFolder: ""
     property bool advancedOpen: false
     property bool encodingAdvancedOpen: false
+    property bool mediaDetailsOpen: false
     property int currentPage: 0
     readonly property bool queueActive: processingAvailable && (taskQueue.busy || taskQueue.importing)
     readonly property bool active: processingAvailable && (studio.busy || queueActive)
@@ -64,6 +65,7 @@ ApplicationWindow {
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
     readonly property string state: processingAvailable ? studio.status : "unavailable"
+    onInfoChanged: mediaDetailsOpen = false
     readonly property bool selectedEncoderReady: {
         if (!processingAvailable || !window.info.encoders) return false
         const probes = window.info.encoders
@@ -380,6 +382,46 @@ ApplicationWindow {
                             Label { text: processingAvailable && studio.source ? studio.source : qsTr("将一个视频拖到这里，或选择文件"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: "#c4d1e4" }
                             Label { visible: !!window.info.width; text: (window.info.width || 0) + " × " + (window.info.height || 0) + "   ·   " + (window.info.rate || "—") + " FPS   ·   " + (window.info.codec || "") + "   ·   " + (window.info.depth || 0) + "-bit"; color: "#9aaac0" }
                             Label { visible: !!window.info.color; text: window.info.color || ""; color: "#9aaac0"; font.pixelSize: 12 }
+                            ActionButton {
+                                objectName: "studioMediaDetailsToggle"
+                                visible: Number(window.info.streams || 0) > 0
+                                flat: true
+                                Layout.alignment: Qt.AlignLeft
+                                text: window.mediaDetailsOpen
+                                    ? qsTr("收起媒体详细信息")
+                                    : qsTr("详细媒体信息（%1 条轨道）").arg(Number(window.info.streams || 0))
+                                onClicked: window.mediaDetailsOpen = !window.mediaDetailsOpen
+                            }
+                            Label {
+                                visible: window.mediaDetailsOpen && !!window.info.containerSummary
+                                text: window.info.containerSummary || ""
+                                color: "#9aaac0"
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                            }
+                            Repeater {
+                                model: window.mediaDetailsOpen ? window.info.streamDetails || [] : []
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    objectName: "studioMediaStreamDetail"
+                                    Layout.fillWidth: true
+                                    implicitHeight: streamInfoLayout.implicitHeight + 16
+                                    color: "#101722"
+                                    radius: 7
+                                    ColumnLayout {
+                                        id: streamInfoLayout
+                                        anchors.fill: parent
+                                        anchors.margins: 8
+                                        spacing: 3
+                                        Label { text: modelData.heading || ""; font.bold: true; font.pixelSize: 12; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { text: modelData.summary || ""; color: "#c4d1e4"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { visible: !!modelData.color; text: modelData.color || ""; color: "#9aaac0"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                        Label { visible: !!modelData.metadata; text: modelData.metadata || ""; color: "#9aaac0"; font.pixelSize: 11; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    }
+                                }
+                            }
                         }
                     }
                     LocalProfilePicker {

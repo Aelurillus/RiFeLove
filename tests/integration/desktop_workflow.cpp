@@ -143,8 +143,10 @@ int main(int argc, char** argv) {
         root->setProperty("currentPage",0);
         auto* button = root->findChild<QObject*>("startButton");
         auto* statusLabel = root->findChild<QObject*>("studioStatusLabel");
+        auto* mediaDetailsToggle = root->findChild<QObject*>("studioMediaDetailsToggle");
         auto* targetRate = root->findChild<QObject*>("targetRate");
         auto* studioEncoder = root->findChild<QObject*>("studioEncoder");
+        require(mediaDetailsToggle,"Studio media details control is unavailable");
         waitUntil([&] {
             return !taskQueue.verifyingModels() && taskQueue.models().size() == 1 &&
                 taskQueue.models().front().toMap().value("valid").toBool();
@@ -247,6 +249,21 @@ int main(int argc, char** argv) {
         wait(studio);
         require(studio.status() == "inspected", "Source inspection failed");
         require(studio.media().value("width").toInt() == 96 && studio.media().value("height").toInt() == 64, "Wrong imported dimensions");
+        const auto streamDetails = studio.media().value("streamDetails").toList();
+        require(streamDetails.size() == 2 && streamDetails[0].toMap().value("heading").toString().contains(QStringLiteral("视频")) &&
+                streamDetails[1].toMap().value("heading").toString().contains(QStringLiteral("音频")) &&
+                streamDetails[1].toMap().value("summary").toString().contains(QStringLiteral("48000 Hz")) &&
+                streamDetails[1].toMap().value("summary").toString().contains(QStringLiteral("mono")),
+            "Studio did not present both the video stream and audio sample details");
+        require(root->property("mediaDetailsOpen").toBool() == false,"Media details should start collapsed");
+        click(mediaDetailsToggle,"open source media details");
+        require(root->property("mediaDetailsOpen").toBool() &&
+                root->findChildren<QObject*>("studioMediaStreamDetail").size() == streamDetails.size(),
+            "Studio did not display its inspected media streams");
+        click(mediaDetailsToggle,"collapse source media details");
+        require(!root->property("mediaDetailsOpen").toBool() &&
+                root->findChildren<QObject*>("studioMediaStreamDetail").isEmpty(),
+            "Studio did not collapse the inspected media streams");
         require(studio.media().value("color").toString().contains("bt470bg") && studio.media().value("color").toString().contains("smpte170m"), "Legacy SDR color tags were not detected");
         const auto encoderCapabilities = studio.media().value("encoders").toMap();
         const bool preflightSoftwareFallback = !studio.media().value("nvencContextOpened").toBool() &&

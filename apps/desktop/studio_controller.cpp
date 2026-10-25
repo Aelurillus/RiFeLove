@@ -243,6 +243,69 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
             inspectedMedia_ = *event.media;
             status_ = "inspected";
             sourceDurationEstimate_.reset();
+            const auto durationText = event.media->duration
+                ? tr("%1 秒").arg(QString::number(seconds(*event.media->duration),'f',2)) : tr("未知");
+            const auto totalBitRate = event.media->bitRate > 0 ? tr("%1 kb/s").arg(event.media->bitRate / 1000) : tr("未知");
+            media_["containerSummary"] = tr("容器 %1 · 时长 %2 · 总码率 %3 · %4 条轨道 · %5 个章节")
+                .arg(text(event.media->format),durationText,totalBitRate)
+                .arg(event.media->streams.size()).arg(event.media->chapters.size());
+            QVariantList streamDetails;
+            streamDetails.reserve(static_cast<qsizetype>(event.media->streams.size()));
+            for (const auto& stream : event.media->streams) {
+                QString typeLabel;
+                if (stream.type == "video") typeLabel = tr("视频");
+                else if (stream.type == "audio") typeLabel = tr("音频");
+                else if (stream.type == "subtitle") typeLabel = tr("字幕");
+                else if (stream.type == "data") typeLabel = tr("数据");
+                else if (stream.type == "attachment") typeLabel = tr("附件");
+                else typeLabel = tr("其他");
+                QString heading = tr("轨道 %1 · %2 · %3").arg(stream.index).arg(typeLabel,text(stream.codec));
+                if (stream.defaultTrack) heading += QStringLiteral(" · ") + tr("默认");
+                if (stream.forcedTrack) heading += QStringLiteral(" · ") + tr("强制");
+
+                QStringList summary;
+                QString colorSummary;
+                if (stream.type == "video") {
+                    const auto averageRate = stream.averageRate ? text(stream.averageRate->toString()) : tr("未知");
+                    const auto nominalRate = stream.nominalRate ? text(stream.nominalRate->toString()) : tr("未知");
+                    summary.push_back(tr("%1 × %2 · 平均 %3 FPS · 标称 %4 FPS · %5 · %6-bit")
+                        .arg(stream.width).arg(stream.height).arg(averageRate,nominalRate)
+                        .arg(text(stream.color.pixelFormat)).arg(stream.color.bitDepth));
+                    colorSummary = tr("色彩：%1 / %2 / %3 / %4")
+                        .arg(text(stream.color.primaries),text(stream.color.transfer),text(stream.color.matrix),text(stream.color.range));
+                    if (stream.color.hdrTransfer) colorSummary += QStringLiteral(" · ") + tr("HDR 传递函数");
+                    if (stream.color.masteringDisplay) {
+                        QStringList mastering;
+                        if (stream.color.masteringDisplay->maxLuminance)
+                            mastering.push_back(tr("峰值亮度 %1 cd/m²").arg(text(stream.color.masteringDisplay->maxLuminance->toString())));
+                        if (stream.color.masteringDisplay->minLuminance)
+                            mastering.push_back(tr("最低亮度 %1 cd/m²").arg(text(stream.color.masteringDisplay->minLuminance->toString())));
+                        if (!mastering.isEmpty()) colorSummary += QStringLiteral(" · ") + tr("显示器元数据：%1").arg(mastering.join(QStringLiteral("，")));
+                    }
+                    if (stream.color.contentLight)
+                        colorSummary += QStringLiteral(" · ") + tr("内容亮度 MaxCLL %1 / MaxFALL %2 cd/m²")
+                            .arg(stream.color.contentLight->maxContentLight).arg(stream.color.contentLight->maxFrameAverageLight);
+                    if (stream.rotationDegrees)
+                        colorSummary += QStringLiteral(" · ") + tr("显示旋转 %1°").arg(QString::number(*stream.rotationDegrees,'f',2));
+                    if (stream.displayMatrix) colorSummary += QStringLiteral(" · ") + tr("含显示变换矩阵");
+                } else if (stream.type == "audio") {
+                    summary.push_back(tr("%1 Hz · %2 声道 · %3 · %4")
+                        .arg(stream.sampleRate > 0 ? QString::number(stream.sampleRate) : tr("未知"))
+                        .arg(stream.channels > 0 ? QString::number(stream.channels) : tr("未知"))
+                        .arg(text(stream.channelLayout).isEmpty() ? tr("声道布局未知") : text(stream.channelLayout))
+                        .arg(text(stream.sampleFormat).isEmpty() ? tr("采样格式未知") : text(stream.sampleFormat)));
+                }
+                if (stream.bitRate > 0) summary.push_back(tr("码率 %1 kb/s").arg(stream.bitRate / 1000));
+                QStringList metadataSummary;
+                if (const auto language = stream.metadata.find("language"); language != stream.metadata.end())
+                    metadataSummary.push_back(tr("语言：%1").arg(text(language->second)));
+                if (const auto title = stream.metadata.find("title"); title != stream.metadata.end())
+                    metadataSummary.push_back(tr("标题：%1").arg(text(title->second)));
+                QVariantMap detail{{"index",stream.index},{"heading",heading},{"summary",summary.join(QStringLiteral(" · "))},
+                    {"color",colorSummary},{"metadata",metadataSummary.join(QStringLiteral(" · "))}};
+                streamDetails.push_back(detail);
+            }
+            media_["streamDetails"] = streamDetails;
             QVariantMap encoders;
             for (const auto& capability : event.encoderCapabilities) {
                 QVariantMap value;

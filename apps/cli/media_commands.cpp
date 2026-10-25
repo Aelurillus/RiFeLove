@@ -66,7 +66,10 @@ void writeProbe(std::ostream& out, const MediaInfo& info) {
             << ",\"duration\":" << number(stream.duration) << ",\"average_rate\":" << number(stream.averageRate)
             << ",\"nominal_rate\":" << number(stream.nominalRate) << ",\"declared_frames\":" << stream.declaredFrameCount
             << ",\"bit_rate\":" << stream.bitRate << ",\"width\":" << stream.width << ",\"height\":" << stream.height
-            << ",\"sample_rate\":" << stream.sampleRate << ",\"channels\":" << stream.channels << ",\"disposition\":" << stream.disposition
+            << ",\"sample_rate\":" << stream.sampleRate << ",\"channels\":" << stream.channels
+            << ",\"sample_format\":" << jsonString(stream.sampleFormat) << ",\"channel_layout\":" << jsonString(stream.channelLayout)
+            << ",\"disposition\":" << stream.disposition << ",\"default_track\":" << (stream.defaultTrack ? "true" : "false")
+            << ",\"forced_track\":" << (stream.forcedTrack ? "true" : "false")
             << ",\"declared_end\":" << number(stream.declaredEnd) << ",\"initial_padding\":" << stream.initialPadding
             << ",\"rotation_degrees\":";
         if (stream.rotationDegrees) out << std::setprecision(16) << *stream.rotationDegrees;

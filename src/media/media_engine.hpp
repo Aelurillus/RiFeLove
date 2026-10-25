@@ -65,6 +65,10 @@ struct StreamInfo {
     int height;
     int sampleRate;
     int channels;
+    std::string sampleFormat;
+    std::string channelLayout;
+    bool defaultTrack = false;
+    bool forcedTrack = false;
     std::optional<double> rotationDegrees; // FFmpeg display-matrix counterclockwise angle.
     std::optional<std::array<std::int32_t, 9>> displayMatrix; // Preserves rotation, reflection and display offsets.
     ColorInfo color;
