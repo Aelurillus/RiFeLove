@@ -206,11 +206,21 @@ if(RIFELOVE_BUILD_TESTS)
       set_tests_properties(OnnxCuda.NativeReference PROPERTIES TIMEOUT 180)
       if(RIFELOVE_TENSORRT_RUNTIME_DIR)
         foreach(required_runtime_file IN ITEMS onnxruntime.dll onnxruntime_providers_cuda.dll onnxruntime_providers_tensorrt.dll
-            nvinfer_10.dll nvinfer_plugin_10.dll nvonnxparser_10.dll cudart64_12.dll cublas64_12.dll cublasLt64_12.dll cufft64_11.dll)
+            nvinfer_10.dll nvinfer_plugin_10.dll nvinfer_builder_resource_10.dll nvonnxparser_10.dll
+            cudart64_12.dll cublas64_12.dll cublasLt64_12.dll cufft64_11.dll)
           if(NOT EXISTS "${RIFELOVE_TENSORRT_RUNTIME_DIR}/${required_runtime_file}")
             message(FATAL_ERROR "Pinned TensorRT runtime is missing ${RIFELOVE_TENSORRT_RUNTIME_DIR}/${required_runtime_file}")
           endif()
         endforeach()
+        set(rifelove_tensorrt_path_collision FALSE)
+        set(rifelove_shadow_builder_resource "${RIFELOVE_ONNX_ROOT}/lib/nvinfer_builder_resource_10.dll")
+        if(EXISTS "${rifelove_shadow_builder_resource}")
+          file(SIZE "${rifelove_shadow_builder_resource}" rifelove_shadow_builder_size)
+          file(SIZE "${RIFELOVE_TENSORRT_RUNTIME_DIR}/nvinfer_builder_resource_10.dll" rifelove_selected_builder_size)
+          if(NOT "${rifelove_shadow_builder_size}" STREQUAL "${rifelove_selected_builder_size}")
+            set(rifelove_tensorrt_path_collision TRUE)
+          endif()
+        endif()
         add_test(NAME OnnxTensorRt.NativeReference COMMAND rifelove-validate-cuda
           "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_TENSORRT_RUNTIME_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/native-tensorrt-validation.json" tensorrt)
         set_tests_properties(OnnxTensorRt.NativeReference PROPERTIES TIMEOUT 300)
@@ -321,6 +331,13 @@ if(RIFELOVE_BUILD_TESTS)
         add_test(NAME Pipeline.Integration COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/pipeline_test.py
           $<TARGET_FILE:rifelove-cli> ${RIFELOVE_FFMPEG_TOOL} ${RIFELOVE_FFPROBE_TOOL} "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_ONNX_ROOT}/lib")
         set_tests_properties(Pipeline.Integration PROPERTIES TIMEOUT 180)
+        if(rifelove_tensorrt_path_collision)
+          add_test(NAME Pipeline.TensorRtRuntimeIsolation
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/tensorrt_runtime_isolation_test.py
+              $<TARGET_FILE:rifelove-cli> ${RIFELOVE_FFMPEG_TOOL} ${RIFELOVE_FFPROBE_TOOL}
+              "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_ONNX_ROOT}/lib" "${RIFELOVE_TENSORRT_RUNTIME_DIR}")
+          set_tests_properties(Pipeline.TensorRtRuntimeIsolation PROPERTIES TIMEOUT 360)
+        endif()
         if(RIFELOVE_MODEL_TOOLS_PYTHON)
           add_test(NAME Pipeline.PytorchReference COMMAND "${RIFELOVE_MODEL_TOOLS_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/validation/video_reference.py"
             $<TARGET_FILE:rifelove-cli> ${RIFELOVE_FFMPEG_TOOL} "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_ONNX_ROOT}/lib" "${CMAKE_CURRENT_BINARY_DIR}/video-reference.json")

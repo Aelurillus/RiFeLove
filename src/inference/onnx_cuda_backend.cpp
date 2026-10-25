@@ -101,6 +101,28 @@ public:
         if (!std::filesystem::is_regular_file(path))
             throw InferenceError(InferenceErrorKind::unavailable, "ONNX Runtime TensorRT provider DLL is missing from the selected runtime directory");
     }
+    void preloadTensorRtProviderDependencies() {
+        if (tensorRtProviderDependenciesLoaded_) return;
+        // TensorRT loads its builder resources by basename while creating a
+        // new engine. A different ONNX Runtime installation earlier on PATH
+        // can contain an incompatible DLL with the same basename. Pin the
+        // selected runtime's matching libraries in this process first.
+        constexpr const wchar_t* dependencies[] = {
+            L"nvinfer_plugin_10.dll", L"nvonnxparser_10.dll", L"nvinfer_builder_resource_10.dll"};
+        for (const auto* name : dependencies) {
+            const auto path = directory_ / name;
+            const auto module = LoadLibraryExW(path.c_str(),nullptr,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!module) {
+                const std::wstring label(name);
+                throw InferenceError(InferenceErrorKind::unavailable,
+                    "Could not load selected TensorRT dependency " + std::string(label.begin(),label.end()) +
+                    "; Windows error " + std::to_string(GetLastError()));
+            }
+            dependencyModules_.push_back(module);
+        }
+        tensorRtProviderDependenciesLoaded_ = true;
+    }
     std::string tensorRtVersion() {
         const auto path = directory_ / L"nvinfer_10.dll";
         const auto module = LoadLibraryExW(path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -151,6 +173,7 @@ private:
     std::vector<HMODULE> dependencyModules_;
     std::filesystem::path directory_;
     DLL_DIRECTORY_COOKIE dllDirectory_{};
+    bool tensorRtProviderDependenciesLoaded_{};
     void cleanup() noexcept {
         if (environment_) { api->ReleaseEnv(environment_); environment_ = nullptr; }
         if (module_) { FreeLibrary(module_); module_ = nullptr; }
@@ -273,6 +296,7 @@ public:
             if (useTensorRt) {
                 runtime->ensureTensorRtProvider();
                 const auto version = runtime->tensorRtVersion();
+                runtime->preloadTensorRtProviderDependencies();
                 const auto deviceInfo = device->info();
                 const auto cudaVersion = runtime->cudaRuntimeVersion();
                 const TensorRtCacheIdentity identity{"1.22.0",version,cudaVersion,

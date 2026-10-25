@@ -41,7 +41,7 @@ $ortRuntimeVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $i
 if (-not $ortRuntimeVersion.StartsWith("1.22.")) { throw "Expected ONNX Runtime 1.22 in the TensorRT runtime directory; found $ortRuntimeVersion" }
 $requiredInferenceRuntimeFiles = @(
     "onnxruntime.dll","onnxruntime_providers_cuda.dll","onnxruntime_providers_tensorrt.dll","onnxruntime_providers_shared.dll",
-    "nvinfer_10.dll","nvinfer_plugin_10.dll","nvonnxparser_10.dll","cudart64_12.dll","cublas64_12.dll","cublasLt64_12.dll",
+    "nvinfer_10.dll","nvinfer_plugin_10.dll","nvinfer_builder_resource_10.dll","nvonnxparser_10.dll","cudart64_12.dll","cublas64_12.dll","cublasLt64_12.dll",
     "cufft64_11.dll","cudnn64_9.dll","cudnn_graph64_9.dll","cudnn_ops64_9.dll","cudnn_cnn64_9.dll","cudnn_adv64_9.dll",
     "cudnn_engines_precompiled64_9.dll","cudnn_engines_runtime_compiled64_9.dll","cudnn_heuristic64_9.dll"
 )
