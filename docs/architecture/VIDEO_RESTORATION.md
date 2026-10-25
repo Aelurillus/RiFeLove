@@ -1,10 +1,12 @@
 # Video restoration and enhancement
 
-Status: temporal request/result contract implemented; no restoration inference backend or model has passed product qualification.
+Status: temporal request/result contract and local restoration-pack metadata verifier implemented; no restoration inference backend or model has passed product qualification.
 
 RifeLove treats frame interpolation and video restoration as separate AI stages. RIFE predicts frames at new presentation times. Restoration models may denoise, deblur, reduce compression artifacts, or increase spatial resolution across one or more existing frames. A two-frame interpolation request is not an adequate contract for those jobs.
 
-The initial C++ boundary is in `src/restoration/video_restoration_backend.hpp` and `.cpp`. Its versioned registry and validators cover model identity, task, stage placement, canonical SDR profile tags, ordered temporal context, scene/clip-edge context, preserved center PTS/duration/color metadata and spatial scale. Seven focused tests exercise this contract. It is not yet connected to ONNX Runtime, TensorRT, the media pipeline, queue, model center or UI; it does not process a video by itself.
+The initial C++ boundary is in `src/restoration/video_restoration_backend.hpp` and `.cpp`. Its versioned registry and validators cover model identity, task, stage placement, canonical SDR profile tags, ordered temporal context, scene/clip-edge context, preserved center PTS/duration/color metadata and spatial scale. Seven focused tests exercise this contract.
+
+The local pack reader in `src/restoration/model_pack.hpp` and `.cpp` accepts a declarative `video-restoration` schema-v1 `model.json`. It verifies the ONNX file through streaming SHA-256, confines every referenced sidecar to the pack directory, and checks hash-bound license text, source manifest, validation report, adapter identity, declared tasks/placement/profile/window/scale and passed report cases. An adapter is selected from application-owned code; packs cannot include executable preprocessing. These checks establish local file consistency and matching declarations, not author authenticity or perceived quality. A further five focused tests cover valid packs, changed data, capability mismatches, unsafe paths and invalid scale. This verifier is not yet exposed in the Model Center or connected to inference, TensorRT, the media pipeline or queue; it does not process a video by itself.
 
 ## Product rules
 

@@ -43,6 +43,7 @@ struct ModelPack {
 };
 
 [[nodiscard]] std::string sha256(std::span<const std::byte> bytes);
+[[nodiscard]] std::string sha256File(const std::filesystem::path& path, std::size_t limit);
 [[nodiscard]] std::vector<std::byte> readLocalFile(const std::filesystem::path& path, std::size_t limit);
 [[nodiscard]] std::vector<std::byte> readVerifiedFile(const std::filesystem::path& path, const std::string& expectedSha256, std::size_t limit);
 [[nodiscard]] std::filesystem::path packFile(const std::filesystem::path& directory, const std::string& relative);

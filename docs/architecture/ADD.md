@@ -34,7 +34,7 @@ The last output duration preserves the source's exclusive end. Full output re-de
 
 ## Video restoration boundary
 
-`restoration::IVideoRestorationBackend` is now a distinct asynchronous interface; it does not overload RIFE's two-frame/timestep request. A versioned registry resolves backends by model and adapter identity. Request/result validators check supported task and pipeline placement, validated SDR input-profile tags, ordered timestamped temporal context, explicit missing scene/clip context, immutable color metadata, exact center PTS/duration and declared spatial scale. The contract is covered by seven focused unit cases. This is an interface foundation only: there is no concrete restoration inference backend, pipeline stage, model pack lifecycle, UI control or qualified restoration weight yet.
+`restoration::IVideoRestorationBackend` is now a distinct asynchronous interface; it does not overload RIFE's two-frame/timestep request. A versioned registry resolves backends by model and adapter identity. Request/result validators check supported task and pipeline placement, validated SDR input-profile tags, ordered timestamped temporal context, explicit missing scene/clip context, immutable color metadata, exact center PTS/duration and declared spatial scale. Its declarative schema-v1 local pack verifier checks graph and sidecar hashes, license/source/validation records, adapter and task capabilities, and confines file paths to the pack. Twelve focused cases cover this boundary and pack format. Hash checks confirm local consistency but do not authenticate the publisher or certify quality. There is no concrete restoration inference backend, pipeline stage, Model Center control or qualified restoration weight yet.
 
 ## Required next contracts
 

@@ -200,6 +200,48 @@ std::string sha256(std::span<const std::byte> bytes) {
     return output;
 }
 
+std::string sha256File(const std::filesystem::path& path, std::size_t limit) {
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    const auto encodedPath = path.u8string();
+    const std::string displayPath(encodedPath.begin(),encodedPath.end());
+    if (!stream || !std::filesystem::is_regular_file(path))
+        throw std::runtime_error("Could not open local model file: " + displayPath);
+    const auto end = stream.tellg();
+    if (end < 0 || static_cast<std::uintmax_t>(end) > limit)
+        throw std::runtime_error("Model file exceeds its size limit: " + displayPath);
+
+    struct Algorithm { BCRYPT_ALG_HANDLE handle{}; ~Algorithm() { if (handle) BCryptCloseAlgorithmProvider(handle, 0); } } algorithm;
+    cryptoCheck(BCryptOpenAlgorithmProvider(&algorithm.handle, BCRYPT_SHA256_ALGORITHM, nullptr, 0));
+    struct Hash { BCRYPT_HASH_HANDLE handle{}; ~Hash() { if (handle) BCryptDestroyHash(handle); } } hash;
+    cryptoCheck(BCryptCreateHash(algorithm.handle, &hash.handle, nullptr, 0, nullptr, 0, 0));
+
+    stream.seekg(0);
+    std::array<std::byte, 1024 * 1024> buffer{};
+    std::uintmax_t totalRead = 0;
+    while (stream) {
+        stream.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        const auto count = stream.gcount();
+        if (count > 0) {
+            const auto bytesRead = static_cast<std::uintmax_t>(count);
+            if (bytesRead > static_cast<std::uintmax_t>(limit) - totalRead)
+                throw std::runtime_error("Model file exceeds its size limit: " + displayPath);
+            totalRead += bytesRead;
+            cryptoCheck(BCryptHashData(hash.handle, reinterpret_cast<PUCHAR>(buffer.data()), static_cast<ULONG>(count), 0));
+        }
+    }
+    if (!stream.eof()) throw std::runtime_error("Could not read complete local model file: " + displayPath);
+    if (totalRead != static_cast<std::uintmax_t>(end))
+        throw std::runtime_error("Local model file changed while being verified: " + displayPath);
+
+    std::array<unsigned char, 32> digest{};
+    cryptoCheck(BCryptFinishHash(hash.handle, digest.data(), static_cast<ULONG>(digest.size()), 0));
+    constexpr char digits[] = "0123456789abcdef";
+    std::string output;
+    output.reserve(digest.size() * 2);
+    for (const auto byte : digest) { output += digits[byte >> 4]; output += digits[byte & 15]; }
+    return output;
+}
+
 bool supportsInputProfile(const ModelPack& model, std::string_view profile) {
     if (std::find(model.supportedInputProfiles.begin(),model.supportedInputProfiles.end(),profile) != model.supportedInputProfiles.end()) return true;
     const bool isSdr8 = profile.ends_with("-sdr8");
