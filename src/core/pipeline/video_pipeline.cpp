@@ -236,7 +236,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         if (progress) {
             const double seconds = elapsed();
             PipelineProgress event{stage,clock ? clock->index() : 0,result.aiFrames,time,
-                seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail,{},result.timings};
+                seconds > 0 && clock ? static_cast<double>(clock->index()) / seconds : 0,detail,encoding.encoder,result.timings};
             progress(event);
         }
     };

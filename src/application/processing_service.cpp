@@ -1,4 +1,5 @@
 #include "application/processing_service.hpp"
+#include "common/logging.hpp"
 #include "inference/onnx_cuda_backend.hpp"
 #include "media/rife_color.hpp"
 #include <algorithm>
@@ -15,6 +16,7 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     const std::function<void(const ProcessingIdentity&,PipelineSettings&)>& configurePipeline) {
     const auto started = std::chrono::steady_clock::now();
     auto lastUpdate = started;
+    auto lastProgressLog = started;
     std::string lastStage;
     auto send = [&](ProcessingEvent event) { if (progress) progress(std::move(event)); };
     auto checkpoint = [&] {
@@ -66,6 +68,18 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         // A completed progress event follows atomic output publication. Do
         // not acknowledge a new pause/cancel as though that output is partial.
         const auto now = std::chrono::steady_clock::now();
+        if (value.stage == "processing" && now - lastProgressLog >= std::chrono::seconds(15)) {
+            lastProgressLog = now;
+            const double elapsedSeconds = std::chrono::duration<double>(now - started).count();
+            const double processingFps = elapsedSeconds > 0 ? static_cast<double>(value.outputFrames) / elapsedSeconds : 0;
+            logging::write(logging::Level::info,"processing","processing.progress",
+                "Local video processing is continuing",
+                {{"output_frames",static_cast<std::uint64_t>(value.outputFrames)},
+                    {"ai_frames",static_cast<std::uint64_t>(value.aiFrames)},
+                    {"processing_fps",processingFps},{"elapsed_seconds",elapsedSeconds},
+                    {"encoder",value.encoder},{"inference_wait_seconds",value.timings.inferenceWaitSeconds},
+                    {"frame_encode_seconds",value.timings.frameEncodeSeconds}});
+        }
         if (value.stage != lastStage || now - lastUpdate >= std::chrono::milliseconds(100)) {
             lastUpdate = now; lastStage = value.stage;
             ProcessingEvent event; event.stage = value.stage; event.detail = value.detail; event.encoder = value.encoder;
