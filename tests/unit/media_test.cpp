@@ -76,6 +76,38 @@ TEST(MediaEngine, CancellationIsExplicitAndRetainedFramesStayValid) {
 TEST(MediaEngine, RejectsNetworkInputsBeforeOpeningDemuxer) {
     EXPECT_THROW((void)MediaEngine::probe("https://example.invalid/video.mp4"), std::invalid_argument);
 }
+
+TEST(MediaEngine, ExactPreviewSeeksToTheNearestTaggedSdrPresentationFrame) {
+    ImageFixture fixture;
+    const auto source = fixture.directory / "preview-source.mkv";
+    const auto command = "ffmpeg.exe -y -v error -f lavfi -i \"testsrc2=size=96x64:rate=4:duration=1\" "
+        "-vf \"setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709\" "
+        "-c:v ffv1 -pix_fmt yuv420p \"" + source.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()),0) << "Could not create tagged local preview fixture";
+
+    const auto first = MediaEngine::decodeFrameNearTime(source.string(),rifelove::Rational(37,100));
+    EXPECT_EQ(first.timestamp,rifelove::Rational(1,4));
+    EXPECT_EQ(first.duration,rifelove::Rational(1,4));
+    EXPECT_EQ(first.previousTimestamp,rifelove::Rational(0));
+    EXPECT_EQ(first.nextTimestamp,rifelove::Rational(1,2));
+    EXPECT_EQ(first.width,96);
+    EXPECT_EQ(first.height,64);
+    ASSERT_EQ(first.rgba.size(),96U * 64U * 4U);
+    EXPECT_EQ(first.color.primaries,"bt709");
+    EXPECT_EQ(first.color.matrix,"bt709");
+    for (std::size_t index = 3; index < first.rgba.size(); index += 4)
+        EXPECT_EQ(first.rgba[index],255U);
+
+    const auto second = MediaEngine::decodeFrameNearTime(source.string(),rifelove::Rational(42,100));
+    EXPECT_EQ(second.timestamp,rifelove::Rational(1,2));
+    EXPECT_EQ(second.previousTimestamp,rifelove::Rational(1,4));
+    EXPECT_EQ(second.nextTimestamp,rifelove::Rational(3,4));
+    const auto last = MediaEngine::decodeFrameNearTime(source.string(),rifelove::Rational(2));
+    EXPECT_EQ(last.timestamp,rifelove::Rational(3,4));
+    EXPECT_EQ(last.previousTimestamp,rifelove::Rational(1,2));
+    EXPECT_FALSE(last.nextTimestamp.has_value());
+}
+
 TEST(VideoMuxWriter, StrongerValidationRunsBeforePublicationAndFailureRemovesOutput) {
     ImageFixture fixture;
     DecodedFrame retained{};

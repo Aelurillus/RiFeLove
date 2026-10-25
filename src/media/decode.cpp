@@ -2,6 +2,14 @@
 #include "media/rife_color.hpp"
 #include "media/timestamp_recovery.hpp"
 
+extern "C" {
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+}
+
+#include <cmath>
+#include <limits>
+
 namespace rifelove::media {
 
 DecodeSummary MediaEngine::decodeVideo(const std::string& path,
@@ -105,6 +113,177 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
     if (summary.missingTimestamps || summary.nonIncreasingTimestamps) summary.cadence = "invalid_timestamps";
     else if (delta) summary.cadence = variable && !matchesQuantizedConstantRate ? "variable" : "constant";
     return summary;
+}
+
+DecodedPreviewFrame MediaEngine::decodeFrameNearTime(const std::string& path, Rational targetTime,
+    int streamIndex, std::stop_token stop) {
+    detail::Input input(path,stop);
+    if (streamIndex < 0) streamIndex = av_find_best_stream(input.context,AVMEDIA_TYPE_VIDEO,-1,-1,nullptr,0);
+    detail::check(streamIndex,"find preview video stream");
+    if (static_cast<unsigned>(streamIndex) >= input.context->nb_streams ||
+        input.context->streams[streamIndex]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
+        throw std::invalid_argument("selected preview stream is not a video stream");
+    auto* stream = input.context->streams[streamIndex];
+    if (targetTime.denominator() > std::numeric_limits<int>::max())
+        throw std::invalid_argument("preview timestamp denominator exceeds FFmpeg's supported range");
+    const auto targetPts = av_rescale_q_rnd(targetTime.numerator(),AVRational{1,static_cast<int>(targetTime.denominator())},
+        stream->time_base,static_cast<AVRounding>(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+    detail::checkStopped(stop);
+    int seek = av_seek_frame(input.context,streamIndex,targetPts,AVSEEK_FLAG_BACKWARD);
+    if (seek < 0) seek = avformat_seek_file(input.context,streamIndex,INT64_MIN,targetPts,INT64_MAX,AVSEEK_FLAG_BACKWARD);
+    detail::check(seek,"seek preview video frame");
+
+    const auto* decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+    if (!decoder) throw std::runtime_error("no decoder is available for this preview video codec");
+    const auto freeCodec = [](AVCodecContext* value) { avcodec_free_context(&value); };
+    const auto freePacket = [](AVPacket* value) { av_packet_free(&value); };
+    auto freeFrame = +[](AVFrame* value) { av_frame_free(&value); };
+    std::unique_ptr<AVCodecContext,decltype(freeCodec)> context(avcodec_alloc_context3(decoder),freeCodec);
+    std::unique_ptr<AVPacket,decltype(freePacket)> packet(av_packet_alloc(),freePacket);
+    std::unique_ptr<AVFrame,decltype(freeFrame)> frame(av_frame_alloc(),freeFrame);
+    std::unique_ptr<AVFrame,decltype(freeFrame)> before(nullptr,freeFrame);
+    std::unique_ptr<AVFrame,decltype(freeFrame)> selected(nullptr,freeFrame);
+    if (!context || !packet || !frame) throw std::bad_alloc();
+    detail::check(avcodec_parameters_to_context(context.get(),stream->codecpar),"configure preview video decoder");
+    context->pkt_timebase = stream->time_base;
+    detail::check(avcodec_open2(context.get(),decoder,nullptr),"open preview video decoder");
+
+    const auto streamColor = detail::color(stream->codecpar);
+    std::int64_t beforePts = AV_NOPTS_VALUE;
+    std::int64_t beforePreviousPts = AV_NOPTS_VALUE;
+    std::int64_t selectedPts = AV_NOPTS_VALUE;
+    std::int64_t selectedPreviousPts = AV_NOPTS_VALUE;
+    std::int64_t selectedNextPts = AV_NOPTS_VALUE;
+    bool awaitingSelectedNext = false;
+    bool found = false;
+    const auto receive = [&]() {
+        for (;;) {
+            detail::checkStopped(stop);
+            const int status = avcodec_receive_frame(context.get(),frame.get());
+            if (status == AVERROR(EAGAIN)) return 0;
+            if (status == AVERROR_EOF) return 1;
+            detail::check(status,"receive preview video frame");
+            const auto pts = frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+            if (pts != AV_NOPTS_VALUE) {
+                if (selected && awaitingSelectedNext && pts > selectedPts) {
+                    selectedNextPts = pts;
+                    awaitingSelectedNext = false;
+                    found = true;
+                } else if (!selected && pts == targetPts) {
+                    selected.reset(av_frame_clone(frame.get()));
+                    if (!selected) throw std::bad_alloc();
+                    selectedPts = pts;
+                    selectedPreviousPts = beforePts;
+                    awaitingSelectedNext = true;
+                } else if (!selected && pts < targetPts) {
+                    beforePreviousPts = beforePts;
+                    before.reset(av_frame_clone(frame.get()));
+                    if (!before) throw std::bad_alloc();
+                    beforePts = pts;
+                } else if (!selected && pts > targetPts) {
+                    const long double afterDistance = std::fabs(static_cast<long double>(pts) - static_cast<long double>(targetPts));
+                    const long double beforeDistance = before ? std::fabs(static_cast<long double>(beforePts) - static_cast<long double>(targetPts)) :
+                        std::numeric_limits<long double>::infinity();
+                    if (before && beforeDistance <= afterDistance) {
+                        selected = std::move(before);
+                        selectedPts = beforePts;
+                        selectedPreviousPts = beforePreviousPts;
+                        selectedNextPts = pts;
+                        found = true;
+                    } else {
+                        selected.reset(av_frame_clone(frame.get()));
+                        if (!selected) throw std::bad_alloc();
+                        selectedPts = pts;
+                        selectedPreviousPts = beforePts;
+                        awaitingSelectedNext = true;
+                    }
+                }
+            }
+            av_frame_unref(frame.get());
+            if (found) return 2;
+        }
+    };
+
+    bool decoderEof = false;
+    for (;;) {
+        detail::checkStopped(stop);
+        const int read = av_read_frame(input.context,packet.get());
+        if (read == AVERROR_EOF) break;
+        detail::check(read,"read preview video packet");
+        if (packet->stream_index == streamIndex) {
+            int status = avcodec_send_packet(context.get(),packet.get());
+            if (status == AVERROR(EAGAIN)) {
+                const int received = receive();
+                if (received == 2) { av_packet_unref(packet.get()); break; }
+                status = avcodec_send_packet(context.get(),packet.get());
+            }
+            detail::check(status,"send preview packet to decoder");
+            const int received = receive();
+            if (received == 2) { av_packet_unref(packet.get()); break; }
+            decoderEof = received == 1;
+        }
+        av_packet_unref(packet.get());
+        if (decoderEof) break;
+    }
+    if (!found && !decoderEof) {
+        detail::check(avcodec_send_packet(context.get(),nullptr),"flush preview video decoder");
+        for (;;) {
+            const int received = receive();
+            if (received == 2 || received == 1) break;
+        }
+    }
+    if (!selected && before) {
+        selected = std::move(before);
+        selectedPts = beforePts;
+        selectedPreviousPts = beforePreviousPts;
+    }
+    if (!selected) throw std::runtime_error("no timestamped decoded frame was found near the requested preview time");
+
+    const int width = selected->width, height = selected->height;
+    if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
+        throw std::invalid_argument("preview frame dimensions are outside the supported range");
+    const auto pixels = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
+    if (pixels > (128ULL * 1024ULL * 1024ULL) / 4ULL)
+        throw std::invalid_argument("preview frame exceeds the 128 MiB decoded-image limit");
+    auto color = normalizeDecodedSdrColor(detail::color(selected.get()),streamColor);
+    try { validateRifeSdrColor(color); }
+    catch (const std::invalid_argument&) {
+        throw std::invalid_argument("exact frame preview requires explicitly tagged supported SDR color; HDR or unknown color is not yet supported");
+    }
+    const auto sourceFormat = av_get_pix_fmt(color.pixelFormat.c_str());
+    const auto* description = av_pix_fmt_desc_get(sourceFormat);
+    if (!description) throw std::invalid_argument("preview pixel format is unavailable");
+    const int matrix = color.matrix == "bt709" ? SWS_CS_ITU709 : SWS_CS_ITU601;
+    const int* coefficients = sws_getCoefficients(matrix);
+    auto freeScaler = +[](SwsContext* value) { sws_freeContext(value); };
+    std::unique_ptr<SwsContext,decltype(freeScaler)> scaler(
+        sws_getContext(width,height,sourceFormat,width,height,AV_PIX_FMT_RGBA,SWS_BILINEAR | SWS_ACCURATE_RND,nullptr,nullptr,nullptr),freeScaler);
+    if (!scaler) throw std::runtime_error("could not create exact SDR preview converter");
+    detail::check(sws_setColorspaceDetails(scaler.get(),coefficients,color.range == "pc",coefficients,1,0,1 << 16,1 << 16),
+        "configure exact preview color conversion");
+    DecodedPreviewFrame output;
+    output.width = width;
+    output.height = height;
+    output.timestamp = detail::rational(stream->time_base) * Rational(selectedPts);
+    output.duration = selected->duration > 0 ? detail::timestamp(selected->duration,stream->time_base) : std::optional<Rational>{};
+    if (selectedPreviousPts != AV_NOPTS_VALUE)
+        output.previousTimestamp = detail::rational(stream->time_base) * Rational(selectedPreviousPts);
+    if (selectedNextPts != AV_NOPTS_VALUE)
+        output.nextTimestamp = detail::rational(stream->time_base) * Rational(selectedNextPts);
+    output.color = std::move(color);
+    output.rgba.resize(static_cast<std::size_t>(pixels) * 4U);
+    const std::uint8_t* source[4]{};
+    int sourceStride[4]{};
+    for (std::size_t plane = 0; plane < 4; ++plane) {
+        source[plane] = selected->data[plane];
+        sourceStride[plane] = selected->linesize[plane];
+    }
+    std::uint8_t* destination[4] = {output.rgba.data()};
+    const int destinationStride[4] = {width * 4};
+    if (sws_scale(scaler.get(),source,sourceStride,0,height,destination,destinationStride) != height)
+        throw std::runtime_error("exact preview color conversion returned incomplete rows");
+    detail::checkStopped(stop);
+    return output;
 }
 
 } // namespace rifelove::media

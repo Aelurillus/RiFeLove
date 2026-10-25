@@ -19,6 +19,9 @@ Rectangle {
     readonly property real originalPosition: originalPlayer.position
     readonly property real processedPosition: processedPlayer.position
     readonly property bool playbackActive: originalPlayer.playing
+    readonly property bool exactPreviewAvailable: typeof comparisonPreview !== "undefined" && comparisonPreview !== null
+    readonly property bool exactPreviewVisible: page.exactPreviewAvailable && comparisonPreview.ready && !page.playbackActive
+    property real pendingPreviewPosition: 0
 
     function clampPosition(value) {
         const maximum = Math.max(0, Math.min(originalPlayer.duration || value, processedPlayer.duration || value))
@@ -40,8 +43,28 @@ Rectangle {
         if (!(value > 0)) value = Number(originalPlayer.metaData.value(MediaMetaData.VideoFrameRate))
         frameRate = value > 0 ? value : 60
     }
+    function updatePreviewIfPossible() {
+        if (!page.exactPreviewAvailable || !page.originalReady || !page.processedReady || page.playbackActive) return
+        page.scheduleExactPreview(processedPlayer.position)
+    }
+    function scheduleExactPreview(value) {
+        if (!page.exactPreviewAvailable || !page.originalReady || !page.processedReady) return
+        pendingPreviewPosition = clampPosition(value)
+        previewDebounce.restart()
+    }
+    function requestExactPreview(value) {
+        if (!page.exactPreviewAvailable || !page.originalReady || !page.processedReady) return
+        comparisonPreview.requestFrames(originalSource, processedSource, clampPosition(value))
+    }
     function stepFrame(direction) {
         updateFrameRate()
+        if (page.exactPreviewAvailable && page.originalReady && page.processedReady) {
+            originalPlayer.pause()
+            processedPlayer.pause()
+            if (comparisonPreview.ready) comparisonPreview.stepFrame(direction)
+            else requestExactPreview(originalPlayer.position + direction * 1000 / frameRate)
+            return
+        }
         seek(originalPlayer.position + direction * 1000 / frameRate)
     }
     function togglePlayback() {
@@ -49,7 +72,9 @@ Rectangle {
         if (originalPlayer.playing) {
             originalPlayer.pause()
             processedPlayer.pause()
+            if (page.exactPreviewAvailable) scheduleExactPreview(originalPlayer.position)
         } else {
+            if (page.exactPreviewAvailable) comparisonPreview.clear()
             if (originalPlayer.position >= durationMs - 20) seek(0)
             originalPlayer.play()
             processedPlayer.play()
@@ -86,18 +111,36 @@ Rectangle {
         onMetaDataChanged: page.updateFrameRate()
         onDurationChanged: page.syncProcessed()
     }
+    Timer {
+        id: previewDebounce
+        interval: 90
+        repeat: false
+        onTriggered: page.requestExactPreview(page.pendingPreviewPosition)
+    }
+    Connections {
+        target: page.exactPreviewAvailable ? comparisonPreview : null
+        function onFrameReady(outputPositionMs) { page.seek(outputPositionMs) }
+    }
+    Connections {
+        target: originalPlayer
+        function onHasVideoChanged() { page.updatePreviewIfPossible() }
+    }
+    Connections {
+        target: processedPlayer
+        function onHasVideoChanged() { page.updatePreviewIfPossible() }
+    }
 
     FileDialog {
         id: originalDialog
         title: qsTr("选择原视频")
         nameFilters: [qsTr("视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)"), qsTr("所有文件 (*)")]
-        onAccepted: page.originalSource = selectedFile
+        onAccepted: { if (page.exactPreviewAvailable) comparisonPreview.clear(); page.originalSource = selectedFile; page.updatePreviewIfPossible() }
     }
     FileDialog {
         id: processedDialog
         title: qsTr("选择补帧视频")
         nameFilters: [qsTr("视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)"), qsTr("所有文件 (*)")]
-        onAccepted: page.processedSource = selectedFile
+        onAccepted: { if (page.exactPreviewAvailable) comparisonPreview.clear(); page.processedSource = selectedFile; page.updatePreviewIfPossible() }
     }
 
     ColumnLayout {
@@ -173,7 +216,8 @@ Rectangle {
                     background: Rectangle { color: "#990b1018"; radius: 5 }
                     padding: 6
                 }
-                VideoOutput { id: originalVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit }
+                VideoOutput { id: originalVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit; visible: !page.exactPreviewVisible }
+                Image { objectName: "exactOriginalFrameImage"; anchors.fill: parent; visible: page.exactPreviewVisible; source: page.exactPreviewVisible ? comparisonPreview.originalFrameUrl : ""; fillMode: Image.PreserveAspectFit; cache: false; asynchronous: false }
                 Label { anchors.centerIn: parent; visible: !originalPlayer.hasVideo; text: qsTr("选择视频以开始预览"); color: "#8493aa" }
             }
             Rectangle {
@@ -194,7 +238,8 @@ Rectangle {
                     background: Rectangle { color: "#990b1018"; radius: 5 }
                     padding: 6
                 }
-                VideoOutput { id: processedVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit }
+                VideoOutput { id: processedVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit; visible: !page.exactPreviewVisible }
+                Image { objectName: "exactProcessedFrameImage"; anchors.fill: parent; visible: page.exactPreviewVisible; source: page.exactPreviewVisible ? comparisonPreview.processedFrameUrl : ""; fillMode: Image.PreserveAspectFit; cache: false; asynchronous: false }
                 Label { anchors.centerIn: parent; visible: !processedPlayer.hasVideo; text: qsTr("选择视频以开始预览"); color: "#8493aa" }
             }
         }
@@ -204,7 +249,7 @@ Rectangle {
             ActionButton {
                 objectName: "comparisonPreviousFrame"
                 text: "◀|"
-                enabled: page.originalReady && page.processedReady
+                enabled: page.originalReady && page.processedReady && (!page.exactPreviewAvailable || !comparisonPreview.busy)
                 onClicked: page.stepFrame(-1)
             }
             ActionButton {
@@ -217,7 +262,7 @@ Rectangle {
             ActionButton {
                 objectName: "comparisonNextFrame"
                 text: "|▶"
-                enabled: page.originalReady && page.processedReady
+                enabled: page.originalReady && page.processedReady && (!page.exactPreviewAvailable || !comparisonPreview.busy)
                 onClicked: page.stepFrame(1)
             }
             Label { text: page.formatTime(originalPlayer.position); color: "#9aaac0"; font.family: "Consolas" }
@@ -228,16 +273,18 @@ Rectangle {
                 to: Math.max(1, page.durationMs)
                 value: originalPlayer.position
                 enabled: page.originalReady && page.processedReady
-                onMoved: page.seek(value)
+                onMoved: { page.seek(value); page.scheduleExactPreview(value) }
             }
             Label { text: page.formatTime(page.durationMs); color: "#9aaac0"; font.family: "Consolas" }
             Label { text: qsTr("步进 1/%1 秒").arg(Number(page.frameRate).toFixed(3)); color: "#9aaac0"; font.pixelSize: 12 }
         }
         Label {
             Layout.fillWidth: true
-            text: originalPlayer.errorString || processedPlayer.errorString ||
-                  (page.originalReady && page.processedReady ? qsTr("两路视频按时间戳同步；输出帧率 %1 FPS").arg(Number(page.frameRate).toFixed(3)) : qsTr("请选择原视频和补帧结果"))
-            color: originalPlayer.errorString || processedPlayer.errorString ? "#ffb3ad" : "#91a1b4"
+            text: (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ||
+                  (page.exactPreviewVisible ? qsTr("已按 FFmpeg 实际解码帧精确预览 · 输出时间 %1").arg(page.formatTime(comparisonPreview.outputTimestampMs)) :
+                   page.exactPreviewAvailable && comparisonPreview.busy ? qsTr("正在精确解码所选时间的原片与补帧画面…") :
+                   page.originalReady && page.processedReady ? qsTr("两路视频按时间戳同步；输出帧率 %1 FPS").arg(Number(page.frameRate).toFixed(3)) : qsTr("请选择原视频和补帧结果"))
+            color: (page.exactPreviewAvailable && comparisonPreview.errorString) || originalPlayer.errorString || processedPlayer.errorString ? "#ffb3ad" : "#91a1b4"
             wrapMode: Text.WrapAnywhere
         }
     }

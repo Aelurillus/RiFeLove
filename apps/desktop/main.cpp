@@ -15,6 +15,7 @@
 #ifdef RIFELOVE_DESKTOP_PROCESSING
 #include "studio_controller.hpp"
 #include "queue_controller.hpp"
+#include "comparison_preview.hpp"
 #endif
 
 int main(int argc, char* argv[]) {
@@ -97,12 +98,17 @@ int main(int argc, char* argv[]) {
 #endif
     QQmlApplicationEngine engine;
 #ifdef RIFELOVE_DESKTOP_PROCESSING
+    auto* comparisonProvider = new ComparisonFrameImageProvider();
+    engine.addImageProvider("comparison",comparisonProvider);
+    ComparisonPreviewController comparisonPreview(comparisonProvider);
     engine.rootContext()->setContextProperty("studio", &studio);
     engine.rootContext()->setContextProperty("taskQueue", &taskQueue);
+    engine.rootContext()->setContextProperty("comparisonPreview", &comparisonPreview);
     engine.rootContext()->setContextProperty("processingAvailable", true);
 #else
     engine.rootContext()->setContextProperty("studio", QVariant());
     engine.rootContext()->setContextProperty("taskQueue", QVariant());
+    engine.rootContext()->setContextProperty("comparisonPreview", QVariant());
     engine.rootContext()->setContextProperty("processingAvailable", false);
 #endif
     engine.loadFromModule("RifeLove", "Main");

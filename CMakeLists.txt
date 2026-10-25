@@ -169,7 +169,8 @@ if(RIFELOVE_BUILD_DESKTOP)
     target_link_libraries(rifelove-desktop PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia rifelove_core)
     if(TARGET rifelove_application)
       add_library(rifelove_studio apps/desktop/studio_controller.cpp apps/desktop/studio_controller.hpp
-        apps/desktop/queue_controller.cpp apps/desktop/queue_controller.hpp apps/desktop/task_list_model.cpp apps/desktop/task_list_model.hpp)
+        apps/desktop/queue_controller.cpp apps/desktop/queue_controller.hpp apps/desktop/task_list_model.cpp apps/desktop/task_list_model.hpp
+        apps/desktop/comparison_preview.cpp apps/desktop/comparison_preview.hpp)
       target_include_directories(rifelove_studio PUBLIC apps/desktop)
       target_link_libraries(rifelove_studio PUBLIC Qt6::Quick rifelove_application)
       target_link_libraries(rifelove-desktop PRIVATE rifelove_studio)
@@ -261,6 +262,13 @@ if(RIFELOVE_BUILD_TESTS)
     set_tests_properties(Desktop.Smoke PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
   endif()
   if(TARGET rifelove_studio)
+    add_executable(rifelove-comparison-preview-check tests/integration/comparison_preview_test.cpp)
+    target_include_directories(rifelove-comparison-preview-check PRIVATE apps/desktop)
+    target_link_libraries(rifelove-comparison-preview-check PRIVATE rifelove_studio Qt6::Quick Qt6::QuickControls2)
+    add_test(NAME ComparisonPreview.Workflow COMMAND rifelove-comparison-preview-check "${CMAKE_CURRENT_SOURCE_DIR}/ui/ComparisonPage.qml")
+    set_tests_properties(ComparisonPreview.Workflow PROPERTIES TIMEOUT 45
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QPA_FONTDIR=$ENV{WINDIR}/Fonts")
+
     add_executable(rifelove-queue-report-check tests/integration/queue_report_desktop.cpp)
     target_include_directories(rifelove-queue-report-check PRIVATE apps/desktop)
     target_link_libraries(rifelove-queue-report-check PRIVATE rifelove_studio)

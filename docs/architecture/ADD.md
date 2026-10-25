@@ -14,6 +14,8 @@ The CLI adapter calls media and native video pipeline public C++ APIs. The deskt
 
 `MediaEngine::probe` returns stream/container/chapter metadata in standard C++ values. `decodeVideo` yields `DecodedFrame` objects with rational PTS, optional duration, native pixel planes, color and reference-counted ownership. Retained frames remain valid after decoder closure. The interface does not require callers to include FFmpeg headers. Missing timestamps are explicit, and observed cadence accounts for input-time-base quantization.
 
+The comparison viewer uses `MediaEngine::decodeFrameNearTime` for paused frame inspection. It seeks to a preceding key frame, decodes in presentation order, chooses the nearest timestamped frame and returns the adjacent PTS values with a bounded RGBA image. The conversion is limited to the existing tagged SDR color contract; HDR and unknown-color previews fail explicitly. `ComparisonPreviewController` runs both local decodes away from the UI thread, cancels stale seeks, and publishes copied images through a bounded, thread-safe `QQuickImageProvider`. QML still uses `QMediaPlayer` for continuous synchronized playback; stepping displays the direct decoded stills and follows actual adjacent PTS values, including VFR intervals.
+
 Input I/O is restricted to local regular files and the `file` protocol. Cancellation uses a stop token, interrupt callbacks and boundary checks. FFmpeg errors carry both operation text and the native error code. The current decoder is software-only; CUDA frame surfaces and transfers will be separate from CPU planes.
 
 `remux` copies existing compressed streams and metadata; it does not perform interpolation or video encoding. Timestamp rescaling occurs after mux header creation, when final output time bases are known. Incompatible streams fail visibly. Output is written under a unique same-directory reservation, finalized and structurally probed, then atomically published without replacement on Windows. Exceptions/cancellation clean up the temporary file. For interpolated queue jobs, committed segment checkpoints can be resumed after a process kill; a crash between final output publication and the SQLite completion commit still needs manual handling because resume will not overwrite the existing output.
@@ -30,7 +32,7 @@ The last output duration preserves the source's exclusive end. Full output re-de
 
 ## Required next contracts
 
-- GPU-surface encoder submission, source-shared demux, comprehensive color conversions and full compatibility/fault coverage for the implemented CPU-frame writer.
+- GPU-surface encoder submission, source-shared demux, comprehensive color conversions, HDR preview/display conversion and full compatibility/fault coverage for the implemented CPU-frame writer.
 - Expand the integrated native CUDA numerical/operator and video-reference tests to the full resolution/content/color matrix, plus TensorRT and qualified model presets.
 - Extend the checksum-bound RIFE v2 pack schema into a trusted multi-family model registry, with separately reviewed weight rights, qualified quality profiles and model/update versioning.
 - A bounded scheduler with explicit buffer ownership and backpressure across decode, preprocessing, quality, inference, postprocessing and encode stages.

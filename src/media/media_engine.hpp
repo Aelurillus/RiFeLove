@@ -123,6 +123,17 @@ struct DecodeSummary {
     std::optional<Rational> firstTimestamp;
     std::optional<Rational> lastTimestamp;
 };
+struct DecodedPreviewFrame {
+    int width = 0;
+    int height = 0;
+    Rational timestamp;
+    std::optional<Rational> duration;
+    std::optional<Rational> previousTimestamp;
+    std::optional<Rational> nextTimestamp;
+    ColorInfo color;
+    // Explicitly converted SDR display pixels; never aliases decoder storage.
+    std::vector<std::uint8_t> rgba;
+};
 struct RemuxResult { std::size_t copiedStreams; std::size_t packetsWritten; };
 struct VideoSegmentContract {
     std::size_t frameCount = 0;
@@ -176,6 +187,10 @@ public:
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
         const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1, std::stop_token stop = {});
+    // Seeks and decodes the nearest presentation frame to an exact rational
+    // timestamp. The preview conversion accepts only the validated tagged SDR path.
+    [[nodiscard]] static DecodedPreviewFrame decodeFrameNearTime(const std::string& utf8Path,
+        Rational timestamp, int streamIndex = -1, std::stop_token stop = {});
     // Fully decodes an internal video-only segment and verifies its media and
     // global-timeline contract before the caller journals or reuses it.
     [[nodiscard]] static VideoSegmentVerification verifyVideoSegment(const std::string& utf8Path,
