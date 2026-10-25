@@ -264,9 +264,9 @@ ApplicationWindow {
                 Rectangle { Layout.fillWidth: true; height: 1; color: "#202c38"; Layout.topMargin: 10; Layout.bottomMargin: 7 }
                 Label { text: qsTr("工作区"); color: "#718196"; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 9; Layout.bottomMargin: 3 }
                 ActionButton { objectName: "homeNavigationButton"; navigation: true; text: qsTr("⌂     工作区"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
-                ActionButton { navigation: true; text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
-                ActionButton { navigation: true; text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
-                ActionButton { navigation: true; text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
+                ActionButton { objectName: "studioNavigationButton"; navigation: true; text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
+                ActionButton { objectName: "queueNavigationButton"; navigation: true; text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
+                ActionButton { objectName: "modelNavigationButton"; navigation: true; text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
                 ActionButton { objectName: "comparisonButton"; navigation: true; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 4; onClicked: window.currentPage = 4 }
                 Item { Layout.fillHeight: true }
                 Rectangle {

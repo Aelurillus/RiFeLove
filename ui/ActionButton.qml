@@ -7,6 +7,16 @@ Button {
     property bool navigation: false
     implicitHeight: navigation ? 46 : 40
     implicitWidth: Math.max(navigation ? 168 : 96, label.implicitWidth + leftPadding + rightPadding)
+    focusPolicy: Qt.StrongFocus
+    Accessible.name: text
+    Keys.onReturnPressed: function(event) {
+        if (control.enabled) control.click()
+        event.accepted = true
+    }
+    Keys.onEnterPressed: function(event) {
+        if (control.enabled) control.click()
+        event.accepted = true
+    }
     leftPadding: 18
     rightPadding: 18
     topPadding: 8
@@ -19,7 +29,7 @@ Button {
             : control.primary ? (control.down ? "#41bd9b" : control.hovered ? "#92efd0" : "#73dfbd")
             : control.flat ? (control.hovered ? "#182431" : "transparent")
             : control.down ? "#263746" : control.hovered ? "#202f3d" : "#172330"
-        border.width: control.navigation || control.flat || control.primary ? 0 : 1
+        border.width: control.activeFocus ? 2 : control.navigation || control.flat || control.primary ? 0 : 1
         border.color: control.activeFocus ? "#a8efd5" : "#2a3d4e"
         Rectangle {
             visible: control.navigation && control.highlighted

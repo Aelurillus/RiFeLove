@@ -8,6 +8,8 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QKeyEvent>
+#include <QCoreApplication>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -46,6 +48,12 @@ void click(QObject* button, const char* name = "unnamed") {
     if (!button) throw std::runtime_error(std::string("Required QML control was not created: ") + name);
     if (!button->property("enabled").toBool()) throw std::runtime_error("QML control is disabled: " + button->objectName().toStdString());
     if (!QMetaObject::invokeMethod(button, "clicked", Qt::DirectConnection)) throw std::runtime_error("Could not activate QML control: " + button->objectName().toStdString());
+}
+void pressKey(QObject* item, Qt::Key key) {
+    QKeyEvent press(QEvent::KeyPress,key,Qt::NoModifier);
+    QCoreApplication::sendEvent(item,&press);
+    QKeyEvent release(QEvent::KeyRelease,key,Qt::NoModifier);
+    QCoreApplication::sendEvent(item,&release);
 }
 QObject* findVisual(QQuickItem* parent, const QString& name) {
     if (!parent) return nullptr;
@@ -140,6 +148,31 @@ int main(int argc, char** argv) {
             "Home did not display the detected local NVIDIA GPU");
         click(homeStudio,"Home open Studio");
         require(root->property("currentPage").toInt() == 1, "Home Studio shortcut did not open the interpolation workspace");
+        auto* homeNavigation = root->findChild<QObject*>("homeNavigationButton");
+        auto* studioNavigation = root->findChild<QObject*>("studioNavigationButton");
+        auto* queueNavigation = root->findChild<QObject*>("queueNavigationButton");
+        require(homeNavigation && studioNavigation && queueNavigation &&
+                QMetaObject::invokeMethod(homeNavigation,"forceActiveFocus",Qt::DirectConnection),
+            "Workspace navigation controls are not keyboard focusable");
+        waitUntil([&] { return homeNavigation->property("activeFocus").toBool(); },
+            "Workspace navigation did not show keyboard focus",2000);
+        pressKey(homeNavigation,Qt::Key_Space);
+        waitUntil([&] { return root->property("currentPage").toInt() == 0; },
+            "Space did not activate the focused Home navigation button",2000);
+        require(QMetaObject::invokeMethod(studioNavigation,"forceActiveFocus",Qt::DirectConnection),
+            "Studio navigation could not receive keyboard focus");
+        waitUntil([&] { return studioNavigation->property("activeFocus").toBool(); },
+            "Studio navigation did not receive keyboard focus",2000);
+        pressKey(studioNavigation,Qt::Key_Return);
+        waitUntil([&] { return root->property("currentPage").toInt() == 1; },
+            "Enter did not activate the focused Studio navigation button",2000);
+        require(QMetaObject::invokeMethod(queueNavigation,"forceActiveFocus",Qt::DirectConnection),
+            "Queue navigation could not receive keyboard focus");
+        waitUntil([&] { return queueNavigation->property("activeFocus").toBool(); },
+            "Queue navigation did not receive keyboard focus",2000);
+        pressKey(queueNavigation,Qt::Key_Enter);
+        waitUntil([&] { return root->property("currentPage").toInt() == 2; },
+            "Keypad Enter did not activate the focused Queue navigation button",2000);
         root->setProperty("currentPage",0);
         auto* button = root->findChild<QObject*>("startButton");
         auto* statusLabel = root->findChild<QObject*>("studioStatusLabel");
