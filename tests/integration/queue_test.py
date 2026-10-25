@@ -203,12 +203,12 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
         assert rows(published_db)[0]["state"] == "running"
         assert published_output.is_file(), "The post-publication crash marker preceded final output publication"
         with closing(sqlite3.connect(published_db)) as connection:
-            publication = connection.execute("SELECT sha256, byte_count FROM task_output_publications").fetchone()
+            publication = connection.execute("SELECT sha256, byte_count, result_json FROM task_output_publications").fetchone()
         assert publication is not None, "Final output was published without a durable pre-publication proof"
         published_probe = json.loads(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "json", published_output).stdout)
         assert published_probe["streams"][0]["nb_read_frames"] == "64"
         expected_bytes = published_output.read_bytes()
-        assert publication == (hashlib.sha256(expected_bytes).hexdigest(), len(expected_bytes)), "Publication proof did not bind the final output bytes"
+        assert publication[:2] == (hashlib.sha256(expected_bytes).hexdigest(), len(expected_bytes)), "Publication proof did not bind the final output bytes"
         assert pcm(crash_source) == pcm(published_output)
         published_holder.kill()
         published_holder.communicate(timeout=10)
@@ -221,6 +221,14 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
         assert published_output.read_bytes() == bytes(altered), "Recovery overwrote the mismatched output"
 
         published_output.write_bytes(expected_bytes)
+        with closing(sqlite3.connect(published_db)) as connection:
+            connection.execute("UPDATE task_output_publications SET result_json='{}'")
+            connection.commit()
+        run(native, "reject-proof", published, crash_source, pack, runtime, published_marker)
+        assert rows(published_db)[0]["state"] == "interrupted", "Invalid publication result was incorrectly marked complete"
+        with closing(sqlite3.connect(published_db)) as connection:
+            connection.execute("UPDATE task_output_publications SET result_json=?", (publication[2],))
+            connection.commit()
         run(native, "recover", published, crash_source, pack, runtime, published_marker)
         published_rows = rows(published_db)
         assert len(published_rows) == 1 and published_rows[0]["state"] == "completed"
@@ -239,7 +247,7 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
     report.update(cliBatch=True, sourceChangeRejected=True, processCrashDetected=True, hardLinkOwnerProtected=True,
                   restartFromZero=True, checkpointResume=True, stalePartialCleanup=True,
                   uncommittedSegmentCleanup=True, unrelatedTaskFilesPreserved=True, sequentialSessions=20,
-                  publishedOutputRecovery=True, tamperedPublishedOutputRejected=True,
+                  publishedOutputRecovery=True, publishedOutputAutoRecovery=True, tamperedPublishedOutputRejected=True,
                   repeatedPixelsAndTimingExact=True)
     (reports / "queue-workflow.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 print("Native queue, CLI batch, ownership, pause, cancellation, retry, source integrity and process-crash tests passed")

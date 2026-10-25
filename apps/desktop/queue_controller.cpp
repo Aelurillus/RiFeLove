@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
+#include <QStringList>
 #include <set>
 #include <algorithm>
 #include <chrono>
@@ -70,9 +71,15 @@ public:
             settings_ = std::make_unique<QSettings>(QFileInfo(database_).dir().filePath("preferences.ini"),QSettings::IniFormat);
             settings_->setFallbacksEnabled(false);
             const auto defaults = readDefaults(); const auto recovered = queue_->recoveredCount();
-            post([defaults,recovered](QueueController& c) {
+            const auto recoveredPublished = queue_->recoveredPublishedOutputCount();
+            post([defaults,recovered,recoveredPublished](QueueController& c) {
                 c.available_ = true; c.defaults_ = defaults; c.state_ = "ready";
-                c.detail_ = recovered ? tr("发现 %1 个中断任务。可校验已完成片段后继续，也可选择新文件名从头生成。").arg(recovered) : QString();
+                QStringList recoveryMessages;
+                if (recoveredPublished)
+                    recoveryMessages.push_back(tr("已校验并自动恢复 %1 个已发布结果。此处的恢复不需要重新补帧。").arg(recoveredPublished));
+                if (recovered)
+                    recoveryMessages.push_back(tr("发现 %1 个仍中断的任务。可校验已完成片段后继续，也可选择新文件名从头生成。").arg(recovered));
+                c.detail_ = recoveryMessages.join('\n');
                 emit c.defaultsChanged(); emit c.changed(); emit c.operationFinished("ready");
             });
             snapshot();

@@ -1,6 +1,6 @@
 # Safe segment checkpoints and recovery
 
-Status: checkpoint writing, verification, queue recovery, explicit resume and final stream-copy assembly are wired end to end. The queue uses 256 output frames per segment by default. Segments contain video only; audio and other supported source streams are copied once during final assembly. Every committed segment is hashed and journaled in SQLite, then re-hashed and decoded again before reuse. The pipeline reads the source from the beginning to rebuild RIFE input context, skips already committed output indices, generates the remaining frames and assembles the completed timeline. This is verified on a bounded local GPU crash/recovery fixture; multi-hour and broad hardware/content qualification remains open.
+Status: checkpoint writing, verification, queue recovery, explicit resume, final stream-copy assembly and startup adoption of verified published outputs are wired end to end. The queue uses 256 output frames per segment by default. Segments contain video only; audio and other supported source streams are copied once during final assembly. Every committed segment is hashed and journaled in SQLite, then re-hashed and decoded again before reuse. The pipeline reads the source from the beginning to rebuild RIFE input context, skips already committed output indices, generates the remaining frames and assembles the completed timeline. This is verified on bounded local GPU crash/recovery fixtures; multi-hour and broad hardware/content qualification remains open.
 
 ## Identity boundary
 

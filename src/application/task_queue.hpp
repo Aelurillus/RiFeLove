@@ -32,8 +32,12 @@ public:
     // Creates a separate task from frame zero, preserving interrupted history.
     [[nodiscard]] std::string restart(const std::string& id, const std::string& newOutput);
     [[nodiscard]] bool busy() const { return busy_.load(); }
+    // Number of configured tasks still interrupted after startup reconciliation.
     [[nodiscard]] std::size_t recoveredCount() const { return recovered_; }
+    // Number of byte-identical, previously validated outputs adopted at startup.
+    [[nodiscard]] std::size_t recoveredPublishedOutputCount() const { return recoveredPublishedOutputs_; }
 private:
+    void reconcilePublishedOutputs();
     void run(std::stop_token stop, const Callback& callback);
     std::unique_ptr<QueueOwner> owner_;
     TaskStore store_;
@@ -46,5 +50,6 @@ private:
     std::stop_source currentCancel_;
     std::stop_source runCancel_;
     std::size_t recovered_ = 0;
+    std::size_t recoveredPublishedOutputs_ = 0;
 };
 } // namespace rifelove::application

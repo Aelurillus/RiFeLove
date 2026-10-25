@@ -319,6 +319,14 @@ void TaskStore::completePublishedOutput(const std::string& id) {
     if (sqlite3_step(detail.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     transaction.commit();
 }
+void TaskStore::setInterruptedRecoveryError(const std::string& id, const std::string& error) {
+    boundedPayload(error,true);
+    std::lock_guard lock(mutex_); requireWritable();
+    Statement update(db_,"UPDATE tasks SET error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='interrupted' AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
+    bindText(db_,update.get(),1,error); bindText(db_,update.get(),2,id);
+    if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1)
+        throw std::logic_error("Recovery diagnostics require an interrupted configured task");
+}
 std::size_t TaskStore::recoverConfigured() {
     std::lock_guard lock(mutex_); requireWritable();
     execute(db_, "UPDATE tasks SET state='interrupted',error='Worker ended while task was active. Verify checkpoints to resume or create a new output to restart.',updated_at=CURRENT_TIMESTAMP WHERE state IN ('running','paused') AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");

@@ -40,7 +40,7 @@ int wmain(int argc, wchar_t** wide) {
         const std::string mode = argv[1]; const auto root = path(argv[2]);
         const auto database = root / "native-queue.sqlite";
         TaskQueue queue(database,(mode == "hold" || mode == "hold-complete" || mode == "hold-published" ||
-            mode == "reject-published" || mode == "recover") ? 16 : 256);
+            mode == "reject-published" || mode == "reject-proof" || mode == "recover") ? 16 : 256);
         if (mode == "owner") { std::cout << "ownership acquired\n"; return 0; }
         if (mode == "stress") {
             std::vector<ProcessingJob> jobs;
@@ -70,9 +70,23 @@ int wmain(int argc, wchar_t** wide) {
                 "; reason=" + rejectionReason);
             return 0;
         }
+        if (mode == "reject-proof") {
+            const auto rows = queue.list();
+            require(rows.size() == 1 && rows[0].task.state == TaskState::interrupted,
+                "Invalid publication result was incorrectly adopted as completed");
+            require(rows[0].task.error.find("Saved output validation result is invalid") != std::string::npos,
+                "Invalid publication result did not produce a recovery diagnostic");
+            return 0;
+        }
         if (mode == "recover") {
             require(queue.recoveredCount() <= 1,"Recovery changed an unexpected number of queue tasks");
-            const auto rows = queue.list(); require(rows.size() == 1 && rows[0].task.state == TaskState::interrupted,"Crash task is not interrupted");
+            const auto rows = queue.list(); require(rows.size() == 1,"Crash task is missing");
+            if (rows[0].task.state == TaskState::completed) {
+                require(queue.recoveredPublishedOutputCount() == 1,"Published output was not reconciled during queue startup");
+                require(std::filesystem::is_regular_file(path(rows[0].task.outputPath)),"Recovered published output is missing");
+                return 0;
+            }
+            require(rows[0].task.state == TaskState::interrupted,"Crash task is neither interrupted nor a reconciled published output");
             bool rejected = false; try { queue.retry(rows[0].task.id); } catch (const std::logic_error&) { rejected = true; }
             require(rejected,"Interrupted task was incorrectly treated as a retry/checkpoint");
             bool resumedCheckpoint = false;

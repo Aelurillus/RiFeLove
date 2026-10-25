@@ -79,6 +79,8 @@ public:
     [[nodiscard]] std::optional<TaskOutputPublication> outputPublicationIntent(const std::string& id) const;
     // Caller must verify the published file against the saved hash and size first.
     void completePublishedOutput(const std::string& id);
+    // Preserve a startup-recovery diagnostic without changing an interrupted task's state.
+    void setInterruptedRecoveryError(const std::string& id, const std::string& error);
     [[nodiscard]] std::size_t recoverConfigured();
 
     // A checkpoint manifest is immutable for a task. Segment records are added

@@ -53,11 +53,64 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
         {"mediaRuntime",media::MediaEngine::runtimeVersion()},
         {"framesPerSegment",framesPerSegment}}.dump();
 }
+void validatePublishedResult(const std::string& serialized) {
+    const auto result = Json::parse(serialized);
+    if (!result.is_object() || result.value("schemaVersion",0) != 1)
+        throw std::invalid_argument("Saved publication result has an unsupported schema");
+    const auto frames = result.at("outputFrames").get<std::uint64_t>();
+    const auto aiFrames = result.at("aiFrames").get<std::uint64_t>();
+    const auto originalFrames = result.at("originalFrames").get<std::uint64_t>();
+    const auto heldFrames = result.at("heldFrames").get<std::uint64_t>();
+    const auto decodedFrames = result.at("validation").at("decodedFrames").get<std::uint64_t>();
+    if (frames == 0 || decodedFrames != frames || aiFrames > frames ||
+        originalFrames > frames - aiFrames || heldFrames != frames - aiFrames - originalFrames)
+        throw std::invalid_argument("Saved publication result does not match its validated frame counts");
+}
 }
 TaskQueue::TaskQueue(const std::filesystem::path& database, std::size_t checkpointFramesPerSegment)
     : owner_(std::make_unique<QueueOwner>(database)), store_(utf8(database)),checkpointFramesPerSegment_(checkpointFramesPerSegment) {
     if (checkpointFramesPerSegment_ == 0) throw std::invalid_argument("Checkpoint segment size must be positive");
-    recovered_ = store_.recoverConfigured();
+    (void)store_.recoverConfigured();
+    reconcilePublishedOutputs();
+    const auto tasks = store_.configured();
+    recovered_ = static_cast<std::size_t>(std::count_if(tasks.begin(),tasks.end(),[](const auto& row) {
+        return row.task.state == TaskState::interrupted;
+    }));
+}
+void TaskQueue::reconcilePublishedOutputs() {
+    for (const auto& row : store_.configured()) {
+        if (row.task.state != TaskState::interrupted) continue;
+        try {
+            const auto publication = store_.outputPublicationIntent(row.task.id);
+            if (!publication) continue;
+            const auto output = path(row.task.outputPath);
+            if (!pathEntryExists(output)) continue;
+            try {
+                SourceLease lease(output);
+                const auto actual = lease.fingerprint(std::stop_token{});
+                if (actual.size != publication->byteCount || actual.sha256 != publication->sha256) {
+                    store_.setInterruptedRecoveryError(row.task.id,
+                        "Published output does not match the saved validation proof; it was left untouched. Resume or restart using a new output path.");
+                    continue;
+                }
+                try {
+                    validatePublishedResult(publication->result);
+                } catch (const std::exception& error) {
+                    store_.setInterruptedRecoveryError(row.task.id,
+                        "Saved output validation result is invalid; the published file was left untouched: " + std::string(error.what()));
+                    continue;
+                }
+                store_.completePublishedOutput(row.task.id);
+                ++recoveredPublishedOutputs_;
+            } catch (const std::exception& error) {
+                store_.setInterruptedRecoveryError(row.task.id,
+                    "Could not verify and reconcile the published output after restart; it was left untouched: " + std::string(error.what()));
+            }
+        } catch (const std::exception& error) {
+            store_.setInterruptedRecoveryError(row.task.id,
+                "Could not reconcile the published output after restart; it was left untouched: " + std::string(error.what()));
+        }
+    }
 }
 TaskQueue::~TaskQueue() { stop(); if (worker_.joinable()) worker_.join(); }
 void TaskQueue::stop() { std::stop_source source; { std::lock_guard lock(activity_); source = runCancel_; } source.request_stop(); }
@@ -150,6 +203,7 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
         const auto actual = lease.fingerprint(std::stop_token{});
         if (actual.size != publication->byteCount || actual.sha256 != publication->sha256)
             throw std::invalid_argument("Existing output does not match its pre-publication validation proof; keep it and restart with a new output path");
+        validatePublishedResult(publication->result);
         const auto expectedFrames = Json::parse(publication->result).at("outputFrames").get<std::uint64_t>();
         std::uint64_t committedFrames = 0;
         for (const auto& segment : segments) {
