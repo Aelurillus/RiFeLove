@@ -235,54 +235,59 @@ ApplicationWindow {
         spacing: 0
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 232
-            color: "#101722"
+            Layout.preferredWidth: 240
+            color: "#0f1720"
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: "#202c38" }
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 20
-                spacing: 12
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                anchors.topMargin: 22
+                anchors.bottomMargin: 18
+                spacing: 10
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 12
+                    spacing: 11
                     Rectangle {
-                        Layout.preferredWidth: 46
-                        Layout.preferredHeight: 46
-                        radius: 14
-                        gradient: Gradient { GradientStop { position: 0; color: "#b2f0d6" } GradientStop { position: 1; color: "#62c6aa" } }
-                        Label { anchors.centerIn: parent; text: "R"; color: "#10241f"; font.pixelSize: 28; font.bold: true }
+                        Layout.preferredWidth: 44
+                        Layout.preferredHeight: 44
+                        radius: 13
+                        gradient: Gradient { GradientStop { position: 0; color: "#a8efd5" } GradientStop { position: 1; color: "#49b99c" } }
+                        Label { anchors.centerIn: parent; text: "R"; color: "#09251e"; font.pixelSize: 27; font.bold: true }
                     }
                     ColumnLayout {
-                        spacing: 1
-                        Label { text: "RifeLove"; font.pixelSize: 23; font.bold: true }
-                        Label { text: qsTr("离线视频工作台"); color: "#91a1b4"; font.pixelSize: 12 }
+                        spacing: 2
+                        Label { text: "RifeLove"; font.pixelSize: 21; font.bold: true; color: "#f0f5fa" }
+                        Label { text: qsTr("离线视频工作台"); color: "#8393a5"; font.pixelSize: 11 }
                     }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#253243"; Layout.topMargin: 12; Layout.bottomMargin: 8 }
-                Label { text: qsTr("工作区"); color: "#74849a"; font.pixelSize: 11; font.bold: true; Layout.leftMargin: 8 }
-                ActionButton { objectName: "homeNavigationButton"; text: qsTr("⌂     工作区"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
-                ActionButton { text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
-                ActionButton { text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
-                ActionButton { text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
-                ActionButton { objectName: "comparisonButton"; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 4; onClicked: window.currentPage = 4 }
+                Rectangle { Layout.fillWidth: true; height: 1; color: "#202c38"; Layout.topMargin: 10; Layout.bottomMargin: 7 }
+                Label { text: qsTr("工作区"); color: "#718196"; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 9; Layout.bottomMargin: 3 }
+                ActionButton { objectName: "homeNavigationButton"; navigation: true; text: qsTr("⌂     工作区"); Layout.fillWidth: true; highlighted: window.currentPage === 0; onClicked: window.currentPage = 0 }
+                ActionButton { navigation: true; text: qsTr("▶     插帧工作室"); Layout.fillWidth: true; highlighted: window.currentPage === 1; onClicked: window.currentPage = 1 }
+                ActionButton { navigation: true; text: qsTr("≋     任务队列"); Layout.fillWidth: true; highlighted: window.currentPage === 2; onClicked: window.currentPage = 2 }
+                ActionButton { navigation: true; text: qsTr("◈     模型中心"); Layout.fillWidth: true; highlighted: window.currentPage === 3; onClicked: window.currentPage = 3 }
+                ActionButton { objectName: "comparisonButton"; navigation: true; text: qsTr("▣     对比预览"); Layout.fillWidth: true; visible: processingAvailable; highlighted: window.currentPage === 4; onClicked: window.currentPage = 4 }
                 Item { Layout.fillHeight: true }
                 Rectangle {
                     Layout.fillWidth: true
-                    radius: 14
-                    color: "#151f2c"
-                    border.color: "#263548"
+                    radius: 13
+                    color: "#121d28"
+                    border.color: "#263746"
                     implicitHeight: deviceInfo.implicitHeight + 28
                     ColumnLayout {
                         id: deviceInfo
                         anchors.fill: parent
                         anchors.margins: 14
                         spacing: 7
-                        Label { text: qsTr("本机加速器"); color: "#91a1b4"; font.pixelSize: 11 }
+                        Label { text: qsTr("本机加速器"); color: "#8292a5"; font.pixelSize: 10; font.bold: true }
                         Label {
                             text: window.info.gpu || (window.backendAvailable && studio.deviceInfo.available
                                 ? studio.deviceInfo.name : qsTr("未检测到 NVIDIA GPU"))
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                             font.bold: true
+                            font.pixelSize: 13
                         }
                         Label {
                             visible: !window.info.width && window.backendAvailable && studio.deviceInfo.available
@@ -302,7 +307,7 @@ ApplicationWindow {
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
-                        Label { text: qsTr("源文件不会被修改"); color: "#91a1b4"; font.pixelSize: 11 }
+                        Label { text: qsTr("源文件不会被修改"); color: "#8292a5"; font.pixelSize: 10 }
                     }
                 }
             }
@@ -344,26 +349,27 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 5
-                            Label { text: qsTr("插帧工作室"); color: "#9ee6c8"; font.pixelSize: 12; font.bold: true }
-                            Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 30; font.bold: true }
-                            Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#9aaac0"; wrapMode: Text.WordWrap }
+                            Label { text: qsTr("插帧工作室"); color: "#6fdbb8"; font.pixelSize: 11; font.bold: true }
+                            Label { text: qsTr("让每一段运动都更流畅"); font.pixelSize: 32; font.bold: true; color: "#f2f6fa" }
+                            Label { text: qsTr("选择视频与目标帧率，RifeLove 会保留原片并生成新文件。"); color: "#94a5b8"; wrapMode: Text.WordWrap }
                         }
                         Rectangle {
                             visible: processingAvailable
                             radius: 20
-                            color: "#172a2a"
-                            border.color: "#31534b"
+                            color: "#132822"
+                            border.color: "#315246"
                             implicitWidth: engineLabel.implicitWidth + 24
                             implicitHeight: engineLabel.implicitHeight + 16
-                            Label { id: engineLabel; anchors.centerIn: parent; text: qsTr("●  RIFE 4.25 · CUDA"); color: "#a5e2c8"; font.pixelSize: 12 }
+                            Label { id: engineLabel; anchors.centerIn: parent; text: qsTr("●  RIFE 4.25 · CUDA"); color: "#a8efd5"; font.pixelSize: 12; font.bold: true }
                         }
                     }
                     Rectangle {
                         Layout.fillWidth: true
-                        implicitHeight: importContent.implicitHeight + 36
-                        color: "#151f2c"
-                        radius: 12
-                        border.color: drop.containsDrag ? "#9ee6c8" : "#263548"
+                        implicitHeight: importContent.implicitHeight + 34
+                        color: "#121d28"
+                        radius: 14
+                        border.color: drop.containsDrag ? "#6fdbb8" : "#263746"
+                        Rectangle { width: 3; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; radius: 2; color: window.info.width ? "#6fdbb8" : "#344454" }
                         DropArea {
                             id: drop
                             anchors.fill: parent
@@ -373,15 +379,18 @@ ApplicationWindow {
                         ColumnLayout {
                             id: importContent
                             anchors.fill: parent
-                            anchors.margins: 18
-                            spacing: 10
+                            anchors.leftMargin: 20
+                            anchors.rightMargin: 18
+                            anchors.topMargin: 17
+                            anchors.bottomMargin: 17
+                            spacing: 11
                             RowLayout {
-                            Label { text: qsTr("导入视频"); font.bold: true; font.pixelSize: 16; Layout.fillWidth: true }
+                                Label { text: qsTr("导入视频"); font.bold: true; font.pixelSize: 15; Layout.fillWidth: true }
                                 ActionButton { text: qsTr("选择文件"); primary: true; enabled: processingAvailable && !window.active; onClicked: sourceDialog.open() }
                             }
-                            Label { text: processingAvailable && studio.source ? studio.source : qsTr("将一个视频拖到这里，或选择文件"); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; color: "#c4d1e4" }
-                            Label { visible: !!window.info.width; text: (window.info.width || 0) + " × " + (window.info.height || 0) + "   ·   " + (window.info.rate || "—") + " FPS   ·   " + (window.info.codec || "") + "   ·   " + (window.info.depth || 0) + "-bit"; color: "#9aaac0" }
-                            Label { visible: !!window.info.color; text: window.info.color || ""; color: "#9aaac0"; font.pixelSize: 12 }
+                            Label { text: processingAvailable && studio.source ? studio.source : qsTr("将一个视频拖到这里，或选择文件"); elide: Text.ElideMiddle; Layout.fillWidth: true; color: "#c2d0dd" }
+                            Label { visible: !!window.info.width; text: (window.info.width || 0) + " × " + (window.info.height || 0) + "   ·   " + (window.info.rate || "—") + " FPS   ·   " + (window.info.codec || "") + "   ·   " + (window.info.depth || 0) + "-bit"; color: "#97a8ba"; font.pixelSize: 12 }
+                            Label { visible: !!window.info.color; text: window.info.color || ""; color: "#7fa2be"; font.pixelSize: 11 }
                             ActionButton {
                                 objectName: "studioMediaDetailsToggle"
                                 visible: Number(window.info.streams || 0) > 0
@@ -425,34 +434,69 @@ ApplicationWindow {
                             }
                         }
                     }
-                    LocalProfilePicker {
-                        objectName: "studioLocalProfiles"
+                    Rectangle {
                         Layout.fillWidth: true
-                        controller: taskQueue
-                        values: window.localProfileValues()
-                        available: processingAvailable && !window.active && taskQueue.available
+                        radius: 13
+                        color: "#101923"
+                        border.color: "#202f3d"
+                        implicitHeight: studioProfiles.implicitHeight + 24
+                        LocalProfilePicker {
+                            id: studioProfiles
+                            objectName: "studioLocalProfiles"
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            controller: taskQueue
+                            values: window.localProfileValues()
+                            available: processingAvailable && !window.active && taskQueue.available
+                        }
                     }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 16
-                        ColumnLayout {
+                        Rectangle {
                             Layout.fillWidth: true
-                            Label { text: qsTr("目标帧率"); font.bold: true }
-                            ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; enabled: !window.active; onActivated: window.persistLocalDefaults(); onAccepted: window.persistLocalDefaults() }
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Label { text: qsTr("编码器"); font.bold: true }
-                            ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
+                            radius: 13
+                            color: "#111b26"
+                            border.color: "#263746"
+                            implicitHeight: settingsContent.implicitHeight + 28
+                            ColumnLayout {
+                                id: settingsContent
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                spacing: 9
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: qsTr("目标帧率"); font.bold: true; Layout.fillWidth: true }
+                                    Label { text: qsTr("编码器"); font.bold: true; Layout.fillWidth: true }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 12
+                                    ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; enabled: !window.active; onActivated: window.persistLocalDefaults(); onAccepted: window.persistLocalDefaults() }
+                                    ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
+                                }
+                            }
                         }
                     }
-                    RowLayout {
+                    Rectangle {
                         Layout.fillWidth: true
-                            Label { text: qsTr("输出文件"); font.bold: true }
-                        Item { Layout.fillWidth: true }
-                        ActionButton { text: qsTr("选择位置"); enabled: processingAvailable && !window.active; onClicked: { outputDialog.selectedFile = studio.localUrl(studio.output); outputDialog.open() } }
+                        radius: 13
+                        color: "#111b26"
+                        border.color: "#263746"
+                        implicitHeight: outputContent.implicitHeight + 26
+                        ColumnLayout {
+                            id: outputContent
+                            anchors.fill: parent
+                            anchors.margins: 13
+                            spacing: 8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("输出文件"); font.bold: true; Layout.fillWidth: true }
+                                ActionButton { text: qsTr("选择位置"); enabled: processingAvailable && !window.active; onClicked: { outputDialog.selectedFile = studio.localUrl(studio.output); outputDialog.open() } }
+                            }
+                            TextField { Layout.fillWidth: true; readOnly: true; text: processingAvailable ? studio.output : ""; placeholderText: qsTr("导入视频后自动生成新文件名"); selectByMouse: true }
+                        }
                     }
-                    TextField { Layout.fillWidth: true; readOnly: true; text: processingAvailable ? studio.output : ""; placeholderText: qsTr("导入视频后自动生成新文件名"); selectByMouse: true }
                     ActionButton {
                         objectName: "studioAdvancedEncodingToggle"
                         text: window.encodingAdvancedOpen ? qsTr("收起高级编码") : qsTr("高级编码设置")
