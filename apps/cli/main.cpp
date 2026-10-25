@@ -1,6 +1,7 @@
 #include "database/task_store.hpp"
 #include "timeline/timeline.hpp"
 #include "common/json.hpp"
+#include "common/logging.hpp"
 #include "gpu/cuda_device.hpp"
 #ifdef RIFELOVE_HAS_PIPELINE
 #include "interpolation_commands.hpp"
@@ -13,11 +14,14 @@
 #include <iostream>
 #include <cstdint>
 #include <charconv>
+#include <cstdlib>
+#include <filesystem>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+#include <array>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -32,6 +36,21 @@
 
 namespace {
 using rifelove::jsonString;
+
+std::filesystem::path defaultLogPath() {
+#ifdef _WIN32
+    std::array<wchar_t,32768> localAppData{};
+    const auto length = GetEnvironmentVariableW(L"LOCALAPPDATA",localAppData.data(),static_cast<DWORD>(localAppData.size()));
+    if (length > 0 && length < localAppData.size())
+        return std::filesystem::path(std::wstring(localAppData.data(),length)) / L"RifeLove" / L"logs" / L"cli.jsonl";
+#else
+    if (const char* stateHome = std::getenv("XDG_STATE_HOME"); stateHome && *stateHome)
+        return std::filesystem::path(stateHome) / "RifeLove" / "logs" / "cli.jsonl";
+    if (const char* home = std::getenv("HOME"); home && *home)
+        return std::filesystem::path(home) / ".local" / "state" / "RifeLove" / "logs" / "cli.jsonl";
+#endif
+    return std::filesystem::temp_directory_path() / "RifeLove" / "logs" / "cli.jsonl";
+}
 
 std::vector<std::string> commandLineUtf8(int argc, char** argv) {
 #ifdef _WIN32
@@ -100,10 +119,16 @@ void usage(std::ostream& out) {
 } // namespace
 
 int main(int argc, char** argv) {
+    struct ShutdownLogging { ~ShutdownLogging() { rifelove::logging::shutdown(); } } shutdownLogging;
+    std::string currentCommand;
     try {
         const auto args = commandLineUtf8(argc, argv);
         if (args.size() < 2 || args[1] == "--help" || args[1] == "-h") { usage(std::cout); return 0; }
         const std::string& command = args[1];
+        currentCommand = command;
+        try { (void)rifelove::logging::initialize(defaultLogPath()); } catch (...) { }
+        rifelove::logging::write(rifelove::logging::Level::info,"cli","command.start","CLI command started",
+            {{"command",command}});
         if (command.rfind("queue-",0) == 0) {
 #ifdef RIFELOVE_HAS_PIPELINE
             return runQueueCommand(args);
@@ -193,6 +218,8 @@ int main(int argc, char** argv) {
         usage(std::cerr);
         throw std::invalid_argument("unknown command: " + command);
     } catch (const std::exception& error) {
+        rifelove::logging::write(rifelove::logging::Level::error,"cli","command.failed",error.what(),
+            {{"command",currentCommand}});
         std::cerr << "rifelove-cli: " << error.what() << '\n';
         return 2;
     }

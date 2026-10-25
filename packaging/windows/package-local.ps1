@@ -131,6 +131,13 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination (Join-
 Copy-Item -LiteralPath (Join-Path $ffmpeg "LICENSE.txt") -Destination (Join-Path $licenseTarget "FFmpeg-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path (Split-Path $onnx -Parent) "LICENSE") -Destination (Join-Path $licenseTarget "ONNX-Runtime-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path (Split-Path $onnx -Parent) "ThirdPartyNotices.txt") -Destination (Join-Path $licenseTarget "ONNX-Runtime-ThirdPartyNotices.txt")
+$spdlogLicenseCandidates = @(
+    (Join-Path $build "_deps/spdlog-src/LICENSE"),
+    (Join-Path $repositoryRoot "vcpkg_installed/x64-mingw-dynamic/share/spdlog/copyright")
+)
+$spdlogLicense = $spdlogLicenseCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if (-not $spdlogLicense) { throw "The spdlog MIT license file is missing from the configured dependency source." }
+Copy-Item -LiteralPath $spdlogLicense -Destination (Join-Path $licenseTarget "spdlog-MIT.txt")
 $tensorRtRoot = Split-Path (Split-Path $inferenceRuntime -Parent) -Parent
 $tensorRtLicense = Join-Path $tensorRtRoot "licenses/TensorRT-10.9-LICENSE.txt"
 if (-not (Test-Path -LiteralPath $tensorRtLicense -PathType Leaf)) { throw "TensorRT license file is missing: $tensorRtLicense" }
@@ -140,6 +147,7 @@ $readmeLines = @(
     'RifeLove 本机运行包',
     '',
     '启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。',
+    '运行日志只保存在本机：桌面日志位于 data/logs/rifelove.jsonl，CLI 日志位于 %LOCALAPPDATA%/RifeLove/logs/cli.jsonl。日志最多 4 MiB 并保留最近 3 个轮转文件；错误详情有时会包含本地文件名，分享前请检查。',
     '本次附带并完成文件校验的模型：{0}。首次启动默认选择 {1}。当前色彩路径支持模型清单声明的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR，并保留输入位深和色彩标签；HDR、其他位深和未知色彩仍被拦截。模型许可与 SHA-256 位于各自的 models 子目录。',
     '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。两套随包模型都经过本机 TensorRT FP32 数值校验，摘要保存在 data/tensorrt-validation.json。FP16 在当前 GTX 1660 SUPER 上未通过 8-bit SDR 精度门槛，因此不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
     '默认视频编码：任务开始前按目标帧率、像素格式、码率和编码选项预检查 NVIDIA NVENC；若当前驱动或像素格式不兼容，会选择已通过同一输出设置检查的软件编码器。界面会分别标明 CPU 视频编码和 CUDA RIFE 插帧。当前驱动提供 NVENC API 12.2，而本机 FFmpeg 要求 API 13.0 / 驱动 570.0 或更新，所以自动模式将使用软件 H.264。高级编码中可以显式选择 NVENC 的恒定质量 CQ（VBR + CQ）；该设置需要本机 NVENC 可初始化，无法回退到软件编码。',

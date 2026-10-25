@@ -29,6 +29,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+find_package(spdlog CONFIG QUIET)
+if(NOT TARGET spdlog::spdlog_header_only)
+  if(NOT RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS AND NOT FETCHCONTENT_SOURCE_DIR_SPDLOG AND
+      NOT EXISTS "${FETCHCONTENT_BASE_DIR}/spdlog-src/CMakeLists.txt")
+    message(FATAL_ERROR "Offline configure needs the pinned spdlog 1.17.0 source or a vcpkg installation. Seed the source cache or explicitly set RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=ON for initial setup.")
+  endif()
+  set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+  set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+  set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+  set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG 79524ddd08a4ec981b7fea76afd08ee05f83755d
+    GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(spdlog)
+endif()
 if(RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS)
   set(FETCHCONTENT_FULLY_DISCONNECTED OFF)
 else()
@@ -58,13 +75,25 @@ if(RIFELOVE_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+add_library(rifelove_logging src/common/logging.cpp)
+target_include_directories(rifelove_logging PUBLIC src)
+target_link_libraries(rifelove_logging PUBLIC spdlog::spdlog_header_only)
+if(WIN32)
+  target_compile_definitions(rifelove_logging PRIVATE SPDLOG_WCHAR_FILENAMES=1)
+endif()
+if(MSVC)
+  target_compile_options(rifelove_logging PRIVATE /W4 /permissive- /EHsc)
+else()
+  target_compile_options(rifelove_logging PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+endif()
+
 add_library(rifelove_core
   src/common/rational.cpp
   src/timeline/timeline.cpp
   src/interpolation/scene_analysis.cpp
   src/database/task_store.cpp)
 target_include_directories(rifelove_core PUBLIC src)
-target_link_libraries(rifelove_core PUBLIC rifelove_sqlite)
+target_link_libraries(rifelove_core PUBLIC rifelove_sqlite rifelove_logging)
 if(MSVC)
   target_compile_options(rifelove_core PRIVATE /W4 /permissive- /EHsc)
 else()
@@ -185,7 +214,7 @@ if(RIFELOVE_BUILD_DESKTOP)
 endif()
 
 if(RIFELOVE_BUILD_TESTS)
-  add_executable(rifelove-tests tests/unit/rational_test.cpp tests/unit/timeline_test.cpp tests/unit/task_store_test.cpp tests/unit/scene_analysis_test.cpp tests/unit/test_runtime_test.cpp)
+  add_executable(rifelove-tests tests/unit/rational_test.cpp tests/unit/timeline_test.cpp tests/unit/task_store_test.cpp tests/unit/scene_analysis_test.cpp tests/unit/test_runtime_test.cpp tests/unit/logging_test.cpp)
   target_link_libraries(rifelove-tests PRIVATE rifelove_core GTest::gtest_main)
   if(TARGET rifelove_application)
     target_sources(rifelove-tests PRIVATE tests/unit/application_test.cpp tests/unit/checkpoint_artifacts_test.cpp)

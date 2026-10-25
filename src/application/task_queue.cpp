@@ -1,4 +1,5 @@
 #include "application/task_queue.hpp"
+#include "common/logging.hpp"
 #include "application/checkpoint_artifacts.hpp"
 #include "application/job_serialization.hpp"
 #include "application/local_lease.hpp"
@@ -311,11 +312,17 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
             result.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
             store_.finish(current->task.id,TaskState::completed,serializeResult(result));
+            logging::write(logging::Level::info,"queue","task.completed","Queued output passed media and timeline validation",
+                {{"task_id",current->task.id},{"encoder",result.video.encoder},
+                    {"output_frames",static_cast<std::uint64_t>(result.video.framesSubmitted)}});
             terminal.kind = ProcessingEvent::Kind::completed; terminal.result = std::move(result);
         } catch (const std::exception& error) {
-            terminal.kind = cancellation.stop_requested() ? ProcessingEvent::Kind::cancelled : ProcessingEvent::Kind::failed;
+            const bool cancelled = cancellation.stop_requested();
+            logging::write(cancelled ? logging::Level::warning : logging::Level::error,"queue",
+                cancelled ? "task.cancelled" : "task.failed",error.what(),{{"task_id",current->task.id}});
+            terminal.kind = cancelled ? ProcessingEvent::Kind::cancelled : ProcessingEvent::Kind::failed;
             terminal.detail = error.what();
-            store_.finish(current->task.id,cancellation.stop_requested() ? TaskState::cancelled : TaskState::failed,{},terminal.detail);
+            store_.finish(current->task.id,cancelled ? TaskState::cancelled : TaskState::failed,{},terminal.detail);
         }
         { std::lock_guard lock(activity_); activeId_.clear(); }
         callback({current->task.id,std::move(terminal),false,{}});

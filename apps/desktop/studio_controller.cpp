@@ -1,6 +1,7 @@
 #include "studio_controller.hpp"
 #include "encoding_settings.hpp"
 #include "gpu/cuda_device.hpp"
+#include "common/logging.hpp"
 #include "timeline/timeline.hpp"
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -186,6 +187,9 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
             progress_["encoderFallbackReason"] = preflightEncoderFallback;
             progress_["encoder"] = resolvedEncoder;
             detail_ = encoderFallbackNotice(preflightEncoderFallback,resolvedEncoder);
+            rifelove::logging::write(rifelove::logging::Level::warning,"studio","encoder.fallback",
+                "NVENC initialization failed; automatic encoding selected a software encoder",
+                {{"reason",utf8(preflightEncoderFallback)},{"encoder",utf8(resolvedEncoder)}});
         }
         if (const auto count = rifelove::estimateOutputFrameCount(job.sourceDurationEstimate,job.settings.targetRate))
             progress_["estimatedFrames"] = QVariant::fromValue<qulonglong>(*count);
@@ -295,6 +299,10 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
         } else if (event.kind == Kind::completed && event.result) {
             status_ = "completed";
             const auto& result = *event.result;
+            rifelove::logging::write(rifelove::logging::Level::info,"studio","processing.completed",
+                "Interpolation output passed media and timeline validation",
+                {{"encoder",result.video.encoder},{"output_frames",static_cast<std::uint64_t>(result.video.framesSubmitted)},
+                    {"rife_frames",static_cast<std::uint64_t>(result.aiFrames)},{"processing_fps",result.processingFps}});
             progress_["frames"] = QVariant::fromValue<qulonglong>(result.video.framesSubmitted);
             progress_["aiFrames"] = QVariant::fromValue<qulonglong>(result.aiFrames);
             progress_["fps"] = result.processingFps;
@@ -314,7 +322,10 @@ void StudioController::receive(rifelove::application::ProcessingEvent event) {
                 detail_ += "\n" + tr("TensorRT 未能启动，已使用 ONNX Runtime CUDA 完成推理。");
             }
         } else if (event.kind == Kind::cancelled) { status_ = "cancelled"; detail_ = tr("操作已取消，未发布部分视频。"); }
-        else { status_ = "failed"; detail_ = text(event.detail); }
+        else {
+            rifelove::logging::write(rifelove::logging::Level::error,"studio","processing.failed",event.detail);
+            status_ = "failed"; detail_ = text(event.detail);
+        }
         emit operationFinished(status_);
     }
     emit changed();

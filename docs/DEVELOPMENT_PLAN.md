@@ -11,8 +11,10 @@ Current execution mode: local project, local Git, local builds/tests and local r
 - [x] Add SQLite task schema, guarded state transitions and crash-state recovery.
 - [x] Add CLI entry points for timeline plans and persisted tasks.
 - [x] Add unit tests for arithmetic, VFR/non-integer timeline mapping and task transitions.
-- [ ] Add structured logging/configuration, service/backend interfaces and Qt app shell.
-  - Qt 6.12 / MinGW 15.1 Studio builds locally, with a background processing service and real QML workflow tests; complete queue/profile/model services, configuration and logging remain open.
+- [x] Add structured local logging for desktop, CLI, queue and processing pipeline.
+  - spdlog writes timestamped JSONL records to a bounded rotating file; Qt messages, encoder fallback, completion and failure events are covered. The desktop smoke test parses the generated local log and unit tests cover JSON escaping and file rotation.
+- [ ] Complete configuration/profile and service/backend interface coverage.
+  - Qt 6.12 / MinGW 15.1 Studio builds locally, with a background processing service and real QML workflow tests; complete queue/profile/model services and configuration remain open.
 - [x] Add offline-by-default local build/test runner and local JSON/JUnit reports.
 - [x] Add read-only queue inspection and Windows Unicode CLI regression coverage.
 - [x] Preserve the original complete Master Plan and add SRS/ADD requirement evidence documents.

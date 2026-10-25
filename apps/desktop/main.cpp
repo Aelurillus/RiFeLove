@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QDebug>
 #include <QQmlApplicationEngine>
 #include <QUrl>
 #include <QCommandLineParser>
@@ -12,11 +13,44 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSettings>
+#include <filesystem>
+#include <string>
+#include <vector>
+#include "common/logging.hpp"
 #ifdef RIFELOVE_DESKTOP_PROCESSING
 #include "studio_controller.hpp"
 #include "queue_controller.hpp"
 #include "comparison_preview.hpp"
 #endif
+
+namespace {
+std::filesystem::path nativePath(const QString& value) {
+#if defined(_WIN32)
+    return std::filesystem::path(value.toStdWString());
+#else
+    const auto utf8 = value.toUtf8();
+    return std::filesystem::u8path(utf8.constData(),utf8.constData() + utf8.size());
+#endif
+}
+
+void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message) {
+    try {
+        const auto utf8Message = message.toUtf8();
+        rifelove::logging::Level level = rifelove::logging::Level::info;
+        switch (type) {
+        case QtDebugMsg: level = rifelove::logging::Level::debug; break;
+        case QtInfoMsg: level = rifelove::logging::Level::info; break;
+        case QtWarningMsg: level = rifelove::logging::Level::warning; break;
+        case QtCriticalMsg: level = rifelove::logging::Level::error; break;
+        case QtFatalMsg: level = rifelove::logging::Level::critical; break;
+        }
+        const std::string category = context.category ? context.category : "default";
+        rifelove::logging::write(level,"qt","message",
+            std::string(utf8Message.constData(),static_cast<std::size_t>(utf8Message.size())),{{"category",category}});
+    } catch (...) {
+    }
+}
+} // namespace
 
 int main(int argc, char* argv[]) {
     QQuickStyle::setStyle("Material");
@@ -55,6 +89,12 @@ int main(int argc, char* argv[]) {
     const auto dataRoot = parser.isSet(dataDirectory) ? parser.value(dataDirectory) : portable ?
         applicationDirectory.filePath("data") : QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     if (!QDir().mkpath(dataRoot)) return 2;
+    const auto logPath = nativePath(QDir(dataRoot).filePath(QStringLiteral("logs/rifelove.jsonl")));
+    if (rifelove::logging::initialize(logPath)) {
+        qInstallMessageHandler(qtMessageHandler);
+        rifelove::logging::write(rifelove::logging::Level::info,"desktop","application.start",
+            "RifeLove desktop started",{{"portable",portable}});
+    }
     QSettings preferences(QDir(dataRoot).filePath("preferences.ini"),QSettings::IniFormat);
     preferences.setFallbacksEnabled(false);
     preferences.sync();
@@ -120,5 +160,8 @@ int main(int argc, char* argv[]) {
             else app.exit(0);
         });
     }
-    return app.exec();
+    const int exitCode = app.exec();
+    qInstallMessageHandler(nullptr);
+    rifelove::logging::shutdown();
+    return exitCode;
 }

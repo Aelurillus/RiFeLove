@@ -1,4 +1,5 @@
 #include "core/pipeline/video_pipeline.hpp"
+#include "common/logging.hpp"
 #include "media/rife_color.hpp"
 #include "timeline/timeline.hpp"
 #include <algorithm>
@@ -209,6 +210,9 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 break;
             }
             if (!writer) throw std::runtime_error("Automatic encoding could not open a software encoder compatible with the source format: " + attempts);
+            logging::write(logging::Level::warning,"pipeline","encoder.fallback",
+                "NVENC initialization failed; automatic encoding selected a software encoder",
+                {{"reason",fallback},{"encoder",encoding.encoder}});
             if (progress) {
                 PipelineProgress event{"encoder_fallback",0,0,{},0,fallback,encoding.encoder,{}};
                 progress(event);
@@ -466,6 +470,9 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.elapsedSeconds = elapsed();
     result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
     result.timings.pipelineWallSeconds = result.elapsedSeconds;
+    logging::write(logging::Level::info,"pipeline","processing.completed","Output passed media and timeline validation",
+        {{"encoder",result.video.encoder},{"output_frames",static_cast<std::uint64_t>(result.video.framesSubmitted)},
+            {"rife_frames",static_cast<std::uint64_t>(result.aiFrames)},{"processing_fps",result.processingFps}});
     notify("completed",end);
     return result;
 }
