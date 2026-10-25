@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <random>
 #include <sqlite3.h>
@@ -112,6 +113,33 @@ TEST(TaskStore, ConfiguredBatchPersistsOrderConfigurationAndTerminalEvidence) {
     EXPECT_EQ(rows[0].task.error,"user cancellation"); EXPECT_EQ(rows[1].configuration,"{\"fps\":\"144\"}");
     EXPECT_THROW((void)store.createConfigured({{"c","d","{}"},{"e","f",std::string(65537,'x')}}),std::invalid_argument);
     EXPECT_EQ(store.configured().size(),2U);
+}
+
+TEST(TaskStore, ReportSnapshotIncludesConfiguredAndLegacyTasksWithoutChangingState) {
+    TemporaryDatabase database;
+    std::string legacyId;
+    std::string configuredId;
+    {
+        rifelove::TaskStore writer(database.path.string());
+        legacyId = writer.create("legacy-input.mkv","legacy-output.mkv");
+        writer.transition(legacyId,rifelove::TaskState::running);
+        configuredId = writer.createConfigured({{"configured-input.mkv","configured-output.mkv","{\"schemaVersion\":1}"}}).front();
+        writer.transition(configuredId,rifelove::TaskState::running);
+        writer.saveProgress(configuredId,"{\"frames\":12}");
+        writer.finish(configuredId,rifelove::TaskState::completed,"{\"outputFrames\":12}");
+    }
+    rifelove::TaskStore reader(database.path.string(),rifelove::TaskStore::OpenMode::readOnly);
+    const auto snapshot = reader.reportSnapshot();
+    ASSERT_EQ(snapshot.size(),2U);
+    const auto legacy = std::find_if(snapshot.begin(),snapshot.end(),[&](const auto& row) { return row.task.id == legacyId; });
+    const auto configured = std::find_if(snapshot.begin(),snapshot.end(),[&](const auto& row) { return row.task.id == configuredId; });
+    ASSERT_NE(legacy,snapshot.end()); ASSERT_NE(configured,snapshot.end());
+    EXPECT_EQ(legacy->task.state,rifelove::TaskState::running);
+    EXPECT_TRUE(legacy->configuration.empty());
+    EXPECT_EQ(configured->task.state,rifelove::TaskState::completed);
+    EXPECT_EQ(configured->progress,"{\"frames\":12}");
+    EXPECT_EQ(configured->result,"{\"outputFrames\":12}");
+    EXPECT_EQ(reader.list().size(),snapshot.size());
 }
 
 TEST(TaskStore, ConfiguredRecoveryIncludesPausedAndDoesNotModifyLegacyWorkers) {

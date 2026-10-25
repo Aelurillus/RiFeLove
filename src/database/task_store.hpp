@@ -58,6 +58,9 @@ public:
     void resumeCheckpointed(const std::string& id);
     [[nodiscard]] std::size_t recoverInterrupted();
     [[nodiscard]] std::vector<TaskRecord> list() const;
+    // Read-only, single-query snapshot used by reports and diagnostics. Unlike
+    // configured(), this also includes legacy tasks without task_details.
+    [[nodiscard]] std::vector<ConfiguredTask> reportSnapshot() const;
     // Payloads are versioned JSON owned/validated by application services.
     // Batch creation and terminal state/result publication are transactional.
     [[nodiscard]] std::vector<std::string> createConfigured(const std::vector<NewConfiguredTask>& tasks, std::stop_token stop = {});

@@ -81,6 +81,13 @@ Item {
         nameFilters: [qsTr("视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts *.m2ts *.wmv *.flv *.mxf *.ogv *.vob *.3gp *.asf *.gif)"), qsTr("所有文件 (*)")]
         onAccepted: page.add(selectedFiles)
     }
+    FileDialog {
+        id: queueReportDialog
+        title: qsTr("导出队列报告")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("JSON 报告 (*.json)")]
+        onAccepted: page.queueController.exportReport(selectedFile)
+    }
     FolderDialog { id: sourceFolderDialog; title: qsTr("选择包含视频的文件夹"); onAccepted: page.add([selectedFolder]) }
     FolderDialog { id: outputFolderDialog; title: qsTr("选择输出文件夹"); onAccepted: { page.outputFolder = selectedFolder; page.persistDefaults() } }
     FolderDialog { id: modelDialog; title: qsTr("选择已校验的本地 RIFE 模型包"); onAccepted: { page.modelFolder = selectedFolder; page.persistDefaults() } }
@@ -244,6 +251,7 @@ Item {
             spacing: 8
             Label { text: qsTr("%1 项").arg(page.queueController.counts.total || 0); font.bold: true; Layout.fillWidth: true }
             Label { text: qsTr("等待 %1 · 运行 %2 · 完成 %3 · 失败 %4").arg(page.queueController.counts.queued || 0).arg(page.queueController.counts.running || 0).arg(page.queueController.counts.completed || 0).arg(page.queueController.counts.failed || 0); color: "#9aaac0" }
+            ActionButton { objectName: "queueReportButton"; text: qsTr("导出报告"); enabled: page.queueController.available; onClicked: queueReportDialog.open() }
             ActionButton { objectName: "queueStartButton"; text: qsTr("开始队列"); primary: true; enabled: page.queueController.available && !page.queueController.busy && !page.queueController.importing && (page.queueController.counts.queued || 0) > 0; onClicked: page.queueController.start() }
             ActionButton { objectName: "queuePauseButton"; text: qsTr("暂停"); visible: page.queueController.busy && ["running", "pausing"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "running"; onClicked: page.queueController.pause() }
             ActionButton { objectName: "queueResumeButton"; text: qsTr("继续"); primary: true; visible: page.queueController.busy && ["paused", "resuming"].indexOf(page.queueController.state) >= 0; enabled: page.queueController.state === "paused"; onClicked: page.queueController.resume() }

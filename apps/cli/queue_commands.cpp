@@ -2,12 +2,14 @@
 #include "console_cancellation.hpp"
 #include "application/task_queue.hpp"
 #include "application/job_serialization.hpp"
+#include "application/queue_report.hpp"
 #include "inference/model_pack.hpp"
 #include <nlohmann/json.hpp>
 #include <charconv>
 #include <cmath>
 #include <condition_variable>
 #include <iostream>
+#include <memory>
 
 namespace {
 using namespace rifelove;
@@ -25,8 +27,20 @@ int runQueueCommand(const std::vector<std::string>& args) {
     using namespace rifelove; using namespace rifelove::application;
     if (args.size() < 3) throw std::invalid_argument("Queue command requires DATABASE");
     const auto& command = args[1];
-    if (command != "queue-list" && command != "queue-export" && command != "queue-add" && command != "queue-import" && command != "queue-run" && command != "queue-retry" && command != "queue-cancel" && command != "queue-restart" && command != "queue-resume")
+    if (command != "queue-list" && command != "queue-export" && command != "queue-report" && command != "queue-add" && command != "queue-import" && command != "queue-run" && command != "queue-retry" && command != "queue-cancel" && command != "queue-restart" && command != "queue-resume")
         throw std::invalid_argument("Unknown queue command");
+    if (command == "queue-report") {
+        std::unique_ptr<ProcessingReportFile> reportFile;
+        if (args.size() == 5 && args[3] == "--output") {
+            if (args[4].empty()) throw std::invalid_argument("queue-report --output requires a JSON file path");
+            reportFile = std::make_unique<ProcessingReportFile>(path(args[4]));
+        } else if (args.size() != 3) throw std::invalid_argument("queue-report DATABASE [--output JSON]");
+        TaskStore store(args[2],TaskStore::OpenMode::readOnly);
+        const auto serialized = serializeQueueReport(args[2],store.reportSnapshot());
+        if (reportFile) reportFile->publish(serialized);
+        else std::cout << serialized << std::flush;
+        return 0;
+    }
     if (command == "queue-list" || command == "queue-export") {
         if (args.size() != 3) throw std::invalid_argument("Read-only queue command accepts DATABASE only");
         TaskStore store(args[2],TaskStore::OpenMode::readOnly);

@@ -65,7 +65,49 @@ class LocalCliWorkflow(unittest.TestCase):
     def test_queries_and_recovery_do_not_create_missing_database(self):
         self.run_cli("tasks", self.database, expected_code=2)
         self.run_cli("tasks-recover", self.database, expected_code=2)
+        self.run_cli("queue-report", self.database, expected_code=2)
         self.assertFalse(self.database.exists())
+
+    def test_queue_report_is_read_only_and_summarizes_completed_and_failed_tasks(self):
+        completed = json.loads(self.run_cli("task-create", self.database, "完成源.mp4", "完成结果.mkv").stdout)
+        failed = json.loads(self.run_cli("task-create", self.database, "失败源.mp4", "失败结果.mkv").stdout)
+        result = {
+            "outputFrames": 120, "aiFrames": 60, "elapsedSeconds": 60.0,
+            "processingFps": 2.0, "sceneCuts": 1, "duplicatePairs": 2, "abnormalPairs": 3,
+        }
+        with closing(sqlite3.connect(self.database)) as database:
+            database.execute("UPDATE tasks SET state='completed' WHERE id=?", (completed["id"],))
+            database.execute("UPDATE tasks SET state='failed',error=? WHERE id=?", ("test failure", failed["id"]))
+            database.execute(
+                "INSERT INTO task_details(task_id,configuration,identity,progress,result) VALUES(?,?,?,?,?)",
+                (completed["id"], json.dumps({"targetRate": "240"}), "", "", json.dumps(result)),
+            )
+            database.commit()
+
+        report_path = Path(self.directory.name) / "queue-report.json"
+        self.run_cli("queue-report", self.database, "--output", report_path)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["schemaVersion"], 1)
+        self.assertEqual(report["kind"], "rifelove_queue_report")
+        self.assertEqual(report["summary"]["taskCount"], 2)
+        self.assertEqual(report["summary"]["states"]["completed"], 1)
+        self.assertEqual(report["summary"]["states"]["failed"], 1)
+        self.assertEqual(report["summary"]["completedOutputFrames"], 120)
+        self.assertEqual(report["summary"]["completedAiFrames"], 60)
+        self.assertEqual(report["summary"]["aggregateCompletedOutputFps"], 2.0)
+        self.assertEqual(report["summary"]["sceneCuts"], 1)
+        self.assertFalse(report["qualityDiagnostics"]["perceptualMetricsMeasured"])
+        self.assertEqual(report["failures"], [{"id": failed["id"], "state": "failed", "error": "test failure"}])
+        self.assertEqual(len(report["tasks"]), 2)
+        self.assertEqual(report["tasks"][0]["source"], "完成源.mp4")
+        with closing(sqlite3.connect(self.database)) as database:
+            states = dict(database.execute("SELECT id,state FROM tasks"))
+        self.assertEqual(states[completed["id"]], "completed")
+        self.assertEqual(states[failed["id"]], "failed")
+
+        report_path.write_text("keep this file", encoding="utf-8")
+        self.run_cli("queue-report", self.database, "--output", report_path, expected_code=2)
+        self.assertEqual(report_path.read_text(encoding="utf-8"), "keep this file")
 
     def test_exact_timeline_json(self):
         result = self.run_cli("timeline", "--fps", "60", "--end", "1/6", "--pts", "0,1/24,1/12,1/8")

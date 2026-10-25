@@ -47,6 +47,7 @@ public:
     Q_INVOKABLE void restartTask(const QString& id);
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void openOutputFolder(const QString& id);
+    Q_INVOKABLE void exportReport(const QUrl& destination);
     Q_INVOKABLE void saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
         const QString& encoder, const QString& container, const QVariantMap& encodingOptions);
     Q_INVOKABLE void refreshModels();

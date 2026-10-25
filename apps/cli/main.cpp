@@ -82,6 +82,7 @@ void usage(std::ostream& out) {
     out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [encoding options]\n"
         << "  rifelove-cli queue-run DATABASE [--progress]\n"
         << "  rifelove-cli queue-list|queue-export DATABASE\n"
+        << "  rifelove-cli queue-report DATABASE [--output JSON]\n"
         << "  rifelove-cli queue-import DATABASE PLAN_JSON\n"
         << "  rifelove-cli queue-retry|queue-cancel DATABASE ID\n"
         << "  rifelove-cli queue-restart DATABASE INTERRUPTED_ID NEW_OUTPUT\n"

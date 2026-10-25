@@ -2,6 +2,7 @@
 #include "encoding_settings.hpp"
 #include "application/task_queue.hpp"
 #include "application/job_serialization.hpp"
+#include "application/queue_report.hpp"
 #include "application/import_service.hpp"
 #include "inference/model_pack.hpp"
 #include "timeline/timeline.hpp"
@@ -112,6 +113,22 @@ public:
             const auto folder = QUrl::fromLocalFile(QFileInfo(text(row.task.outputPath)).absolutePath());
             post([folder](QueueController&) { QDesktopServices::openUrl(folder); }); return;
         }
+    }); }
+    void exportReport(const QUrl& destination) { perform([&] {
+        requireQueue();
+        if (!destination.isLocalFile() || destination.toLocalFile().isEmpty())
+            throw std::invalid_argument("Choose a local JSON report file");
+        TaskStore store(utf8(database_),TaskStore::OpenMode::readOnly);
+        const auto serialized = serializeQueueReport(utf8(database_),store.reportSnapshot());
+        ProcessingReportFile report(path(destination.toLocalFile()));
+        report.publish(serialized);
+        const auto saved = QDir::toNativeSeparators(destination.toLocalFile());
+        const bool running = queue_->busy();
+        post([saved,running](QueueController& c) {
+            if (!running) c.state_ = "ready";
+            c.detail_ = tr("队列报告已保存：") + saved;
+            emit c.changed(); emit c.operationFinished("report_exported");
+        });
     }); }
     void saveDefaults(QString rate, QUrl model, QUrl runtime, QUrl output, QString encoder, QString container, QVariantMap encodingOptions) {
         if (!settings_) return;
@@ -411,6 +428,10 @@ void QueueController::retryTask(const QString& id) { if (available_ && !importin
 void QueueController::resumeTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->resumeCheckpoint(id); },Qt::QueuedConnection); }
 void QueueController::restartTask(const QString& id) { if (available_ && !importing_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->restart(id); },Qt::QueuedConnection); }
 void QueueController::openOutputFolder(const QString& id) { if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,id] { w->openFolder(id); },Qt::QueuedConnection); }
+void QueueController::exportReport(const QUrl& destination) {
+    if (!available_) { setError(tr("本地任务队列尚未连接，无法导出报告。")); return; }
+    QMetaObject::invokeMethod(worker_,[w=worker_,destination] { w->exportReport(destination); },Qt::QueuedConnection);
+}
 void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
     const QString& encoder, const QString& container, const QVariantMap& encodingOptions) {
     if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions] {

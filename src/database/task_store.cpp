@@ -227,6 +227,16 @@ std::vector<ConfiguredTask> TaskStore::configured() const {
     if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
     return result;
 }
+std::vector<ConfiguredTask> TaskStore::reportSnapshot() const {
+    std::lock_guard lock(mutex_);
+    Statement statement(db_, "SELECT t.id,t.source_path,t.output_path,t.state,t.created_at,t.updated_at,t.error,COALESCE(d.configuration,''),COALESCE(d.identity,''),COALESCE(d.progress,''),COALESCE(d.result,'') FROM tasks t LEFT JOIN task_details d ON t.id=d.task_id ORDER BY t.created_at,t.id");
+    std::vector<ConfiguredTask> result;
+    int status;
+    while ((status = sqlite3_step(statement.get())) == SQLITE_ROW)
+        result.push_back({{columnText(statement.get(),0),columnText(statement.get(),1),columnText(statement.get(),2),taskStateFromString(columnText(statement.get(),3)),columnText(statement.get(),4),columnText(statement.get(),5),columnText(statement.get(),6)},columnText(statement.get(),7),columnText(statement.get(),8),columnText(statement.get(),9),columnText(statement.get(),10)});
+    if (status != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    return result;
+}
 void TaskStore::saveIdentity(const std::string& id, const std::string& json) {
     std::lock_guard lock(mutex_); requireWritable(); boundedPayload(json,true);
     Statement update(db_, "UPDATE task_details SET identity=? WHERE task_id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=task_id AND state='running')");
