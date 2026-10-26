@@ -6,7 +6,8 @@ param(
     # Only the exact root-level generated ZIP for that version is eligible.
     [string[]]$RemoveArchivedVersionZip = @(),
     [string[]]$KeepPackage = @(
-        "RifeLove-local-2026-10-26-user-delivery"
+        "RifeLove-local-2026-10-26-user-delivery",
+        "RifeLove-local-2026-10-26-tensorrt-sr"
     )
 )
 
