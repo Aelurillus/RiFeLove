@@ -123,6 +123,28 @@ This is a private local-use bundle generated from the current workstation packag
         throw "The offline package still contains a linked file or directory."
     }
 
+    $privateExtensions = @(".sqlite", ".sqlite3", ".db", ".log", ".jsonl")
+    $mediaExtensions = @(".3gp", ".aac", ".avi", ".flac", ".flv", ".m2ts", ".m4a", ".m4v", ".mkv", ".mov", ".mp3", ".mp4", ".mpeg", ".mpg", ".mts", ".ogg", ".ts", ".vob", ".wav", ".webm", ".wmv")
+    $privateNames = @("language.ini", "preferences.ini", "queue.sqlite-wal", "queue.sqlite-shm", "first-run.png", "studio-smoke.png")
+    $unsafePackageItems = @(
+        foreach ($item in (Get-ChildItem -LiteralPath $target -Force -Recurse)) {
+            $relative = $item.FullName.Substring($target.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $segments = @($relative.Replace('\', '/').Split('/') | Where-Object { $_ })
+            $lowerSegments = @($segments | ForEach-Object { $_.ToLowerInvariant() })
+            $extension = [IO.Path]::GetExtension($item.Name).ToLowerInvariant()
+            $baseName = $item.Name.ToLowerInvariant()
+            if ($lowerSegments -contains "data" -or $lowerSegments -contains "logs" -or
+                $privateExtensions -contains $extension -or $mediaExtensions -contains $extension -or
+                $privateNames -contains $baseName -or $extension -in @(".pem", ".p12", ".pfx") -or
+                $baseName -eq ".env" -or $baseName.StartsWith(".env.")) {
+                $relative
+            }
+        }
+    )
+    if ($unsafePackageItems.Count) {
+        throw "The offline package contains local data, media, logs, or credentials: $($unsafePackageItems -join ', ')"
+    }
+
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::CreateFromDirectory($target, $partialArchive, [IO.Compression.CompressionLevel]::Optimal, $false)
     if (-not (Test-Path -LiteralPath $partialArchive -PathType Leaf) -or (Get-Item -LiteralPath $partialArchive).Length -le 0) {

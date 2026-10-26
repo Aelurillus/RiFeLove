@@ -9,6 +9,7 @@ import {
   removeVerifiedArchive,
   validateArchiveRemovalTarget,
 } from "./private-preview-archive.mjs";
+import { validateReleaseArchive } from "./release-archive-safety.mjs";
 import { validateVersion } from "./release-manifest.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -26,6 +27,8 @@ const archiveRemovalTarget = options.removeLocalAfterVerify
   : null;
 const archiveInfo = await stat(archivePath);
 if (!archiveInfo.isFile() || archiveInfo.size <= 0) throw new Error("Preview archive must be a non-empty file");
+const archiveSafety = await validateReleaseArchive(archivePath);
+console.log(`Release archive privacy inspection passed (${archiveSafety.entryCount} entries).`);
 const parallel = Number(process.env.OSS_UPLOAD_PARALLEL || 2);
 if (!Number.isInteger(parallel) || parallel < 1 || parallel > 8) throw new Error("OSS_UPLOAD_PARALLEL must be an integer from 1 to 8");
 

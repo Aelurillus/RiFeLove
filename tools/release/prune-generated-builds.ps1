@@ -109,6 +109,7 @@ foreach ($process in (Get-CimInstance Win32_Process -Filter "Name='RifeLove.exe'
     $relative = [IO.Path]::GetRelativePath($root, $exe)
     $packageName = $relative.Split([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)[0]
     if ($packageName) { [void]$activePackageRoots.Add((Join-Path $root $packageName)) }
+    [void]$activePackageRoots.Add((Split-Path -Parent $exe))
 }
 
 $plan = [System.Collections.Generic.List[object]]::new()
@@ -133,6 +134,47 @@ foreach ($package in (Get-ChildItem -LiteralPath $root -Directory -Force | Where
     $bytes = Get-GeneratedBytes $absolute -PreserveData:$hasData
     if ($bytes -eq 0 -and $hasData) { continue }
     $plan.Add([pscustomobject]@{ Name=$package.Name; Path=$absolute; Kind="folder"; PreserveData=$hasData; Bytes=$bytes })
+}
+
+$candidateRoot = Join-Path $root "release-candidates"
+if (Test-Path -LiteralPath $candidateRoot -PathType Container) {
+    $candidateRootInfo = Get-Item -LiteralPath $candidateRoot -Force
+    if ($candidateRootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        $skipped.Add("release-candidates (linked directory)")
+    } else {
+        foreach ($versionDirectory in (Get-ChildItem -LiteralPath $candidateRoot -Directory -Force)) {
+            if ($versionDirectory.Name -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { continue }
+            $versionPath = [IO.Path]::GetFullPath($versionDirectory.FullName)
+            if (-not (Test-ContainedPath $candidateRoot $versionPath) -or -not (Split-Path -Parent $versionPath).Equals($candidateRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Unsafe release-candidate version directory: $versionPath"
+            }
+            $portablePath = [IO.Path]::GetFullPath((Join-Path $versionPath "portable"))
+            if (-not (Test-Path -LiteralPath $portablePath -PathType Container)) { continue }
+            if (-not (Test-ContainedPath $versionPath $portablePath) -or -not (Split-Path -Parent $portablePath).Equals($versionPath, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Unsafe release-candidate package directory: $portablePath"
+            }
+            if ($activePackageRoots.Contains($portablePath)) { $skipped.Add("release-candidates/$($versionDirectory.Name)/portable (running)"); continue }
+            $portableInfo = Get-Item -LiteralPath $portablePath -Force
+            if ($portableInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                $skipped.Add("release-candidates/$($versionDirectory.Name)/portable (linked directory)")
+                continue
+            }
+            $hasData = Test-Path -LiteralPath (Join-Path $portablePath "data") -PathType Container
+            if (Test-TreeHasReparsePoint $portablePath -PreserveData:$hasData) {
+                $skipped.Add("release-candidates/$($versionDirectory.Name)/portable (contains a linked path)")
+                continue
+            }
+            $bytes = Get-GeneratedBytes $portablePath -PreserveData:$hasData
+            if ($bytes -eq 0 -and $hasData) { continue }
+            $plan.Add([pscustomobject]@{
+                Name="release-candidates/$($versionDirectory.Name)/portable"
+                Path=$portablePath
+                Kind="candidate"
+                PreserveData=$hasData
+                Bytes=$bytes
+            })
+        }
+    }
 }
 
 foreach ($archive in (Get-ChildItem -LiteralPath $root -File -Force | Where-Object {
@@ -195,14 +237,34 @@ foreach ($item in $plan) {
         }
         Remove-Item -LiteralPath $item.Path -Force
     } elseif ($item.PreserveData) {
+        if ($item.Kind -eq "candidate") {
+            $candidateVersionPath = Split-Path -Parent $item.Path
+            if (-not (Test-ContainedPath $root $item.Path) -or (Split-Path -Leaf $item.Path) -ne "portable" -or
+                -not (Split-Path -Parent $candidateVersionPath).Equals($candidateRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                (Split-Path -Leaf $candidateVersionPath) -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+                throw "Unsafe release-candidate cleanup target: $($item.Path)"
+            }
+            $current = Get-Item -LiteralPath $item.Path -Force
+            if (($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Test-TreeHasReparsePoint $item.Path -PreserveData)) {
+                throw "Release-candidate package changed or gained a linked path: $($item.Name)"
+            }
+        }
         foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($item.Path)) {
             if ([IO.Path]::GetFileName($entry).Equals("data", [StringComparison]::OrdinalIgnoreCase)) { continue }
             Remove-GeneratedEntry $item.Path $entry
         }
     } else {
-        if (-not (Test-ContainedPath $root $item.Path) -or -not (Split-Path -Parent $item.Path).Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+        $validTopLevelPackage = $item.Kind -eq "folder" -and (Split-Path -Parent $item.Path).Equals($root, [StringComparison]::OrdinalIgnoreCase)
+        $candidateVersionPath = Split-Path -Parent $item.Path
+        $validCandidate = $item.Kind -eq "candidate" -and (Test-ContainedPath $root $item.Path) -and
+            (Split-Path -Leaf $item.Path) -eq "portable" -and
+            (Split-Path -Parent $candidateVersionPath).Equals($candidateRoot, [StringComparison]::OrdinalIgnoreCase) -and
+            (Split-Path -Leaf $candidateVersionPath) -match '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$'
+        if (-not (Test-ContainedPath $root $item.Path) -or (-not $validTopLevelPackage -and -not $validCandidate)) {
             throw "Unsafe generated package path: $($item.Path)"
         }
+        $current = Get-Item -LiteralPath $item.Path -Force
+        if ($current.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Generated package became a linked directory: $($item.Name)" }
         Remove-GeneratedEntry $root $item.Path
     }
     Write-Output ("Pruned {0}" -f $item.Name)

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { mergePublishedRelease, validateVersion } from "./release-manifest.mjs";
 import { assertPublicObjectAccessAllowed } from "./oss-public-access.mjs";
 import { verifyAnonymousObject } from "./anonymous-object-verification.mjs";
+import { validateReleaseArchive } from "./release-archive-safety.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");
@@ -26,6 +27,8 @@ const archivePath = path.resolve(options.archive);
 const releaseMetadataPath = path.resolve(options.release);
 const archiveInfo = await stat(archivePath);
 if (!archiveInfo.isFile() || archiveInfo.size <= 0) throw new Error("Release archive must be a non-empty file");
+const archiveSafety = await validateReleaseArchive(archivePath);
+console.log(`Release archive privacy inspection passed (${archiveSafety.entryCount} entries).`);
 const release = JSON.parse(await readFile(releaseMetadataPath, "utf8"));
 validateRelease(release);
 const version = validateVersion(release.version);
