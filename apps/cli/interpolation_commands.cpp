@@ -4,6 +4,8 @@
 #include "core/pipeline/video_pipeline.hpp"
 #include "application/job_serialization.hpp"
 #include "inference/onnx_cuda_backend.hpp"
+#include "restoration/model_pack.hpp"
+#include "restoration/onnx_cuda_backend.hpp"
 #include "console_cancellation.hpp"
 #include <atomic>
 #include <charconv>
@@ -36,7 +38,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
     PipelineSettings settings;
-    std::filesystem::path modelDirectory, runtimeDirectory;
+    std::filesystem::path modelDirectory, runtimeDirectory, restorationDirectory;
     std::optional<std::string> reportPathText;
     bool hasRate = false, showProgress = false;
     int ordinal = 0;
@@ -54,6 +56,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         else if (option == "--fps") { settings.targetRate = Rational::parse(value); hasRate = true; }
         else if (option == "--report") reportPathText = value;
         else if (option == "--model-dir") modelDirectory = path(value);
+        else if (option == "--restoration-model-dir") restorationDirectory = path(value);
         else if (option == "--runtime-dir") runtimeDirectory = path(value);
         else if (option == "--backend") {
             if (value != "auto" && value != "cuda" && value != "tensorrt")
@@ -113,6 +116,18 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         else if (settings.inferenceBackend == "tensorrt") config.providerPreference = inference::ProviderPreference::requireTensorRt;
         inference::OnnxCudaBackend backend(device,config);
         backend.loadModel(pack);
+        std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> restorationBackend;
+        std::optional<restoration::ModelPack> restorationPack;
+        if (!restorationDirectory.empty()) {
+            if (showProgress) std::cout << "{\"event\":\"interpolation_progress\",\"stage\":\"loading_restoration_model\",\"output_frames\":0}\n" << std::flush;
+            restorationPack = restoration::loadModelPack(restorationDirectory);
+            restoration::OnnxCudaRestorationConfig restorationConfig;
+            restorationConfig.runtimeDirectory = runtimeDirectory;
+            restorationConfig.hostFloatBufferLimit = settings.hostFloatBufferLimit;
+            restorationBackend = std::make_shared<restoration::OnnxCudaVideoRestorationBackend>(device,restorationConfig);
+            restorationBackend->loadModel(*restorationPack);
+            settings.restorationBackend = restorationBackend;
+        }
         const auto result = interpolateVideo(args[2],args[3],settings,*device,backend,showProgress ? std::function<void(const PipelineProgress&)>([&](const PipelineProgress& current) {
             const double seconds = elapsed();
             std::cout << "{\"event\":\"interpolation_progress\",\"stage\":" << jsonString(current.stage)
@@ -133,6 +148,8 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
         std::cout << "{\"event\":\"interpolation_completed\",\"model\":" << jsonString(result.modelId) << ",\"model_sha256\":" << jsonString(pack.sha256)
             << ",\"backend\":" << jsonString(result.backend) << ",\"encoder\":" << jsonString(result.video.encoder)
             << ",\"model_adapter\":" << jsonString(result.adapterId) << ",\"model_adapter_version\":" << result.adapterVersion
+            << ",\"restoration_model\":" << (restorationPack ? jsonString(restorationPack->id) : "null")
+            << ",\"restoration_scale\":" << jsonString(std::to_string(result.restorationScaleNumerator) + "/" + std::to_string(result.restorationScaleDenominator))
             << ",\"inference_fallback_reason\":" << jsonString(result.inferenceFallbackReason)
             << ",\"encoder_fallback_reason\":" << jsonString(result.encoderFallbackReason) << ",\"target_fps\":" << jsonString(settings.targetRate.toString())
             << ",\"source_decoder\":" << jsonString(result.sourceDecoder)

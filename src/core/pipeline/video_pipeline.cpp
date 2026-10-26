@@ -1,6 +1,7 @@
 #include "core/pipeline/video_pipeline.hpp"
 #include "common/logging.hpp"
 #include "media/nvenc_diagnostic.hpp"
+#include "media/rife_color.hpp"
 #include "timeline/timeline.hpp"
 #include <algorithm>
 #include <array>
@@ -34,11 +35,13 @@ template<class Work> decltype(auto) measure(double& destination, Work&& work) {
     ScopedTiming timing(destination);
     return std::forward<Work>(work)();
 }
-OutputTimingValidation validateOutput(const std::string& path, int selected, Rational origin, Rational end, Rational rate,
+OutputTimingValidation validateOutput(const std::string& path, int selected, int expectedWidth, int expectedHeight, Rational origin, Rational end, Rational rate,
     std::size_t expectedCount, const media::MediaInfo& source, const std::function<void(const PipelineProgress&)>& progress, std::stop_token stop) {
     const auto info = media::MediaEngine::probe(path,stop);
     const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const media::StreamInfo& stream) { return stream.index == selected && stream.type == "video"; });
     if (video == info.streams.end() || video->timeBase <= Rational(0)) throw std::runtime_error("Output has no valid video time base");
+    if (video->width != expectedWidth || video->height != expectedHeight)
+        throw std::runtime_error("Output dimensions do not match the selected processing pipeline");
     const auto originalVideo = std::find_if(source.streams.begin(),source.streams.end(),[&](const media::StreamInfo& stream) {
         return stream.index == selected && stream.type == "video";
     });
@@ -49,7 +52,7 @@ OutputTimingValidation validateOutput(const std::string& path, int selected, Rat
         outputColor.primaries != inputColor.primaries || outputColor.transfer != inputColor.transfer ||
         outputColor.matrix != inputColor.matrix || outputColor.range != inputColor.range)
         throw std::runtime_error("Output pixel format, bit depth or color tags did not preserve the source contract");
-    OutputTimingValidation result{}; result.timeBase = video->timeBase;
+    OutputTimingValidation result{}; result.timeBase = video->timeBase; result.width = video->width; result.height = video->height;
     if (video->declaredEnd) {
         result.declaredEndError = *video->declaredEnd - end;
         if (absolute(*result.declaredEndError) > video->timeBase) throw std::runtime_error("Output declared video end " + video->declaredEnd->toString() + " differs from source end " + end.toString());
@@ -120,8 +123,35 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         std::find(capabilities.supportedInputProfiles.begin(),capabilities.supportedInputProfiles.end(),"legacy-unverified") != capabilities.supportedInputProfiles.end();
     if (!legacySdr8 && std::find(capabilities.supportedInputProfiles.begin(),capabilities.supportedInputProfiles.end(),inputProfile) == capabilities.supportedInputProfiles.end())
         throw std::invalid_argument("Selected RIFE model does not declare support for input profile " + inputProfile);
+    std::optional<restoration::Capabilities> restorationCapabilities;
+    if (settings.restorationBackend) {
+        restorationCapabilities = settings.restorationBackend->capabilities();
+        restoration::validateCapabilities(*restorationCapabilities);
+        const auto& restorationCaps = *restorationCapabilities;
+        if (restorationCaps.modelId.empty() ||
+            std::find(restorationCaps.tasks.begin(),restorationCaps.tasks.end(),restoration::Task::superResolution) == restorationCaps.tasks.end() ||
+            std::find(restorationCaps.placements.begin(),restorationCaps.placements.end(),restoration::Placement::outputRateAfterInterpolation) == restorationCaps.placements.end() ||
+            restorationCaps.temporalFramesBefore != 0 || restorationCaps.temporalFramesAfter != 0)
+            throw std::invalid_argument("The selected restoration model must support single-frame output-rate super-resolution");
+        if (restorationCaps.scaleDenominator != 1 || restorationCaps.scaleNumerator < 2 || restorationCaps.scaleNumerator > 4 ||
+            video->width > 8192 / restorationCaps.scaleNumerator || video->height > 8192 / restorationCaps.scaleNumerator)
+            throw std::invalid_argument("The selected super-resolution scale exceeds the supported output dimensions");
+        const auto restorationProfile = media::rifeSdrInputProfile(video->color);
+        if (std::find(restorationCaps.supportedInputProfiles.begin(),restorationCaps.supportedInputProfiles.end(),restorationProfile) == restorationCaps.supportedInputProfiles.end())
+            throw std::invalid_argument("Selected restoration model does not declare support for input profile " + restorationProfile);
+        if (settings.checkpoint)
+            throw std::invalid_argument("Checkpoint resume does not yet record restoration model identity; disable checkpointing for this job");
+    }
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
     encoding.frameRate = settings.targetRate;
+    if (restorationCapabilities) {
+        const int outputWidth = video->width * restorationCapabilities->scaleNumerator;
+        const int outputHeight = video->height * restorationCapabilities->scaleNumerator;
+        if ((encoding.outputWidth && encoding.outputWidth != outputWidth) || (encoding.outputHeight && encoding.outputHeight != outputHeight))
+            throw std::invalid_argument("Explicit output dimensions conflict with the selected restoration model scale");
+        encoding.outputWidth = outputWidth;
+        encoding.outputHeight = outputHeight;
+    }
     const bool checkpointMode = settings.checkpoint.has_value();
     std::vector<media::VideoSegmentInput> segments;
     std::uint64_t completedOutputFrames = 0;
@@ -223,6 +253,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.timings.encoderSetupSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - encoderSetupStarted).count();
     result.modelId = capabilities.modelId; result.backend = capabilities.backend;
     result.adapterId = capabilities.adapterId; result.adapterVersion = capabilities.adapterVersion;
+    if (restorationCapabilities) {
+        result.restorationModelId = restorationCapabilities->modelId;
+        result.restorationScaleNumerator = restorationCapabilities->scaleNumerator;
+        result.restorationScaleDenominator = restorationCapabilities->scaleDenominator;
+    }
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
     std::optional<CachedFrame> previous;
     std::optional<CfrClock> clock;
@@ -298,6 +333,22 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     };
     const auto emit = [&](media::DecodedFrame frame) {
         const auto time = clock->timestamp();
+        if (settings.restorationBackend) {
+            frame.index = clock->index();
+            frame.timestamp = time;
+            frame.duration = Rational(1) / settings.targetRate;
+            restoration::Request request;
+            request.task = restoration::Task::superResolution;
+            request.placement = restoration::Placement::outputRateAfterInterpolation;
+            request.context.push_back(frame);
+            request.centerIndex = 0;
+            request.inputProfile = media::rifeSdrInputProfile(frame.color);
+            request.stop = stop;
+            notify("restoration",time,restorationCapabilities->modelId);
+            frame = measure(result.timings.restorationSeconds,[&] {
+                return settings.restorationBackend->restore(std::move(request)).get().centerFrame;
+            });
+        }
         if (pending) measure(result.timings.frameEncodeSeconds,[&] { writePending(*pending,*pendingTime,time - *pendingTime); });
         pending = std::move(frame); pendingTime = time;
         clock->advance();
@@ -427,7 +478,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 event.timings.outputValidationSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - validationStarted).count();
                 progress(event);
             };
-            return validateOutput(temporary,encoding.videoStreamIndex,*origin,end,settings.targetRate,clock->index(),info,validationProgress,stop);
+            return validateOutput(temporary,encoding.videoStreamIndex,encoding.outputWidth > 0 ? encoding.outputWidth : video->width,
+                encoding.outputHeight > 0 ? encoding.outputHeight : video->height,*origin,end,settings.targetRate,clock->index(),info,validationProgress,stop);
         });
     };
     if (checkpointMode) {

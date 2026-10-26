@@ -81,7 +81,7 @@ Json timingBreakdown(const PipelineTimingBreakdown& value) {
         {"sourceDecodeSeconds",value.sourceDecodeSeconds}, {"sourcePreparationSeconds",value.sourcePreparationSeconds},
         {"sceneAnalysisSeconds",value.sceneAnalysisSeconds}, {"inputUploadSeconds",value.inputUploadSeconds},
         {"inferenceWaitSeconds",value.inferenceWaitSeconds}, {"outputDownloadSeconds",value.outputDownloadSeconds},
-        {"colorRestoreSeconds",value.colorRestoreSeconds}, {"frameEncodeSeconds",value.frameEncodeSeconds},
+        {"colorRestoreSeconds",value.colorRestoreSeconds}, {"restorationSeconds",value.restorationSeconds}, {"frameEncodeSeconds",value.frameEncodeSeconds},
         {"outputFinalizeSeconds",value.outputFinalizeSeconds}, {"outputValidationSeconds",value.outputValidationSeconds},
         {"pipelineWallSeconds",value.pipelineWallSeconds} };
 }
@@ -200,6 +200,7 @@ std::string serializeProgress(const ProcessingEvent& event) {
 }
 std::string serializeResult(const PipelineResult& r) {
     return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},
+        {"restorationModelId",r.restorationModelId},{"restorationScale",{{"numerator",r.restorationScaleNumerator},{"denominator",r.restorationScaleDenominator}}},
         {"modelAdapter",{{"id",r.adapterId},{"version",r.adapterVersion}}},{"inferenceFallbackReason",r.inferenceFallbackReason},
         {"sourceDecoder",r.sourceDecoder},{"sourceDecodeAcceleration",r.sourceDecodeAcceleration},
         {"sourceDecodeFallbackReason",r.sourceDecodeFallbackReason},
@@ -208,7 +209,8 @@ std::string serializeResult(const PipelineResult& r) {
         {"recoveredTimestamps",r.recoveredTimestamps},
         {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",r.processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
         {"timings",timingBreakdown(r.timings)},
-        {"validation",{{"decodedFrames",r.validation.decodedFrames},{"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},
+        {"validation",{{"decodedFrames",r.validation.decodedFrames},{"width",r.validation.width},{"height",r.validation.height},
+            {"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},
             {"durationError",r.validation.durationError.toString()},{"declaredEndError",optional(r.validation.declaredEndError)},{"auxiliaryMaximumEndError",r.validation.auxiliaryMaximumEndError.toString()},{"quantized",r.validation.quantized}}}}.dump();
 }
 std::string serializeProcessingReport(const ProcessingReportContext& context, const PipelineResult& result) {
@@ -231,11 +233,15 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
             {"decoder",result.sourceDecoder},{"decodeAcceleration",result.sourceDecodeAcceleration},
             {"decodeFallbackReason",result.sourceDecodeFallbackReason},{"endEvidence",result.sourceEndEvidence}}},
         {"output",{{"path",context.outputPath},{"targetFrameRate",context.targetFrameRate},{"encoder",result.video.encoder},
+            {"width",result.validation.width},{"height",result.validation.height},
             {"submittedFrames",result.video.framesSubmitted},{"videoPackets",result.video.videoPackets},{"copiedPackets",result.video.copiedPackets},
             {"firstTimestamp",result.video.firstTimestamp.toString()},{"endExclusive",result.video.endExclusive.toString()}}},
         {"model",{{"id",result.modelId},{"version",context.modelVersion},{"sha256",context.modelSha256},{"backend",result.backend},
             {"adapter",{{"id",result.adapterId},{"version",result.adapterVersion}}},
             {"fallbackReason",result.inferenceFallbackReason}}},
+        {"restoration",result.restorationModelId.empty() ? Json(nullptr) : Json{{"id",result.restorationModelId},
+            {"scale",{{"numerator",result.restorationScaleNumerator},{"denominator",result.restorationScaleDenominator}}},
+            {"backend","onnxruntime_cuda"}}},
         {"gpu",{{"ordinal",device.ordinal},{"name",device.name},{"pciBusId",device.pciBusId},
             {"computeCapability",std::to_string(device.computeMajor) + "." + std::to_string(device.computeMinor)},
             {"driverCudaApiVersion",device.driverCudaApiVersion},{"totalVramBytes",device.totalBytes}}},

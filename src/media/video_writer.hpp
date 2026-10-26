@@ -6,6 +6,10 @@ struct VideoEncodingSettings {
     std::string encoder = "h264_nvenc";
     std::string pixelFormat;
     int videoStreamIndex = -1;
+    // Zero preserves the reference stream dimensions. Spatial restoration
+    // selects both dimensions explicitly before opening the encoder.
+    int outputWidth = 0;
+    int outputHeight = 0;
     std::optional<Rational> timeBase;
     std::optional<Rational> frameRate;
     std::int64_t bitRate = 8'000'000;

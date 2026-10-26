@@ -84,9 +84,12 @@ public:
         if (!encoder || encoder->type != AVMEDIA_TYPE_VIDEO) throw std::invalid_argument("video encoder is not registered: " + settings.encoder);
         codec_.reset(avcodec_alloc_context3(encoder));
         if (!codec_) throw std::bad_alloc();
-        codec_->width = parameters->width;
-        codec_->height = parameters->height;
-        if (codec_->width <= 0 || codec_->height <= 0) throw std::invalid_argument("input video dimensions are unknown");
+        if ((settings.outputWidth == 0) != (settings.outputHeight == 0) || settings.outputWidth < 0 || settings.outputHeight < 0)
+            throw std::invalid_argument("output dimensions must either both preserve the source size or both be positive");
+        codec_->width = settings.outputWidth > 0 ? settings.outputWidth : parameters->width;
+        codec_->height = settings.outputHeight > 0 ? settings.outputHeight : parameters->height;
+        if (codec_->width <= 0 || codec_->height <= 0 || codec_->width > 16384 || codec_->height > 16384)
+            throw std::invalid_argument("output video dimensions are unknown or exceed the supported encoding limit");
         codec_->pix_fmt = settings.pixelFormat.empty() ? static_cast<AVPixelFormat>(parameters->format) : av_get_pix_fmt(settings.pixelFormat.c_str());
         if (!av_pix_fmt_desc_get(codec_->pix_fmt)) throw std::invalid_argument("output pixel format is unknown");
         const void* supported = nullptr;

@@ -3,6 +3,7 @@
 #include "interpolation/model_adapter.hpp"
 #include "interpolation/scene_analysis.hpp"
 #include "media/video_writer.hpp"
+#include "restoration/video_restoration_backend.hpp"
 
 #include <functional>
 #include <memory>
@@ -28,6 +29,9 @@ struct PipelineSettings {
     quality::SceneSettings scene;
     // Runtime-only extension registry; omitted from serialized user settings.
     std::shared_ptr<const interpolation::ModelAdapterRegistry> modelAdapters;
+    // Optional one-frame output-rate restoration. The selected backend/model
+    // remains local and is not serialized into ordinary user job settings.
+    std::shared_ptr<restoration::IVideoRestorationBackend> restorationBackend;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     // Runtime-only queue integration. It is intentionally omitted from the
     // serialized user job configuration.
@@ -43,6 +47,7 @@ struct PipelineTimingBreakdown {
     double inferenceWaitSeconds = 0;
     double outputDownloadSeconds = 0;
     double colorRestoreSeconds = 0;
+    double restorationSeconds = 0;
     double frameEncodeSeconds = 0;
     double outputFinalizeSeconds = 0;
     double outputValidationSeconds = 0;
@@ -60,6 +65,8 @@ struct PipelineProgress {
 };
 struct OutputTimingValidation {
     std::size_t decodedFrames = 0;
+    int width = 0;
+    int height = 0;
     Rational timeBase;
     Rational maximumTimestampError;
     Rational durationError;
@@ -85,6 +92,9 @@ struct PipelineResult {
     std::string sourceDecodeFallbackReason;
     std::string adapterId = "rife-sdr-v1";
     int adapterVersion = 1;
+    std::string restorationModelId;
+    int restorationScaleNumerator = 1;
+    int restorationScaleDenominator = 1;
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;

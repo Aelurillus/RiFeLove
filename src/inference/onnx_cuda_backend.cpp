@@ -1,5 +1,9 @@
 #include "inference/onnx_cuda_backend.hpp"
 #include "inference/tensorrt_cache.hpp"
+#ifdef RIFELOVE_HAS_MEDIA
+#include "media/rife_color.hpp"
+#include "restoration/onnx_cuda_backend.hpp"
+#endif
 
 // The pinned Microsoft header spells the Windows calling convention _stdcall.
 // GCC in strict C++20 mode exposes __stdcall instead. Both use the x64 C ABI.
@@ -256,8 +260,12 @@ void validateContract(const OrtApi& api, const OrtSession* session) {
         if (dtype != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || rank != 4) throw InferenceError(InferenceErrorKind::invalidRequest, "Expected FP32 rank-four RIFE tensors");
         std::array<std::int64_t, 4> dimensions{};
         check(api, api.GetDimensions(tensor, dimensions.data(), dimensions.size()));
-        const std::array<std::int64_t, 4> expected = index == 2 ? std::array<std::int64_t, 4>{1,1,1,1} : std::array<std::int64_t, 4>{1,3,-1,-1};
-        if (dimensions != expected) throw InferenceError(InferenceErrorKind::invalidRequest, "RIFE shape contract requires dynamic spatial axes and scalar timestep");
+        const auto dynamic = [](std::int64_t dimension) { return dimension == 0 || dimension == -1; };
+        const bool timestep = index == 2;
+        const bool valid = timestep ? dimensions == std::array<std::int64_t,4>{1,1,1,1} :
+            dimensions[0] == 1 && (dimensions[1] == 3 || (output && dynamic(dimensions[1]))) &&
+            dynamic(dimensions[2]) && dynamic(dimensions[3]);
+        if (!valid) throw InferenceError(InferenceErrorKind::invalidRequest, "RIFE shape contract requires a batch-one RGB tensor, dynamic spatial axes and scalar timestep");
     }
 }
 }
@@ -507,3 +515,320 @@ void OnnxCudaBackend::loadModel(const ModelPack& model) { impl_->load(model); }
 std::future<InterpolationResult> OnnxCudaBackend::interpolate(InterpolationRequest request) { return impl_->submit(std::move(request)); }
 std::filesystem::path OnnxCudaBackend::finishProfiling() { return impl_->finishProfile(); }
 } // namespace rifelove::inference
+
+#ifdef RIFELOVE_HAS_MEDIA
+namespace rifelove::restoration {
+namespace {
+std::size_t tensorBytes(int width, int height, std::size_t limit, const char* label) {
+    if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
+        throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest, std::string(label) + " dimensions are outside the supported limit");
+    const auto pixels = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
+    if (pixels > std::numeric_limits<std::size_t>::max() / (3 * sizeof(float)))
+        throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory, std::string(label) + " tensor size overflows addressable memory");
+    const auto bytes = static_cast<std::size_t>(pixels) * 3 * sizeof(float);
+    if (bytes > limit)
+        throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory, std::string(label) + " tensor exceeds the configured host buffer limit");
+    return bytes;
+}
+
+std::pair<std::string,std::array<std::int64_t,4>> inspectTensor(const OrtApi& api, const OrtSession* session, bool output) {
+    OrtAllocator* allocator = nullptr;
+    inference::check(api, api.GetAllocatorWithDefaultOptions(&allocator));
+    char* name = nullptr;
+    inference::check(api, output ? api.SessionGetOutputName(session,0,allocator,&name) : api.SessionGetInputName(session,0,allocator,&name));
+    if (!name) throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX tensor has no name");
+    std::string copiedName(name);
+    allocator->Free(allocator,name);
+    inference::Handle<OrtTypeInfo> type(api.ReleaseTypeInfo);
+    inference::check(api, output ? api.SessionGetOutputTypeInfo(session,0,&type.value) : api.SessionGetInputTypeInfo(session,0,&type.value));
+    const OrtTensorTypeAndShapeInfo* tensor = nullptr;
+    inference::check(api, api.CastTypeInfoToTensorInfo(type.value,&tensor));
+    ONNXTensorElementDataType elementType{};
+    inference::check(api, api.GetTensorElementType(tensor,&elementType));
+    std::size_t rank = 0;
+    inference::check(api, api.GetDimensionsCount(tensor,&rank));
+    std::array<std::int64_t,4> dimensions{};
+    if (elementType != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || rank != dimensions.size())
+        throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must use one rank-four FP32 tensor");
+    inference::check(api, api.GetDimensions(tensor,dimensions.data(),dimensions.size()));
+    const auto dynamic = [](std::int64_t dimension) { return dimension == 0 || dimension == -1; };
+    if (dimensions[0] != 1 || (dimensions[1] != 3 && !(output && dynamic(dimensions[1]))))
+        throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must accept RGB NCHW batch-one tensors");
+    return {std::move(copiedName),dimensions};
+}
+}
+
+class OnnxCudaVideoRestorationBackend::Impl final {
+public:
+    struct Job { Request request; std::promise<Result> promise; };
+
+    Impl(std::shared_ptr<gpu::CudaDevice> selected, OnnxCudaRestorationConfig settings)
+        : device(std::move(selected)), config(std::move(settings)), runtime(inference::processRuntime(config.runtimeDirectory)),
+          api(*runtime->api), session(api.ReleaseSession), cudaMemory(api.ReleaseMemoryInfo) {
+        if (!device || config.arenaBudgetBytes == 0 || config.hostFloatBufferLimit == 0 ||
+            config.maxQueuedRequests == 0 || config.maxQueuedRequests > 8 || config.tileSize < 64 || config.tileSize > 2048 ||
+            config.tileOverlap < 0 || config.tileOverlap > config.tileSize / 2)
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Invalid restoration CUDA device, memory budget or queue limit");
+        auto context = device->activate();
+        inference::check(api,api.CreateMemoryInfo("Cuda",OrtDeviceAllocator,device->info().ordinal,OrtMemTypeDefault,&cudaMemory.value));
+        worker = std::jthread([this](std::stop_token stop) { work(stop); });
+    }
+
+    ~Impl() {
+        worker.request_stop();
+        ready.notify_all();
+        if (worker.joinable()) worker.join();
+    }
+
+    void load(const ModelPack& pack) {
+        std::lock_guard lock(mutex);
+        if (active || !jobs.empty()) throw inference::InferenceError(inference::InferenceErrorKind::busy,"Cannot replace a restoration model while requests are active");
+        validateCapabilities(pack.capabilities);
+        if (!pack.metadataIntegrityVerified || pack.capabilities.adapterId != "image-sr-rgb-f32-nchw-v1" ||
+            pack.capabilities.adapterVersion != 1 || pack.capabilities.temporalFramesBefore != 0 ||
+            pack.capabilities.temporalFramesAfter != 0 ||
+            std::find(pack.capabilities.tasks.begin(),pack.capabilities.tasks.end(),Task::superResolution) == pack.capabilities.tasks.end() ||
+            std::find(pack.capabilities.placements.begin(),pack.capabilities.placements.end(),Placement::outputRateAfterInterpolation) == pack.capabilities.placements.end())
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Model does not match the verified single-frame SDR super-resolution adapter");
+        if (pack.capabilities.scaleDenominator != 1 || pack.capabilities.scaleNumerator < 2 || pack.capabilities.scaleNumerator > 4)
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"This adapter currently supports integer 2x or 4x super-resolution models");
+
+        const auto graph = inference::readVerifiedFile(pack.graphPath,pack.graphSha256,2ULL * 1024 * 1024 * 1024);
+        auto context = device->activate();
+        inference::Handle<OrtSessionOptions> options(api.ReleaseSessionOptions);
+        inference::check(api,api.CreateSessionOptions(&options.value));
+        inference::check(api,api.SetSessionExecutionMode(options.value,ORT_SEQUENTIAL));
+        inference::check(api,api.SetIntraOpNumThreads(options.value,2));
+        inference::check(api,api.SetInterOpNumThreads(options.value,1));
+        inference::check(api,api.SetSessionGraphOptimizationLevel(options.value,ORT_ENABLE_EXTENDED));
+        inference::Handle<OrtCUDAProviderOptionsV2> cuda(api.ReleaseCUDAProviderOptions);
+        inference::check(api,api.CreateCUDAProviderOptions(&cuda.value));
+        const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
+        const char* keys[] = {"device_id","gpu_mem_limit","arena_extend_strategy","cudnn_conv_algo_search","cudnn_conv_use_max_workspace","use_tf32","do_copy_in_default_stream"};
+        const char* values[] = {ordinal.c_str(),budget.c_str(),"kSameAsRequested","DEFAULT","0","0","1"};
+        inference::check(api,api.UpdateCUDAProviderOptions(cuda.value,keys,values,std::size(keys)));
+        inference::check(api,api.UpdateCUDAProviderOptionsWithValue(cuda.value,"user_compute_stream",reinterpret_cast<void*>(device->streamAddress())));
+        try { inference::check(api,api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value,cuda.value)); }
+        catch (const inference::InferenceError& error) {
+            throw inference::InferenceError(inference::InferenceErrorKind::unavailable,"CUDA restoration provider could not initialize: " + std::string(error.what()));
+        }
+
+        inference::Handle<OrtSession> next(api.ReleaseSession);
+        inference::check(api,api.CreateSessionFromArray(runtime->environment(),graph.data(),graph.size(),options.value,&next.value));
+        std::size_t inputs = 0, outputs = 0;
+        inference::check(api,api.SessionGetInputCount(next.value,&inputs));
+        inference::check(api,api.SessionGetOutputCount(next.value,&outputs));
+        if (inputs != 1 || outputs != 1)
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must expose exactly one input and one output");
+        const auto [nextInputName,nextInputShape] = inspectTensor(api,next.value,false);
+        const auto [nextOutputName,nextOutputShape] = inspectTensor(api,next.value,true);
+        if (nextInputShape[2] > 0 || nextInputShape[3] > 0 || nextOutputShape[2] > 0 || nextOutputShape[3] > 0)
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Tiled restoration requires dynamic height and width axes");
+        session = std::move(next);
+        inputName = nextInputName;
+        outputName = nextOutputName;
+        inputShape = nextInputShape;
+        outputShape = nextOutputShape;
+        modelCapabilities = pack.capabilities;
+        modelId = pack.id;
+        inputBuffer.reset();
+        outputBuffer.reset();
+        inputBytes = 0;
+        outputBytes = 0;
+    }
+
+    Capabilities getCapabilities() const {
+        std::lock_guard lock(mutex);
+        return modelCapabilities;
+    }
+
+    std::future<Result> submit(Request request) {
+        std::lock_guard lock(mutex);
+        if (!session.value) throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Load a verified restoration model before processing");
+        if (jobs.size() >= config.maxQueuedRequests) throw inference::InferenceError(inference::InferenceErrorKind::busy,"Restoration queue is full");
+        Job job{std::move(request),{}};
+        auto future = job.promise.get_future();
+        jobs.push_back(std::move(job));
+        ready.notify_one();
+        return future;
+    }
+
+private:
+    Result execute(Request& request,std::stop_token shutdown) {
+        const auto started = std::chrono::steady_clock::now();
+        auto cancel = [&] {
+            if (request.stop.stop_requested() || shutdown.stop_requested())
+                throw inference::InferenceError(inference::InferenceErrorKind::cancelled,"Video restoration cancelled");
+        };
+        cancel();
+        validateRequest(modelCapabilities,request);
+        const auto& source = request.context[request.centerIndex];
+        const auto prepared = media::prepareRifeSdr(source,config.hostFloatBufferLimit,request.stop);
+        const auto scale = modelCapabilities.scaleNumerator;
+        if (prepared.paddedWidth > std::numeric_limits<int>::max() / scale || prepared.paddedHeight > std::numeric_limits<int>::max() / scale ||
+            source.width > std::numeric_limits<int>::max() / scale || source.height > std::numeric_limits<int>::max() / scale)
+            throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory,"Restoration output dimensions overflow");
+        const int paddedOutputWidth = prepared.paddedWidth * scale;
+        const int paddedOutputHeight = prepared.paddedHeight * scale;
+        const int outputWidth = source.width * scale;
+        const int outputHeight = source.height * scale;
+        const auto outBytes = tensorBytes(paddedOutputWidth,paddedOutputHeight,config.hostFloatBufferLimit,"Restoration output");
+        const auto inputBytesFull = prepared.pixels.size() * sizeof(float);
+        if (inputBytesFull != tensorBytes(prepared.paddedWidth,prepared.paddedHeight,config.hostFloatBufferLimit,"Restoration input"))
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration preprocessor returned a mismatched tensor size");
+        cancel();
+        auto context = device->activate();
+        media::RifeSdrFrame generated{outputWidth,outputHeight,paddedOutputWidth,paddedOutputHeight,source.color,
+            std::vector<float>(outBytes / sizeof(float))};
+        const auto fullInputPlane = static_cast<std::size_t>(prepared.paddedWidth) * static_cast<std::size_t>(prepared.paddedHeight);
+        const auto fullOutputPlane = static_cast<std::size_t>(paddedOutputWidth) * static_cast<std::size_t>(paddedOutputHeight);
+        const int maxTileWidth = std::min(prepared.paddedWidth,config.tileSize + 2 * config.tileOverlap);
+        const int maxTileHeight = std::min(prepared.paddedHeight,config.tileSize + 2 * config.tileOverlap);
+        const auto maxInputBytes = tensorBytes(maxTileWidth,maxTileHeight,config.hostFloatBufferLimit,"Restoration tile input");
+        const auto maxOutputBytes = tensorBytes(maxTileWidth * scale,maxTileHeight * scale,config.hostFloatBufferLimit,"Restoration tile output");
+        if (!inputBuffer || inputBytes < maxInputBytes) { inputBuffer = device->allocate(maxInputBytes,request.stop); inputBytes = maxInputBytes; }
+        if (!outputBuffer || outputBytes < maxOutputBytes) { outputBuffer = device->allocate(maxOutputBytes,request.stop); outputBytes = maxOutputBytes; }
+
+        for (int coreY = 0; coreY < prepared.paddedHeight; coreY += config.tileSize) {
+            const int coreHeight = std::min(config.tileSize,prepared.paddedHeight - coreY);
+            const int tileY = std::max(0,coreY - config.tileOverlap);
+            const int tileBottom = std::min(prepared.paddedHeight,coreY + coreHeight + config.tileOverlap);
+            const int tileHeight = tileBottom - tileY;
+            const int localCoreY = coreY - tileY;
+            for (int coreX = 0; coreX < prepared.paddedWidth; coreX += config.tileSize) {
+                cancel();
+                const int coreWidth = std::min(config.tileSize,prepared.paddedWidth - coreX);
+                const int tileX = std::max(0,coreX - config.tileOverlap);
+                const int tileRight = std::min(prepared.paddedWidth,coreX + coreWidth + config.tileOverlap);
+                const int tileWidth = tileRight - tileX;
+                const int localCoreX = coreX - tileX;
+                const auto tilePlane = static_cast<std::size_t>(tileWidth) * static_cast<std::size_t>(tileHeight);
+                const auto tileInputBytes = tilePlane * 3 * sizeof(float);
+                const int outputTileWidth = tileWidth * scale;
+                const int outputTileHeight = tileHeight * scale;
+                const auto outputTilePlane = static_cast<std::size_t>(outputTileWidth) * static_cast<std::size_t>(outputTileHeight);
+                const auto tileOutputBytes = outputTilePlane * 3 * sizeof(float);
+                std::vector<float> tileInput(tilePlane * 3);
+                for (std::size_t channel = 0; channel < 3; ++channel) {
+                    for (int row = 0; row < tileHeight; ++row) {
+                        const auto src = channel * fullInputPlane + static_cast<std::size_t>(tileY + row) * static_cast<std::size_t>(prepared.paddedWidth) + static_cast<std::size_t>(tileX);
+                        const auto dst = channel * tilePlane + static_cast<std::size_t>(row) * static_cast<std::size_t>(tileWidth);
+                        std::copy_n(prepared.pixels.begin() + static_cast<std::ptrdiff_t>(src),tileWidth,tileInput.begin() + static_cast<std::ptrdiff_t>(dst));
+                    }
+                }
+                inputBuffer->upload(std::as_bytes(std::span(tileInput)),0,request.stop);
+                const std::int64_t inputDimensions[] = {1,3,tileHeight,tileWidth};
+                const std::int64_t outputDimensions[] = {1,3,outputTileHeight,outputTileWidth};
+                inference::Handle<OrtValue> input(api.ReleaseValue), output(api.ReleaseValue);
+                inference::check(api,api.CreateTensorWithDataAsOrtValue(cudaMemory.value,reinterpret_cast<void*>(inputBuffer->address()),tileInputBytes,inputDimensions,4,ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,&input.value));
+                inference::check(api,api.CreateTensorWithDataAsOrtValue(cudaMemory.value,reinterpret_cast<void*>(outputBuffer->address()),tileOutputBytes,outputDimensions,4,ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,&output.value));
+                inference::Handle<OrtIoBinding> binding(api.ReleaseIoBinding);
+                inference::check(api,api.CreateIoBinding(session.value,&binding.value));
+                inference::check(api,api.BindInput(binding.value,inputName.c_str(),input.value));
+                inference::check(api,api.BindOutput(binding.value,outputName.c_str(),output.value));
+                inference::Handle<OrtRunOptions> options(api.ReleaseRunOptions);
+                inference::check(api,api.CreateRunOptions(&options.value));
+                auto terminate = [&] { if (auto* status = api.RunOptionsSetTerminate(options.value)) api.ReleaseStatus(status); };
+                std::stop_callback requested(request.stop,terminate);
+                std::stop_callback stopping(shutdown,terminate);
+                try {
+                    inference::check(api,api.RunWithBinding(session.value,options.value,binding.value),request.stop,shutdown);
+                    inference::check(api,api.SynchronizeBoundOutputs(binding.value),request.stop,shutdown);
+                    device->synchronize(request.stop);
+                } catch (...) {
+                    try { device->synchronize(); } catch (...) {}
+                    throw;
+                }
+                cancel();
+                std::vector<float> tileOutput(tileOutputBytes / sizeof(float));
+                outputBuffer->download(std::as_writable_bytes(std::span(tileOutput)),0,request.stop);
+                for (std::size_t channel = 0; channel < 3; ++channel) {
+                    for (int row = 0; row < coreHeight * scale; ++row) {
+                        const auto src = channel * outputTilePlane + static_cast<std::size_t>(localCoreY * scale + row) * static_cast<std::size_t>(outputTileWidth) + static_cast<std::size_t>(localCoreX * scale);
+                        const auto dst = channel * fullOutputPlane + static_cast<std::size_t>(coreY * scale + row) * static_cast<std::size_t>(paddedOutputWidth) + static_cast<std::size_t>(coreX * scale);
+                        const auto count = static_cast<std::size_t>(coreWidth * scale);
+                        std::copy_n(tileOutput.begin() + static_cast<std::ptrdiff_t>(src),count,generated.pixels.begin() + static_cast<std::ptrdiff_t>(dst));
+                    }
+                }
+            }
+        }
+        for (auto& value : generated.pixels) {
+            if (!std::isfinite(value)) throw inference::InferenceError(inference::InferenceErrorKind::runtimeError,"Restoration model returned a non-finite pixel value");
+            value = std::clamp(value,0.0F,1.0F);
+        }
+        auto outputFrame = media::restoreRifeSdr(generated,request.stop);
+        outputFrame.index = source.index;
+        outputFrame.timestamp = source.timestamp;
+        outputFrame.duration = source.duration;
+        outputFrame.timestampRecovered = source.timestampRecovered;
+        Result result{std::move(outputFrame),std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()};
+        validateResult(modelCapabilities,request,result);
+        return result;
+    }
+
+    void work(std::stop_token stop) {
+        while (true) {
+            Job job;
+            {
+                std::unique_lock lock(mutex);
+                ready.wait(lock,stop,[this] { return !jobs.empty(); });
+                if (stop.stop_requested()) break;
+                job = std::move(jobs.front()); jobs.pop_front(); active = true;
+            }
+            try {
+                auto result = execute(job.request,stop);
+                { std::lock_guard lock(mutex); active = false; }
+                job.promise.set_value(std::move(result));
+            } catch (...) {
+                auto exception = std::current_exception();
+                try { std::rethrow_exception(exception); }
+                catch (const gpu::GpuError& error) {
+                    auto kind = inference::InferenceErrorKind::runtimeError;
+                    if (error.kind() == gpu::GpuErrorKind::outOfMemory) kind = inference::InferenceErrorKind::outOfMemory;
+                    else if (error.kind() == gpu::GpuErrorKind::cancelled) kind = inference::InferenceErrorKind::cancelled;
+                    else if (error.kind() == gpu::GpuErrorKind::invalidRequest) kind = inference::InferenceErrorKind::invalidRequest;
+                    else if (error.kind() == gpu::GpuErrorKind::unavailable) kind = inference::InferenceErrorKind::unavailable;
+                    exception = std::make_exception_ptr(inference::InferenceError(kind,error.what()));
+                } catch (...) {}
+                { std::lock_guard lock(mutex); active = false; }
+                job.promise.set_exception(exception);
+            }
+        }
+        std::lock_guard lock(mutex);
+        for (auto& job : jobs)
+            job.promise.set_exception(std::make_exception_ptr(inference::InferenceError(inference::InferenceErrorKind::cancelled,"Restoration backend stopped before request execution")));
+        jobs.clear();
+    }
+
+    std::shared_ptr<gpu::CudaDevice> device;
+    OnnxCudaRestorationConfig config;
+    std::shared_ptr<inference::Runtime> runtime;
+    const OrtApi& api;
+    inference::Handle<OrtSession> session;
+    inference::Handle<OrtMemoryInfo> cudaMemory;
+    std::shared_ptr<gpu::DeviceBuffer> inputBuffer;
+    std::shared_ptr<gpu::DeviceBuffer> outputBuffer;
+    std::size_t inputBytes = 0;
+    std::size_t outputBytes = 0;
+    std::string inputName;
+    std::string outputName;
+    std::array<std::int64_t,4> inputShape{};
+    std::array<std::int64_t,4> outputShape{};
+    Capabilities modelCapabilities{};
+    std::string modelId;
+    mutable std::mutex mutex;
+    std::condition_variable_any ready;
+    std::deque<Job> jobs;
+    bool active = false;
+    std::jthread worker;
+};
+
+OnnxCudaVideoRestorationBackend::OnnxCudaVideoRestorationBackend(std::shared_ptr<gpu::CudaDevice> device, OnnxCudaRestorationConfig config)
+    : impl_(std::make_unique<Impl>(std::move(device),std::move(config))) {}
+OnnxCudaVideoRestorationBackend::~OnnxCudaVideoRestorationBackend() = default;
+Capabilities OnnxCudaVideoRestorationBackend::capabilities() const { return impl_->getCapabilities(); }
+void OnnxCudaVideoRestorationBackend::loadModel(const ModelPack& model) { impl_->load(model); }
+std::future<Result> OnnxCudaVideoRestorationBackend::restore(Request request) { return impl_->submit(std::move(request)); }
+
+} // namespace rifelove::restoration
+#endif

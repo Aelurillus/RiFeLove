@@ -180,6 +180,42 @@ TEST(VideoMuxWriter, WritesGeneratedFramesAtExplicitTimes) {
     EXPECT_EQ(retained.planes[0].data[0], 255);
 }
 
+TEST(VideoMuxWriter, SupportsExplicitRestoredOutputDimensions) {
+    ImageFixture fixture;
+    DecodedFrame source{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(),[&](const DecodedFrame& frame) { source = frame; });
+    auto pixels = std::make_shared<std::vector<std::uint8_t>>(4U * 2U * 3U,127);
+    DecodedFrame restored = source;
+    restored.width = 4;
+    restored.height = 2;
+    restored.planes[0] = {pixels->data(),12};
+    restored.storage = pixels;
+
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.pixelFormat = "bgr0";
+    settings.timeBase = rifelove::Rational(1,50);
+    settings.frameRate = rifelove::Rational(50);
+    settings.outputWidth = 4;
+    settings.outputHeight = 2;
+    const auto output = fixture.directory / "restored.mkv";
+    rifelove::media::VideoMuxWriter writer(fixture.path.string(),output.string(),settings);
+    writer.writeFrame(restored,{},rifelove::Rational(1,50));
+    EXPECT_EQ(writer.finish().framesSubmitted,1U);
+    const auto result = MediaEngine::probe(output.string());
+    ASSERT_EQ(result.streams.size(),1U);
+    EXPECT_EQ(result.streams.front().width,4);
+    EXPECT_EQ(result.streams.front().height,2);
+}
+
+TEST(VideoMuxWriter, RejectsOnlyOneExplicitOutputDimension) {
+    ImageFixture fixture;
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.outputWidth = 4;
+    EXPECT_THROW((void)rifelove::media::VideoMuxWriter(fixture.path.string(),(fixture.directory / "invalid-dimensions.mkv").string(),settings),std::invalid_argument);
+}
+
 TEST(VideoMuxWriter, WritesVideoOnlyKeyframedSegmentsAtTheGlobalTimelineOrigin) {
     ImageFixture fixture;
     const auto source = fixture.directory / "source-with-audio.mkv";
