@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node ../tools/release/build-site.mjs",
+    "build:worker": "node ../tools/release/build-worker-source.mjs",
     "test": "node --test ../tools/release/*.test.mjs",
     "publish": "node ../tools/release/publish-release.mjs",
     "upload:preview:oss": "node ../tools/release/upload-private-preview.mjs",

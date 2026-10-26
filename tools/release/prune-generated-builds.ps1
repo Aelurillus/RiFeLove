@@ -2,10 +2,11 @@
 param(
     [string]$OutputRoot = "",
     [switch]$Apply,
+    # Explicitly list versions whose canonical private OSS archive was already verified.
+    # Only the exact root-level generated ZIP for that version is eligible.
+    [string[]]$RemoveArchivedVersionZip = @(),
     [string[]]$KeepPackage = @(
-        "RifeLove-local-2026-10-26-restoration-catalog",
-        "RifeLove-portable-0.1.1",
-        "RifeLove-portable-0.1.1-verified"
+        "RifeLove-local-2026-10-26-user-delivery"
     )
 )
 
@@ -39,11 +40,47 @@ function Test-TreeHasReparsePoint([string]$Directory, [switch]$PreserveData) {
             if ($PreserveData -and $current.Equals($Directory, [StringComparison]::OrdinalIgnoreCase) -and
                 [IO.Path]::GetFileName($entry).Equals("data", [StringComparison]::OrdinalIgnoreCase)) { continue }
             $attributes = [IO.File]::GetAttributes($entry)
-            if ($attributes -band [IO.FileAttributes]::ReparsePoint) { return $true }
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                $isPackageRuntimeJunction = $current.Equals($Directory, [StringComparison]::OrdinalIgnoreCase) -and
+                    [IO.Path]::GetFileName($entry).Equals("runtime", [StringComparison]::OrdinalIgnoreCase)
+                if ($isPackageRuntimeJunction) {
+                    $link = Get-Item -LiteralPath $entry -Force
+                    $target = [string]$link.Target
+                    if ($link.LinkType -eq "Junction" -and -not [string]::IsNullOrWhiteSpace($target) -and
+                        (Test-Path -LiteralPath $target -PathType Container) -and
+                        -not (Test-ContainedPath $Directory ([IO.Path]::GetFullPath($target)))) {
+                        continue
+                    }
+                }
+                return $true
+            }
             if ($attributes -band [IO.FileAttributes]::Directory) { $pending.Push($entry) }
         }
     }
     return $false
+}
+
+function Remove-GeneratedEntry([string]$PackageRoot, [string]$Entry) {
+    $absolute = [IO.Path]::GetFullPath($Entry)
+    if (-not (Test-ContainedPath $PackageRoot $absolute)) {
+        throw "Unsafe generated child path: $absolute"
+    }
+    $attributes = [IO.File]::GetAttributes($absolute)
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+        # Delete links as directory entries; never enumerate or recurse through
+        # their targets. Runtime junctions point into the shared SDK tree.
+        if ($attributes -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($absolute, $false) }
+        else { [IO.File]::Delete($absolute) }
+        return
+    }
+    if ($attributes -band [IO.FileAttributes]::Directory) {
+        foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($absolute)) {
+            Remove-GeneratedEntry $PackageRoot $child
+        }
+        [IO.Directory]::Delete($absolute, $false)
+    } else {
+        [IO.File]::Delete($absolute)
+    }
 }
 
 function Get-GeneratedBytes([string]$Directory, [switch]$PreserveData) {
@@ -112,18 +149,32 @@ foreach ($archive in (Get-ChildItem -LiteralPath $root -File -Force | Where-Obje
     $plan.Add([pscustomobject]@{ Name=$archive.Name; Path=$absolute; Kind="archive"; PreserveData=$false; Bytes=$archive.Length })
 }
 
+foreach ($version in $RemoveArchivedVersionZip) {
+    if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Invalid archived release version: $version" }
+    $name = "RifeLove-$version-win-x64.zip"
+    $absolute = [IO.Path]::GetFullPath((Join-Path $root $name))
+    if (-not (Test-ContainedPath $root $absolute) -or -not (Split-Path -Parent $absolute).Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe archived release path: $absolute"
+    }
+    if (-not (Test-Path -LiteralPath $absolute -PathType Leaf)) { throw "Archived release ZIP was not found: $name" }
+    $file = Get-Item -LiteralPath $absolute -Force
+    if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing to remove a linked archived release ZIP: $name" }
+    $plan.Add([pscustomobject]@{ Name=$name; Path=$absolute; Kind="archived-version-zip"; PreserveData=$false; Bytes=$file.Length })
+}
+
 [long]$plannedBytes = ($plan | Measure-Object -Property Bytes -Sum).Sum
 if (-not $plannedBytes) { $plannedBytes = 0 }
 Write-Output ("Found {0} inactive generated item(s); {1:N2} GiB of file contents can be removed while preserving local data." -f $plan.Count, ($plannedBytes / 1GB))
 foreach ($item in $plan) {
     $action = if ($item.Kind -eq "archive") { "remove temporary dated archive; keep versioned archives" }
+        elseif ($item.Kind -eq "archived-version-zip") { "remove exact local copy after private OSS archive verification" }
         elseif ($item.PreserveData) { "remove generated files; keep data/" }
         else { "remove generated folder" }
     Write-Output ("{0} — {1:N2} GiB — {2}" -f $item.Name, ($item.Bytes / 1GB), $action)
 }
 foreach ($item in $skipped) { Write-Output ("Skipped {0}" -f $item) }
 if (-not $Apply) {
-    Write-Output "Dry run only. Re-run with -Apply to prune these inactive generated outputs. User data, version archives, the verified portable package, configured keeps, and running packages are excluded."
+    Write-Output "Dry run only. Re-run with -Apply to prune these inactive generated outputs. User data, unlisted version archives, configured keeps, and running packages are excluded."
     exit 0
 }
 
@@ -135,18 +186,25 @@ foreach ($item in $plan) {
         $current = Get-Item -LiteralPath $item.Path -Force
         if ($current.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Temporary archive became a linked file: $($item.Name)" }
         Remove-Item -LiteralPath $item.Path -Force
+    } elseif ($item.Kind -eq "archived-version-zip") {
+        if (-not (Test-ContainedPath $root $item.Path) -or -not (Split-Path -Parent $item.Path).Equals($root, [StringComparison]::OrdinalIgnoreCase) -or
+            [IO.Path]::GetFileName($item.Path) -ne $item.Name) { throw "Unsafe archived release path: $($item.Path)" }
+        $current = Get-Item -LiteralPath $item.Path -Force
+        if (($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $current.Length -ne $item.Bytes) {
+            throw "Archived release ZIP changed after preview: $($item.Name)"
+        }
+        Remove-Item -LiteralPath $item.Path -Force
     } elseif ($item.PreserveData) {
         foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($item.Path)) {
             if ([IO.Path]::GetFileName($entry).Equals("data", [StringComparison]::OrdinalIgnoreCase)) { continue }
-            if (-not (Test-ContainedPath $item.Path $entry)) { throw "Unsafe generated child path: $entry" }
-            Remove-Item -LiteralPath $entry -Recurse -Force
+            Remove-GeneratedEntry $item.Path $entry
         }
     } else {
         if (-not (Test-ContainedPath $root $item.Path) -or -not (Split-Path -Parent $item.Path).Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Unsafe generated package path: $($item.Path)"
         }
-        Remove-Item -LiteralPath $item.Path -Recurse -Force
+        Remove-GeneratedEntry $root $item.Path
     }
     Write-Output ("Pruned {0}" -f $item.Name)
 }
-Write-Output "Pruning complete. Version archives and local data were preserved."
+Write-Output "Pruning complete. Unlisted version archives and local data were preserved."

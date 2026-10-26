@@ -17,11 +17,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "RifeLove Project\0"
       VALUE "FileDescription", "RifeLove Offline AI Frame Interpolation\0"
-      VALUE "FileVersion", "0.1.1\0"
+      VALUE "FileVersion", "0.1.2\0"
       VALUE "InternalName", "RifeLove\0"
       VALUE "OriginalFilename", "RifeLove.exe\0"
       VALUE "ProductName", "RifeLove\0"
-      VALUE "ProductVersion", "0.1.1\0"
+      VALUE "ProductVersion", "0.1.2\0"
     END
   END
   BLOCK "VarFileInfo"

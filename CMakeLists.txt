@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(RifeLove VERSION 0.1.1 LANGUAGES C CXX)
+project(RifeLove VERSION 0.1.2 LANGUAGES C CXX)
 if(WIN32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "RifeLove targets Windows x64; select a 64-bit compiler")
 endif()
