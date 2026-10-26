@@ -27,17 +27,24 @@ if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Source p
 if (Test-Path -LiteralPath $target) { throw "Refusing to replace an existing offline package: $target" }
 if (Test-Path -LiteralPath $archive) { throw "Refusing to replace an existing offline archive: $archive" }
 
-$runtimeLinkPath = Join-Path $source "runtime"
-$runtimeLink = Get-Item -LiteralPath $runtimeLinkPath -Force
-if (-not ($runtimeLink.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $runtimeLink.LinkType -ne "Junction") {
-    throw "Expected the local package's runtime path to be its known workstation junction."
+$runtimePath = Join-Path $source "runtime"
+$runtimeItem = Get-Item -LiteralPath $runtimePath -Force
+$runtimePrefix = $runtimePath + [IO.Path]::DirectorySeparatorChar
+if ($runtimeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    if ($runtimeItem.LinkType -ne "Junction") {
+        throw "Expected the local package's runtime path to be a directory or its known workstation junction."
+    }
+    $runtimeSource = [IO.Path]::GetFullPath([string]$runtimeItem.Target)
+    if (-not (Test-Path -LiteralPath $runtimeSource -PathType Container)) { throw "The linked inference runtime folder is unavailable." }
+} elseif ($runtimeItem.PSIsContainer) {
+    $runtimeSource = $runtimePath
+} else {
+    throw "The local package's runtime path is not a directory."
 }
-$runtimeSource = [IO.Path]::GetFullPath([string]$runtimeLink.Target)
-if (-not (Test-Path -LiteralPath $runtimeSource -PathType Container)) { throw "The linked inference runtime folder is unavailable." }
 
 $sourceItems = @(Get-ChildItem -LiteralPath $source -Force -Recurse)
 foreach ($item in $sourceItems) {
-    if ($item.FullName -ieq $runtimeLinkPath) { continue }
+    if ($item.FullName -ieq $runtimePath -or $item.FullName.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw "The source package contains an unexpected link or junction: $($item.Name)"
     }
@@ -57,7 +64,7 @@ foreach ($name in @("onnxruntime.dll", "nvinfer_10.dll", "nvinfer_builder_resour
     if (-not (Test-Path -LiteralPath (Join-Path $runtimeSource $name) -PathType Leaf)) { throw "The inference runtime is missing $name" }
 }
 if ($ValidateOnly) {
-    Write-Output "Source package validation passed: $($modelFiles.Count) RIFE model pack(s), local runtime link resolved, no unexpected links, local data excluded from the copy plan."
+    Write-Output "Source package validation passed: $($modelFiles.Count) RIFE model pack(s), local inference runtime resolved, no unexpected links, local data excluded from the copy plan."
     exit 0
 }
 
@@ -68,7 +75,7 @@ $partialArchive = Join-Path $archiveParent (".RifeLove-offline-{0}.partial.zip" 
 $promoted = $false
 try {
     foreach ($item in $sourceItems) {
-        if ($item.FullName -ieq $runtimeLinkPath) { continue }
+        if ($item.FullName -ieq $runtimePath -or $item.FullName.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $relative = $item.FullName.Substring($source.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
         $parts = $relative -split '[\\/]'
         if ($parts[0] -ieq "data" -or $relative -ieq "first-run.png" -or $relative -ieq "studio-smoke.png" -or

@@ -121,10 +121,19 @@ foreach ($pack in $modelPacks) {
 $modelsDirectory = Join-Path $packageRoot "models"
 Set-Content -LiteralPath (Join-Path $modelsDirectory "default-model.txt") -Value ([string]$defaultModelPack.descriptor.id) -Encoding UTF8
 
-# Keep NVIDIA CUDA/cuDNN under their local SDK installation; this device-local
-# link avoids silently redistributing those separately licensed binaries.
+# Ship only the pinned runtime DLL set. NVIDIA's SDK and development tools stay
+# out of the package; the application still requires a compatible display driver.
 $runtimeTarget = Join-Path $packageRoot "runtime"
-New-Item -ItemType Junction -Path $runtimeTarget -Target $inferenceRuntime | Out-Null
+New-Item -ItemType Directory -Path $runtimeTarget | Out-Null
+foreach ($name in $requiredInferenceRuntimeFiles) {
+    Copy-Item -LiteralPath (Join-Path $inferenceRuntime $name) -Destination $runtimeTarget
+}
+Copy-Item -LiteralPath $runtimeVersionFile -Destination $runtimeTarget
+foreach ($name in $requiredInferenceRuntimeFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $runtimeTarget $name) -PathType Leaf)) {
+        throw "Packaged inference runtime is missing $name."
+    }
+}
 New-Item -ItemType File -Path (Join-Path $packageRoot "portable.flag") | Out-Null
 $platformTarget = Join-Path $packageRoot "platforms"
 New-Item -ItemType Directory -Path $platformTarget -Force | Out-Null
@@ -146,6 +155,38 @@ $tensorRtRoot = Split-Path (Split-Path $inferenceRuntime -Parent) -Parent
 $tensorRtLicense = Join-Path $tensorRtRoot "licenses/TensorRT-10.9-LICENSE.txt"
 if (-not (Test-Path -LiteralPath $tensorRtLicense -PathType Leaf)) { throw "TensorRT license file is missing: $tensorRtLicense" }
 Copy-Item -LiteralPath $tensorRtLicense -Destination (Join-Path $licenseTarget "TensorRT-10.9-LICENSE.txt")
+$cudaWheelRoot = Join-Path $tensorRtRoot "onnx-cuda-12.8"
+$cudaRuntimeLicensePacks = @(
+    [pscustomobject]@{package="nvidia-cuda-runtime-cu12";destination="CUDA-Runtime-LICENSE.txt"},
+    [pscustomobject]@{package="nvidia-cublas-cu12";destination="CUDA-BLAS-LICENSE.txt"},
+    [pscustomobject]@{package="nvidia-cufft-cu12";destination="CUDA-FFT-LICENSE.txt"},
+    [pscustomobject]@{package="nvidia-cudnn-cu12";destination="cuDNN-LICENSE.txt"}
+)
+foreach ($licensePack in $cudaRuntimeLicensePacks) {
+    $packageDirectory = Join-Path $cudaWheelRoot $licensePack.package
+    $licenseFiles = @(
+        Get-ChildItem -LiteralPath $packageDirectory -Directory -Filter "*.dist-info" -ErrorAction Stop |
+            ForEach-Object { Join-Path $_.FullName "License.txt" } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    )
+    if ($licenseFiles.Count -ne 1) {
+        throw "Expected one pinned NVIDIA license file for $($licensePack.package), found $($licenseFiles.Count)."
+    }
+    Copy-Item -LiteralPath $licenseFiles[0] -Destination (Join-Path $licenseTarget $licensePack.destination)
+}
+$qtLicenseText = Join-Path $repositoryRoot "packaging/windows/licenses/LGPL-3.0.txt"
+if (-not (Test-Path -LiteralPath $qtLicenseText -PathType Leaf)) { throw "Qt LGPL-3.0 license text is missing: $qtLicenseText" }
+Copy-Item -LiteralPath $qtLicenseText -Destination (Join-Path $licenseTarget "LGPL-3.0.txt")
+$qtSbomRoot = Join-Path $qt "sbom"
+if (-not (Test-Path -LiteralPath $qtSbomRoot -PathType Container)) { throw "Pinned Qt SBOM directory is missing: $qtSbomRoot" }
+$qtSbomTarget = Join-Path $licenseTarget "Qt-SBOM"
+New-Item -ItemType Directory -Path $qtSbomTarget | Out-Null
+$qtSbomFiles = @(Get-ChildItem -LiteralPath $qtSbomRoot -File | Where-Object { $_.Name -match '\.(spdx|spdx\.json|cdx\.json|source\.spdx)$' })
+if ($qtSbomFiles.Count -eq 0) { throw "No Qt SBOM documents were found under $qtSbomRoot" }
+foreach ($file in $qtSbomFiles) { Copy-Item -LiteralPath $file.FullName -Destination $qtSbomTarget }
+$mingwLicenseRoot = Join-Path $qt "Tools/mingw1510_64/mingw64/licenses"
+if (-not (Test-Path -LiteralPath $mingwLicenseRoot -PathType Container)) { throw "MinGW runtime license directory is missing: $mingwLicenseRoot" }
+Copy-Item -LiteralPath $mingwLicenseRoot -Destination (Join-Path $licenseTarget "MinGW") -Recurse
 
 $readmeLines = @(
     'RifeLove 本机运行包',
@@ -153,7 +194,8 @@ $readmeLines = @(
     '启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。',
     '运行日志只保存在本机：桌面日志位于 data/logs/rifelove.jsonl，CLI 日志位于 %LOCALAPPDATA%/RifeLove/logs/cli.jsonl。日志最多 4 MiB 并保留最近 3 个轮转文件；错误详情有时会包含本地文件名，分享前请检查。',
     '本次附带并完成文件校验的模型：{0}。首次启动默认选择 {1}。当前色彩路径支持模型清单声明的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR，并保留输入位深和色彩标签；HDR、其他位深和未知色彩仍被拦截。模型许可与 SHA-256 位于各自的 models 子目录。',
-    '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。随包模型都经过本机 TensorRT FP32 数值校验，摘要保存在 data/tensorrt-validation.json。FP16 在当前 GTX 1660 SUPER 上未通过 8-bit SDR 精度门槛，因此不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
+    '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT、ONNX Runtime、CUDA 和 cuDNN 运行 DLL 随包放在 runtime 目录；仍需安装兼容的 NVIDIA 显卡驱动。随包模型都经过本机 TensorRT FP32 数值校验，摘要保存在 data/tensorrt-validation.json。FP16 在当前 GTX 1660 SUPER 上未通过 8-bit SDR 精度门槛，因此不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
+    'Qt 和运行库许可文本、Qt 6.12 SBOM 及 NVIDIA 运行库许可位于 licenses 目录。Qt 运行库采用动态链接；Qt 对应源码和分发许可审查仍需随公开发行版本一并完成。',
     '默认视频编码：任务开始前按目标帧率、像素格式、码率和编码选项预检查 NVIDIA NVENC；若当前驱动或像素格式不兼容，会选择已通过同一输出设置检查的软件编码器。界面会分别标明 CPU 视频编码和 CUDA RIFE 插帧。当前驱动提供 NVENC API 12.2，而本机 FFmpeg 要求 API 13.0 / 驱动 570.0 或更新，所以自动模式将使用软件 H.264。高级编码中可以显式选择 NVENC 的恒定质量 CQ（VBR + CQ）；该设置需要本机 NVENC 可初始化，无法回退到软件编码。',
     '导入视频时会显示按源分辨率和像素格式检查的 NVENC、软件 H.264、HEVC 与 AV1 能力；开始任务时会再次按目标输出帧率、时间基、像素格式、码率、GOP 和编码选项检查实际配置。进度栏按预计总帧数显示确定进度与剩余时间；估算总帧数不替代最终时间轴验证。',
     '本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\{2}" --runtime-dir ".\runtime" --progress --report "处理报告.json"。报告记录模型/GPU、实际编码器和回退原因、端到端速度、质量保护计数及时间轴校验；不包含未实测的主观画质评分。',
@@ -176,7 +218,7 @@ $savedQpa = $env:QT_QPA_PLATFORM
 $savedQuick = $env:QT_QUICK_BACKEND
 $savedFont = $env:QT_QPA_FONTDIR
 try {
-    $env:PATH = "$packageRoot;$qt/bin;$qt/Tools/mingw1510_64/mingw64/bin;$ffmpeg/bin;$onnx;$savedPath"
+    $env:PATH = "$packageRoot;$runtimeTarget;$env:SystemRoot\System32;$env:SystemRoot"
     $env:QT_QPA_PLATFORM = "offscreen"
     $env:QT_QUICK_BACKEND = "software"
     $env:QT_QPA_FONTDIR = "C:/Windows/Fonts"
@@ -265,7 +307,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReuseQualificationEvidencePath)) {
     $qualificationSummaries = @()
     try {
         $mingwRuntime = Join-Path $qt "Tools/mingw1510_64/mingw64/bin"
-        $env:PATH = "$build;$packageRoot;$qt/bin;$ffmpeg/bin;$inferenceRuntime;$mingwRuntime;$savedPath"
+        $env:PATH = "$build;$packageRoot;$runtimeTarget;$qt/bin;$ffmpeg/bin;$mingwRuntime;$savedPath"
         foreach ($pack in $modelPacks) {
             $reportPath = Join-Path $qualificationDirectory ("{0}.json" -f $pack.descriptor.id)
             $validationOutput = & $validatorExecutable $pack.root $runtimeTarget $reportPath tensorrt 2>&1
@@ -324,7 +366,7 @@ $qualificationEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $qua
 Assert-PackageNotRunning -TargetPath $target
 Preserve-PackageUserState -OldRoot $target -NewRoot $packageRoot
 
-$manifest = New-PackageChecksumManifest -PackageRoot $packageRoot -RuntimeRoot $inferenceRuntime -QualificationEvidencePath $qualificationEvidencePath
+$manifest = New-PackageChecksumManifest -PackageRoot $packageRoot -RuntimeRoot $runtimeTarget -QualificationEvidencePath $qualificationEvidencePath
 Set-Content -LiteralPath (Join-Path $packageRoot "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
 
 # Copy mutable local state only after package qualification succeeds. Refuse to
@@ -338,7 +380,7 @@ $savedQpa = $env:QT_QPA_PLATFORM
 $savedQuick = $env:QT_QUICK_BACKEND
 $savedFont = $env:QT_QPA_FONTDIR
 try {
-    $env:PATH = "$target;$qt/bin;$qt/Tools/mingw1510_64/mingw64/bin;$ffmpeg/bin;$onnx;$savedPath"
+    $env:PATH = "$target;$target/runtime;$env:SystemRoot\System32;$env:SystemRoot"
     $env:QT_QPA_PLATFORM = "offscreen"
     $env:QT_QUICK_BACKEND = "software"
     $env:QT_QPA_FONTDIR = "C:/Windows/Fonts"
