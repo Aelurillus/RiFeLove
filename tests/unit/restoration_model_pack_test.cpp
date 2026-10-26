@@ -1,5 +1,6 @@
 #include "restoration/model_pack.hpp"
 #include "inference/model_pack.hpp"
+#include "application/job_serialization.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -76,6 +77,24 @@ void makePack(const std::filesystem::path& root) {
             {"numericalProfile", "sdr8-reference"}, {"validatedBackends", backends}}}
     });
 }
+void makeSuperResolutionPack(const std::filesystem::path& root) {
+    makePack(root);
+    const Json capabilities{
+        {"tasks",Json::array({"super-resolution"})},
+        {"placements",Json::array({"output-rate-after-interpolation"})},
+        {"supportedInputProfiles",Json::array({"bt709-sdr8"})},
+        {"temporalFramesBefore",0}, {"temporalFramesAfter",0},
+        {"scaleNumerator",4}, {"scaleDenominator",1}, {"supportsBoundaryPadding",false}
+    };
+    auto report = readJson(root / "validation.json");
+    report["capabilities"] = capabilities;
+    writeJson(root / "validation.json",report);
+    auto descriptor = readJson(root / "model.json");
+    descriptor["displayName"] = "Fixture Super Resolution";
+    descriptor["capabilities"] = capabilities;
+    descriptor["validation"]["reportSha256"] = inference::sha256File(root / "validation.json",1024 * 1024);
+    writeJson(root / "model.json",descriptor);
+}
 }
 
 TEST(RestorationModelPack, LoadsLocalWeightsAndHashBoundSidecars) {
@@ -93,6 +112,39 @@ TEST(RestorationModelPack, LoadsLocalWeightsAndHashBoundSidecars) {
     EXPECT_EQ(pack.capabilities.temporalFramesBefore, 1U);
     EXPECT_EQ(pack.validatedBackends, (std::vector<std::string>{"onnxruntime_cpu"}));
     EXPECT_TRUE(pack.metadataIntegrityVerified);
+}
+
+TEST(ProcessingConfiguration, PinsLocalSuperResolutionDescriptorForQueuedTasks) {
+    TemporaryDirectory temporary;
+    makeSuperResolutionPack(temporary.value);
+    application::ProcessingJob job;
+    job.source = "C:/recordings/source.mkv";
+    job.output = "C:/exports/result.mkv";
+    job.modelDirectory = temporary.value / "rife";
+    job.runtimeDirectory = temporary.value / "runtime";
+    job.restorationModelDirectory = temporary.value;
+    job.settings.targetRate = Rational(60);
+    job.settings.hostFloatBufferLimit = 1024 * 1024;
+    job.settings.encoding.encoder = "libopenh264";
+
+    EXPECT_THROW((void)application::serializeJob(job),std::invalid_argument);
+    ASSERT_NO_THROW(application::pinRestorationModelDescriptor(job));
+    const auto pinnedHash = inference::sha256File(temporary.value / "model.json",256 * 1024);
+    EXPECT_EQ(job.expectedRestorationDescriptorSha256,pinnedHash);
+
+    const auto encoded = application::serializeJob(job);
+    const auto json = Json::parse(encoded);
+    EXPECT_EQ(json.at("schemaVersion"),4);
+    EXPECT_FALSE(json.at("restorationModelDirectory").get<std::string>().empty());
+    auto restored = application::parseJob(job.source,job.output,encoded);
+    EXPECT_EQ(restored.restorationModelDirectory,job.restorationModelDirectory);
+    EXPECT_EQ(restored.expectedRestorationDescriptorSha256,pinnedHash);
+    EXPECT_EQ(application::serializeJob(restored),encoded);
+
+    auto descriptor = readJson(temporary.value / "model.json");
+    descriptor["displayName"] = "Changed after queue import";
+    writeJson(temporary.value / "model.json",descriptor);
+    EXPECT_THROW(application::pinRestorationModelDescriptor(restored),std::invalid_argument);
 }
 
 TEST(RestorationModelPack, RejectsChangedGraphAndSidecars) {

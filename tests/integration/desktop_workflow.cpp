@@ -74,7 +74,7 @@ void writeBytes(const QString& path, const QByteArray& bytes) {
     require(output.open(QIODevice::WriteOnly | QIODevice::Truncate) && output.write(bytes) == bytes.size(),
         "Could not write local restoration-pack fixture");
 }
-void makeRestorationPack(const QString& directory) {
+void makeRestorationPack(const QString& directory, const QString& supportedProfile = QStringLiteral("bt470bg-sdr8")) {
     require(QDir().mkpath(directory), "Could not create local restoration-pack fixture folder");
     const QByteArray graph("local restoration graph fixture");
     const QByteArray license("MIT restoration fixture license");
@@ -84,10 +84,10 @@ void makeRestorationPack(const QString& directory) {
         {"license","MIT"}, {"licenseScopeEvidence","https://example.invalid/license-scope"}
     });
     const QJsonObject capabilities{
-        {"tasks",QJsonArray{"denoise"}}, {"placements",QJsonArray{"source-rate-before-interpolation"}},
-        {"supportedInputProfiles",QJsonArray{"bt709-sdr8"}},
-        {"temporalFramesBefore",1}, {"temporalFramesAfter",1},
-        {"scaleNumerator",1}, {"scaleDenominator",1}, {"supportsBoundaryPadding",true}
+        {"tasks",QJsonArray{"super-resolution"}}, {"placements",QJsonArray{"output-rate-after-interpolation"}},
+        {"supportedInputProfiles",QJsonArray{supportedProfile}},
+        {"temporalFramesBefore",0}, {"temporalFramesAfter",0},
+        {"scaleNumerator",4}, {"scaleDenominator",1}, {"supportsBoundaryPadding",false}
     };
     const QJsonArray backends{"onnxruntime_cpu"};
     const auto validation = jsonBytes(QJsonObject{
@@ -101,7 +101,7 @@ void makeRestorationPack(const QString& directory) {
     writeBytes(QDir(directory).filePath("source-manifest.json"),manifest);
     writeBytes(QDir(directory).filePath("validation.json"),validation);
     const auto descriptor = jsonBytes(QJsonObject{
-        {"schemaVersion",1}, {"id","desktop-test-restoration"}, {"displayName","Desktop Test Denoiser"},
+        {"schemaVersion",1}, {"id","desktop-test-restoration"}, {"displayName","Desktop Test Super Resolution"},
         {"family","video-restoration"}, {"version","1.0"},
         {"adapter",QJsonObject{{"id","fixture-denoiser-v1"},{"version",1}}},
         {"modelFile","weights.onnx"}, {"sha256",QString::fromStdString(hashBytes(graph))},
@@ -674,7 +674,9 @@ int main(int argc, char** argv) {
                 !registeredModel.value("hdrQualified").toBool(),
             "Model center did not expose verified v2 provenance, license and capability metadata");
         const auto restorationDirectory = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-restoration-model");
-        makeRestorationPack(restorationDirectory);
+        const auto studioInputProfile = root->property("info").toMap().value("inputProfile").toString();
+        require(!studioInputProfile.isEmpty(), "Studio did not expose the inspected input color profile");
+        makeRestorationPack(restorationDirectory,studioInputProfile);
         taskQueue.addLocalModel(QUrl::fromLocalFile(restorationDirectory));
         waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 2; },
             "Local restoration model import or integrity verification failed",20000);
@@ -683,12 +685,77 @@ int main(int argc, char** argv) {
             const auto entry = model.toMap();
             if (entry.value("family").toString() == "video-restoration") restorationEntry = entry;
         }
+        const auto restorationProfiles = restorationEntry.value("supportedInputProfiles").toStringList();
+        const auto otherSdrProfile = studioInputProfile == QStringLiteral("bt709-sdr8") ? QStringLiteral("bt470bg-sdr8") : QStringLiteral("bt709-sdr8");
         require(restorationEntry.value("valid").toBool() && restorationEntry.value("id").toString() == "desktop-test-restoration" &&
-                restorationEntry.value("tasks").toStringList().contains("denoise") &&
-                !taskQueue.supportsModelInputProfile(QUrl::fromLocalFile(restorationDirectory),QStringLiteral("bt709-sdr8")) &&
+                restorationEntry.value("tasks").toStringList().contains("super-resolution") &&
+                restorationEntry.value("placements").toStringList().contains("output-rate-after-interpolation") &&
+                restorationEntry.value("scaleNumerator").toInt() == 4 &&
+                restorationProfiles.contains(studioInputProfile) && !restorationProfiles.contains(otherSdrProfile) &&
                 QFileInfo(taskQueue.defaults().value("model").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(arguments[3]).absoluteFilePath() &&
                 !findVisual(window->contentItem(),"setDefaultModelButton"),
             "Restoration pack became an RIFE interpolation default or lacked its declared local capabilities");
+        auto* modelAdvancedToggle = root->findChild<QObject*>("studioAdvancedModelToggle");
+        require(modelAdvancedToggle, "Studio local model settings toggle is missing");
+        if (!root->property("advancedOpen").toBool()) click(modelAdvancedToggle,"open local model settings");
+        auto* restorationSelector = root->findChild<QObject*>("studioRestorationModel");
+        auto* restorationSummary = root->findChild<QObject*>("studioRestorationOutputSummary");
+        require(restorationSelector && restorationSelector->property("currentIndex").toInt() == 0,
+            "Studio did not create its local super-resolution model selector");
+        require(restorationSummary, "Studio did not create its super-resolution output summary");
+        taskQueue.setDefaultRestorationModel(QUrl::fromLocalFile(restorationDirectory));
+        waitUntil([&] { return QFileInfo(taskQueue.defaults().value("restorationModel").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(restorationDirectory).absoluteFilePath(); },
+            "Verified local x4 super-resolution model was not saved as the Studio default",10000);
+        waitUntil([&] { return QFileInfo(root->property("restorationModelFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(restorationDirectory).absoluteFilePath() &&
+                restorationSelector->property("currentIndex").toInt() == 1; },
+            "Studio did not select the saved local super-resolution model",10000);
+        require(restorationSummary->property("text").toString().contains(QStringLiteral("384 × 256")),
+            "Studio did not show the selected x4 model's output dimensions");
+
+        root->setProperty("currentPage",2);
+        require(queuePage, "Task queue page was not loaded");
+        auto* queueAdvancedToggle = root->findChild<QObject*>("queueAdvancedModelToggle");
+        require(queueAdvancedToggle, "Queue local model settings toggle is missing");
+        if (!queuePage->property("advancedOpen").toBool()) click(queueAdvancedToggle,"open queue model settings");
+        auto* queueRestorationSelector = root->findChild<QObject*>("queueRestorationModel");
+        require(queueRestorationSelector && queueRestorationSelector->property("currentIndex").toInt() == 1 &&
+                QFileInfo(queuePage->property("restorationModelFolder").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(restorationDirectory).absoluteFilePath(),
+            "Queue did not restore the selected local super-resolution model");
+        const auto queueOutputDirectory = QDir(QFileInfo(arguments[2]).absolutePath()).filePath("queue-super-resolution-output");
+        require(QDir().mkpath(queueOutputDirectory), "Could not create a local output folder for the queue super-resolution test");
+        const auto tasksBeforeRestorationImport = taskQueue.counts().value("total").toInt();
+        taskQueue.addItems({QUrl::fromLocalFile(arguments[1])},QUrl::fromLocalFile(queueOutputDirectory),"30",
+            QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),"libopenh264","mkv",
+            queueEncoding,false,"cuda",0.25,queuePage->property("restorationModelFolder").toUrl());
+        waitUntil([&] { return !taskQueue.importing() && taskQueue.counts().value("total").toInt() == tasksBeforeRestorationImport + 1; },
+            "Queue did not save the local super-resolution task configuration",20000);
+        const auto queueReportPath = QDir(QFileInfo(arguments[2]).absolutePath()).filePath("queue-super-resolution-report.json");
+        bool queueReportExported = false;
+        QObject::connect(&taskQueue,&QueueController::operationFinished,&taskQueue,[&](const QString& state) {
+            if (state == QStringLiteral("report_exported")) queueReportExported = true;
+        });
+        taskQueue.exportReport(QUrl::fromLocalFile(queueReportPath));
+        waitUntil([&] { return queueReportExported || taskQueue.state() == QStringLiteral("error"); },
+            "Queue super-resolution report did not finish",10000);
+        require(queueReportExported, "Queue could not export the local super-resolution task configuration");
+        QFile queueReportFile(queueReportPath);
+        require(queueReportFile.open(QIODevice::ReadOnly), "Could not read the local super-resolution queue report");
+        const auto queueTasks = QJsonDocument::fromJson(queueReportFile.readAll()).object().value(QStringLiteral("tasks")).toArray();
+        bool queuedRestorationModelPinned = false;
+        for (const auto& value : queueTasks) {
+            const auto task = value.toObject();
+            const auto configuration = task.value(QStringLiteral("configuration")).toObject();
+            if (QFileInfo(configuration.value(QStringLiteral("restorationModelDirectory")).toString()).absoluteFilePath() == QFileInfo(restorationDirectory).absoluteFilePath() &&
+                configuration.value(QStringLiteral("expectedRestorationDescriptorSha256")).toString().size() == 64) {
+                queuedRestorationModelPinned = true;
+                break;
+            }
+        }
+        require(queuedRestorationModelPinned, "Queued super-resolution work did not pin its local model descriptor hash");
+        root->setProperty("currentPage",3);
+        taskQueue.setDefaultRestorationModel(QUrl());
+        waitUntil([&] { return taskQueue.defaults().value("restorationModel").toUrl().isEmpty(); },
+            "Studio did not clear the local super-resolution selection",10000);
         const auto localModelCopy = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-model-copy");
         taskQueue.addLocalModel(QUrl::fromLocalFile(localModelCopy));
         waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 3; }, "Local model import or integrity verification failed",20000);

@@ -9,7 +9,7 @@ struct ImportRequest {
     std::string container = "mkv";
     bool recursive = false;
 };
-enum class ImportRejection { noVideo, unsupportedColor, unsupportedModelProfile, unsupportedEncoder, unreadable };
+enum class ImportRejection { noVideo, unsupportedColor, unsupportedModelProfile, unsupportedRestorationModelProfile, unsupportedEncoder, unreadable };
 struct RejectedImport { std::filesystem::path path; ImportRejection reason; std::string detail; };
 struct ImportResult {
     std::vector<std::string> taskIds;

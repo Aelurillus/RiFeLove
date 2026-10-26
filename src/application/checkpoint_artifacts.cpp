@@ -310,11 +310,20 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
             wanted.value("schemaVersion",0) == 2 && actual.contains("job") && wanted.contains("job") &&
             actual.contains("identity") && wanted.contains("identity") && actual.at("job").is_object() && wanted.at("job").is_object()) {
             auto& oldJob = actual["job"];
-            if (oldJob.value("schemaVersion",0) == 2 && wanted.at("job").value("schemaVersion",0) == 3 &&
-                actual.at("identity") == wanted.at("identity") && wanted.at("job").value("inferenceBackend",std::string()) == "auto") {
-                oldJob["inferenceBackend"] = "auto";
-                oldJob["schemaVersion"] = 3;
-                return actual == wanted;
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 4 &&
+                !oldJob.contains("restorationModelDirectory") && !oldJob.contains("expectedRestorationDescriptorSha256")) {
+                if (oldJob.value("schemaVersion",0) == 2 && !oldJob.contains("inferenceBackend") &&
+                    wanted.at("job").value("inferenceBackend",std::string()) == "auto") {
+                    oldJob["inferenceBackend"] = "auto";
+                    oldJob["schemaVersion"] = 3;
+                }
+                if (oldJob.value("schemaVersion",0) == 3 &&
+                    oldJob.value("inferenceBackend",std::string()) == wanted.at("job").value("inferenceBackend",std::string())) {
+                    oldJob["restorationModelDirectory"] = "";
+                    oldJob["expectedRestorationDescriptorSha256"] = "";
+                    oldJob["schemaVersion"] = 4;
+                    return actual == wanted;
+                }
             }
             return false;
         }
@@ -325,6 +334,7 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         auto& oldIdentity = actual["identity"];
         if (oldJob.value("schemaVersion",0) != 1 || oldIdentity.value("schemaVersion",0) != 1 ||
             !oldIdentity.contains("model") || !oldIdentity.at("model").is_object()) return false;
+        if (oldJob.contains("restorationModelDirectory") || oldJob.contains("expectedRestorationDescriptorSha256")) return false;
         // A v1 task could only select the built-in adapter. If it contains
         // adapter-like extension data, do not reinterpret it as trusted.
         if ((oldJob.contains("expectedModelAdapterId") && oldJob.at("expectedModelAdapterId") != "rife-sdr-v1") ||
@@ -333,7 +343,9 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         oldJob["expectedModelAdapterId"] = "rife-sdr-v1";
         oldJob["expectedModelAdapterVersion"] = 1;
         oldJob["inferenceBackend"] = "auto";
-        oldJob["schemaVersion"] = 3;
+        oldJob["restorationModelDirectory"] = "";
+        oldJob["expectedRestorationDescriptorSha256"] = "";
+        oldJob["schemaVersion"] = 4;
         oldIdentity["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
         oldIdentity["schemaVersion"] = 2;
         actual["schemaVersion"] = 2;

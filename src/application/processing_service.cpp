@@ -2,6 +2,8 @@
 #include "common/logging.hpp"
 #include "inference/onnx_cuda_backend.hpp"
 #include "media/rife_color.hpp"
+#include "restoration/model_pack.hpp"
+#include "restoration/onnx_cuda_backend.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -71,6 +73,21 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     send(std::move(prepared));
     auto pipelineSettings = job.settings;
     if (configurePipeline) configurePipeline(processingIdentity,pipelineSettings);
+    std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> restorationBackend;
+    if (!job.restorationModelDirectory.empty()) {
+        ProcessingEvent restorationLoading; restorationLoading.stage = "loading_restoration_model";
+        restorationLoading.detail = "Loading the selected local restoration model"; send(std::move(restorationLoading));
+        const auto restorationPack = restoration::loadModelPack(job.restorationModelDirectory);
+        const auto descriptorHash = inference::sha256File(restorationPack.directory / "model.json",256 * 1024);
+        if (job.expectedRestorationDescriptorSha256.empty() || descriptorHash != job.expectedRestorationDescriptorSha256)
+            throw std::runtime_error("Selected local restoration model changed after this task was configured");
+        restoration::OnnxCudaRestorationConfig restorationConfig;
+        restorationConfig.runtimeDirectory = job.runtimeDirectory;
+        restorationConfig.hostFloatBufferLimit = pipelineSettings.hostFloatBufferLimit;
+        restorationBackend = std::make_shared<restoration::OnnxCudaVideoRestorationBackend>(device,std::move(restorationConfig));
+        restorationBackend->loadModel(restorationPack);
+        pipelineSettings.restorationBackend = restorationBackend;
+    }
     checkpoint();
     return interpolateVideo(job.source,job.output,pipelineSettings,*device,backend,[&](const PipelineProgress& value) {
         // A completed progress event follows atomic output publication. Do

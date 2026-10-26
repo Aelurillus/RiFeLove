@@ -11,6 +11,7 @@ Item {
     required property bool processingAvailable
     property url modelFolder: ""
     property url runtimeFolder: ""
+    property url restorationModelFolder: ""
     property url outputFolder: ""
     property string targetRate: "60"
     property string encoder: "auto"
@@ -22,6 +23,32 @@ Item {
     property bool encodingAdvancedOpen: false
     property var selectedSources: []
 
+    function restorationModelOptions() {
+        const options = [{label: qsTr("关闭超分"), directory: ""}]
+        for (const model of (queueController.models || [])) {
+            const tasks = model.tasks || []
+            const placements = model.placements || []
+            const scale = Number(model.scaleNumerator || 0)
+            if (!model.valid || model.family !== "video-restoration" ||
+                    tasks.indexOf("super-resolution") < 0 || placements.indexOf("output-rate-after-interpolation") < 0 ||
+                    Number(model.temporalFramesBefore || 0) !== 0 || Number(model.temporalFramesAfter || 0) !== 0 ||
+                    Number(model.scaleDenominator || 0) !== 1 || scale < 2 || scale > 4) continue
+            options.push({label: (model.displayName || model.id || qsTr("本地超分模型")) + " · ×" + scale,
+                          directory: model.directory || ""})
+        }
+        return options
+    }
+    function selectedRestorationModelIndex() {
+        const selected = queueController.localPath(restorationModelFolder)
+        if (!selected) return 0
+        const normalize = value => String(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+        const target = normalize(selected)
+        const options = restorationModelOptions()
+        for (let index = 1; index < options.length; ++index)
+            if (normalize(options[index].directory) === target) return index
+        return 0
+    }
+
     function applyDefaults(profileValues) {
         const values = profileValues || queueController.defaults || ({})
         if (values.rate) { targetRate = values.rate; rateBox.editText = values.rate }
@@ -29,10 +56,12 @@ Item {
             modelFolder = values.model && values.model.toString() ? values.model : ""
             runtimeFolder = values.runtime && values.runtime.toString() ? values.runtime : ""
             outputFolder = values.output && values.output.toString() ? values.output : ""
+            restorationModelFolder = queueController.defaults.restorationModel || ""
         } else {
             if (values.model && values.model.toString()) modelFolder = values.model
             if (values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
             if (values.output && values.output.toString()) outputFolder = values.output
+            restorationModelFolder = queueController.defaults.restorationModel || ""
         }
         if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
@@ -68,13 +97,14 @@ Item {
         if (!sources || sources.length === 0) return
         selectedSources = sources
         queueController.addItems(sources, outputFolder, rateBox.editText, modelFolder, runtimeFolder,
-                                 encoder, container, encodingOptions(), recursive, inferenceBackend, cutMeanDifference)
+                                 encoder, container, encodingOptions(), recursive, inferenceBackend, cutMeanDifference, restorationModelFolder)
         selectedSources = []
     }
     function persistDefaults() {
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
             codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference)
+        queueController.setDefaultRestorationModel(restorationModelFolder)
     }
     function statusText(value) {
         const labels = {queued: qsTr("等待处理"), running: qsTr("正在处理"), paused: qsTr("已暂停"),
@@ -83,7 +113,8 @@ Item {
     }
     function stageText(value) {
         const labels = {checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
-            loading_model: qsTr("加载模型"), processing: qsTr("AI 补帧"), resuming: qsTr("读取已完成片段"), encoding: qsTr("编码视频"),
+            loading_model: qsTr("加载模型"), loading_restoration_model: qsTr("加载本地超分模型"), processing: qsTr("AI 补帧"),
+            restoration: qsTr("正在进行超分"), resuming: qsTr("读取已完成片段"), encoding: qsTr("编码视频"),
             validating: qsTr("验证输出"), verifying_output: qsTr("校验发布文件"), encoder_fallback: qsTr("切换编码器"), paused: qsTr("安全暂停点")}
         return labels[value] || value
     }
@@ -240,7 +271,7 @@ Item {
                     ActionButton { text: qsTr("选择"); onClicked: outputFolderDialog.open() }
                     ActionButton { text: qsTr("清除"); enabled: !!page.outputFolder.toString(); onClicked: { page.outputFolder = ""; page.persistDefaults() } }
                 }
-                ActionButton { text: page.advancedOpen ? qsTr("收起模型与运行库") : qsTr("高级设置 · 模型与运行库"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.advancedOpen = !page.advancedOpen }
+                ActionButton { objectName: "queueAdvancedModelToggle"; text: page.advancedOpen ? qsTr("收起模型与运行库") : qsTr("高级设置 · 模型与运行库"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.advancedOpen = !page.advancedOpen }
                 RowLayout {
                     visible: page.advancedOpen
                     Layout.fillWidth: true
@@ -272,6 +303,31 @@ Item {
                 RowLayout {
                     visible: page.advancedOpen
                     Layout.fillWidth: true
+                    Label { text: qsTr("超分模型"); Layout.preferredWidth: 75 }
+                    ComboBox {
+                        objectName: "queueRestorationModel"
+                        Layout.fillWidth: true
+                        model: page.restorationModelOptions()
+                        textRole: "label"
+                        currentIndex: page.selectedRestorationModelIndex()
+                        enabled: !page.queueController.busy && !page.queueController.importing && !page.queueController.verifyingModels
+                        onActivated: {
+                            const choice = page.restorationModelOptions()[currentIndex]
+                            page.restorationModelFolder = choice && choice.directory ? page.queueController.localUrl(choice.directory) : ""
+                            page.persistDefaults()
+                        }
+                    }
+                    Label {
+                        text: qsTr("仅使用已校验的本地 SDR x2、x3 或 x4 模型；每个输出帧都会超分并增加处理时间。")
+                        color: "#697B8B"
+                        font.pixelSize: 12
+                        Layout.preferredWidth: 260
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                RowLayout {
+                    visible: page.advancedOpen
+                    Layout.fillWidth: true
                     Label { text: qsTr("镜头切换阈值"); Layout.preferredWidth: 110 }
                     SpinBox {
                         objectName: "queueCutMeanDifference"
@@ -294,7 +350,8 @@ Item {
                         highlighted: true
                         primary: true
                         enabled: page.queueController.available && !page.queueController.busy &&
-                                 (page.queueController.importing || (page.modelFolder.toString() !== "" && page.runtimeFolder.toString() !== ""))
+                                 (page.queueController.importing || (page.modelFolder.toString() !== "" && page.runtimeFolder.toString() !== "" &&
+                                  (!page.restorationModelFolder.toString() || page.selectedRestorationModelIndex() > 0)))
                         onClicked: {
                             if (page.queueController.importing) page.queueController.stop()
                             else if (page.selectedSources.length) page.add(page.selectedSources)

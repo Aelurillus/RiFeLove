@@ -1,6 +1,7 @@
 #include "application/import_service.hpp"
 #include "application/job_serialization.hpp"
 #include "media/rife_color.hpp"
+#include "restoration/model_pack.hpp"
 #include <algorithm>
 #include <set>
 #ifndef NOMINMAX
@@ -45,10 +46,12 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
     if (queue.busy()) throw std::logic_error("Stop the running queue before importing videos");
     if (request.inputs.empty() || request.settings.settings.targetRate <= Rational(0) ||
         (request.container != "mkv" && request.container != "mp4" && request.container != "mov")) throw std::invalid_argument("Invalid import selection, FPS or container");
-    auto settings = request.settings; pinModelDescriptor(settings);
+    auto settings = request.settings; pinModelDescriptor(settings); pinRestorationModelDescriptor(settings);
     const auto modelPack = inference::loadModelPack(settings.modelDirectory);
     if (modelPack.sha256 != settings.expectedModelSha256 || modelPack.id != settings.expectedModelId || modelPack.version != settings.expectedModelVersion)
         throw std::invalid_argument("Selected model differs from the verified local model pack");
+    std::optional<restoration::ModelPack> restorationPack;
+    if (!settings.restorationModelDirectory.empty()) restorationPack = restoration::loadModelPack(settings.restorationModelDirectory);
     const auto first = normalized(request.inputs.front());
     ImportResult result; result.outputDirectory = request.outputDirectory.empty() ? (fs::is_directory(first) ? first : first.parent_path()) : normalized(request.outputDirectory);
     if (!fs::is_directory(result.outputDirectory)) throw std::invalid_argument("Output directory does not exist");
@@ -93,6 +96,20 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                     result.rejected.push_back({source,ImportRejection::unsupportedModelProfile,
                         "Selected model does not declare support for input profile " + profile});
                     valid = false;
+                }
+                if (valid && restorationPack && std::find(restorationPack->capabilities.supportedInputProfiles.begin(),
+                    restorationPack->capabilities.supportedInputProfiles.end(),profile) == restorationPack->capabilities.supportedInputProfiles.end()) {
+                    result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                        "Selected super-resolution model does not declare support for input profile " + profile});
+                    valid = false;
+                }
+                if (valid && restorationPack) {
+                    const auto scale = restorationPack->capabilities.scaleNumerator;
+                    if (video->width > 8192 / scale || video->height > 8192 / scale) {
+                        result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                            "Selected super-resolution model would exceed the 8192-pixel output limit"});
+                        valid = false;
+                    }
                 }
                 if (valid && settings.settings.encoding.encoder != "auto") {
                     const auto capability = media::MediaEngine::probeEncoder(settings.settings.encoding.encoder,*video,

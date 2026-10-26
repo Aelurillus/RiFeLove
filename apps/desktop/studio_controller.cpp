@@ -1,4 +1,5 @@
 #include "studio_controller.hpp"
+#include "application/job_serialization.hpp"
 #include "encoding_settings.hpp"
 #include "gpu/cuda_device.hpp"
 #include "common/logging.hpp"
@@ -59,6 +60,7 @@ QVariantMap timingMap(const rifelove::PipelineTimingBreakdown& value) {
         {QStringLiteral("inferenceWaitSeconds"),value.inferenceWaitSeconds},
         {QStringLiteral("outputDownloadSeconds"),value.outputDownloadSeconds},
         {QStringLiteral("colorRestoreSeconds"),value.colorRestoreSeconds},
+        {QStringLiteral("restorationSeconds"),value.restorationSeconds},
         {QStringLiteral("frameEncodeSeconds"),value.frameEncodeSeconds},
         {QStringLiteral("outputFinalizeSeconds"),value.outputFinalizeSeconds},
         {QStringLiteral("outputValidationSeconds"),value.outputValidationSeconds},
@@ -117,7 +119,8 @@ void StudioController::setOutput(const QUrl& url) {
     output_ = QDir::toNativeSeparators(QFileInfo(url.toLocalFile()).absoluteFilePath()); emit changed();
 }
 void StudioController::start(const QString& rate, const QUrl& modelDirectory, const QUrl& runtimeDirectory,
-    const QString& encoder, const QVariantMap& encodingOptions, const QString& inferenceBackend, double cutMeanDifference) {
+    const QString& encoder, const QVariantMap& encodingOptions, const QString& inferenceBackend, double cutMeanDifference,
+    const QUrl& restorationModelDirectory) {
     if (busy_) return;
     try {
         if (source_.isEmpty() || media_.isEmpty() || !inspectedMedia_) throw std::invalid_argument("Select and inspect a source video first");
@@ -134,9 +137,16 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         const QString suffix = QFileInfo(output_).suffix().toLower();
         if (suffix != "mkv" && suffix != "mp4" && suffix != "mov") throw std::invalid_argument("Output must use .mkv, .mp4 or .mov");
         if (!modelDirectory.isLocalFile() || !runtimeDirectory.isLocalFile()) throw std::invalid_argument("Select local model and runtime directories");
+        if (!restorationModelDirectory.isEmpty() && !restorationModelDirectory.isLocalFile())
+            throw std::invalid_argument("Select a local restoration model directory");
         rifelove::application::ProcessingJob job;
         job.source = utf8(source_); job.output = utf8(output_);
         job.modelDirectory = path(modelDirectory); job.runtimeDirectory = path(runtimeDirectory);
+        if (!restorationModelDirectory.isEmpty()) {
+            if (!restorationModelDirectory.isLocalFile()) throw std::invalid_argument("Super-resolution model must be local");
+            job.restorationModelDirectory = path(restorationModelDirectory);
+            rifelove::application::pinRestorationModelDescriptor(job);
+        }
         job.sourceDurationEstimate = sourceDurationEstimate_;
         job.settings.encoding = rifelove::desktop::makeVideoEncodingSettings(resolvedEncoder, encodingOptions);
         job.settings.targetRate = targetRate;

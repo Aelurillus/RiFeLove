@@ -41,5 +41,6 @@ private:
 // Pins the small model descriptor now; full graph/license/tensor verification
 // still runs under the processing executor before any output is written.
 void pinModelDescriptor(ProcessingJob& job);
+void pinRestorationModelDescriptor(ProcessingJob& job);
 void applyStoredIdentity(ProcessingJob& job, const std::string& identity);
 } // namespace rifelove::application

@@ -30,6 +30,7 @@ ApplicationWindow {
     palette.highlightedText: "#FFFFFF"
     property url modelFolder: ""
     property url runtimeFolder: ""
+    property url restorationModelFolder: ""
     property string inferenceBackend: "auto"
     property real cutMeanDifference: 0.25
     property bool advancedOpen: false
@@ -64,6 +65,59 @@ ApplicationWindow {
     function refreshSelectedModelDisplayName() {
         selectedModelDisplayName = resolveSelectedModelDisplayName()
     }
+    function restorationModelOptions() {
+        const options = [{label: qsTr("关闭超分"), directory: ""}]
+        for (const model of (taskQueue.models || [])) {
+            const tasks = model.tasks || []
+            const placements = model.placements || []
+            const scale = Number(model.scaleNumerator || 0)
+            if (!model.valid || model.family !== "video-restoration" ||
+                    tasks.indexOf("super-resolution") < 0 || placements.indexOf("output-rate-after-interpolation") < 0 ||
+                    Number(model.temporalFramesBefore || 0) !== 0 || Number(model.temporalFramesAfter || 0) !== 0 ||
+                    Number(model.scaleDenominator || 0) !== 1 || scale < 2 || scale > 4) continue
+            options.push({label: (model.displayName || model.id || qsTr("本地超分模型")) + " · ×" + scale,
+                          directory: model.directory || ""})
+        }
+        return options
+    }
+    function selectedRestorationModelIndex() {
+        const selected = taskQueue.localPath(restorationModelFolder)
+        if (!selected) return 0
+        const normalize = value => String(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+        const target = normalize(selected)
+        const options = restorationModelOptions()
+        for (let index = 1; index < options.length; ++index)
+            if (normalize(options[index].directory) === target) return index
+        return 0
+    }
+    function restorationModelVerified() {
+        if (restorationModelFolder.toString() === "") return true
+        const index = selectedRestorationModelIndex()
+        if (index === 0) return false
+        const options = restorationModelOptions()
+        const selected = String(options[index].directory).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+        const models = taskQueue.models || []
+        for (const model of models) {
+            const directory = String(model.directory || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+            if (!model.valid || directory !== selected) continue
+            const profile = window.info.inputProfile || ""
+            if (profile && (model.supportedInputProfiles || []).indexOf(profile) < 0) return false
+            const scale = Number(model.scaleNumerator || 0)
+            const width = Number(window.info.width || 0)
+            const height = Number(window.info.height || 0)
+            return !width || !height || (width <= Math.floor(8192 / scale) && height <= Math.floor(8192 / scale))
+        }
+        return false
+    }
+    function restorationOutputLabel() {
+        const index = selectedRestorationModelIndex()
+        if (index === 0) return ""
+        const width = Number(window.info.width || 0)
+        const height = Number(window.info.height || 0)
+        const scale = Number(restorationModelOptions()[index].label.split("×").pop())
+        if (!width || !height || !scale) return qsTr("输出分辨率按所选模型的倍率生成。")
+        return qsTr("超分输出：%1 × %2（模型倍率 ×%3）").arg(width * scale).arg(height * scale).arg(scale)
+    }
     onModelFolderChanged: refreshSelectedModelDisplayName()
     readonly property var info: processingAvailable ? studio.media : ({})
     readonly property var progress: processingAvailable ? studio.progress : ({})
@@ -86,7 +140,7 @@ ApplicationWindow {
     }
     readonly property bool canStart: processingAvailable && !window.active && !!window.info.width && !!window.info.supportedColor &&
         !!window.info.gpuAvailable && window.selectedEncoderReady && window.selectedModelVerified && !taskQueue.verifyingModels &&
-        window.selectedModelSupportsInputProfile &&
+        window.selectedModelSupportsInputProfile && window.restorationModelVerified() &&
         window.modelFolder.toString() !== "" && window.runtimeFolder.toString() !== ""
 
     function applyLocalDefaults(profileValues) {
@@ -95,9 +149,11 @@ ApplicationWindow {
         if (profileValues) {
             modelFolder = values.model && values.model.toString() ? values.model : ""
             runtimeFolder = values.runtime && values.runtime.toString() ? values.runtime : ""
+            restorationModelFolder = values.restorationModel && values.restorationModel.toString() ? values.restorationModel : (taskQueue.defaults.restorationModel || "")
         } else {
             if (!modelFolder.toString() && values.model && values.model.toString()) modelFolder = values.model
             if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
+            if (!restorationModelFolder.toString() && values.restorationModel && values.restorationModel.toString()) restorationModelFolder = values.restorationModel
         }
         if (values.rate) rate.editText = values.rate
         if (values.encoder) encoder.currentIndex = window.encoderIds.indexOf(values.encoder)
@@ -138,6 +194,7 @@ ApplicationWindow {
         if (!processingAvailable) return
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
             window.selectedEncoderId, taskQueue.defaults.container || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference)
+        taskQueue.setDefaultRestorationModel(restorationModelFolder)
     }
     function localProfileValues() {
         const options = encodingOptions()
@@ -191,13 +248,15 @@ ApplicationWindow {
             if (taskQueue.verifyingModels) return qsTr("正在校验所选本地模型…")
             if (!window.selectedModelVerified) return qsTr("所选模型未通过本机校验，请在模型中心检查")
             if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型不支持此输入配置")
+            if (!window.restorationModelVerified()) return qsTr("所选超分模型不支持这个色彩配置或分辨率")
             if (!window.selectedEncoderReady) return qsTr("所选编码器不可用")
             if (!window.runtimeFolder.toString()) return qsTr("请配置本地推理运行库")
             return qsTr("可以开始")
         }
         const labels = {ready: qsTr("等待导入"), inspecting: qsTr("读取视频信息"), inspected: qsTr("可以开始"),
             checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
-            loading_model: qsTr("加载本地模型"), processing: qsTr("正在补帧"), encoding: qsTr("正在编码"),
+            loading_model: qsTr("加载本地模型"), loading_restoration_model: qsTr("加载本地超分模型"),
+            processing: qsTr("正在补帧"), restoration: qsTr("正在进行超分"), encoding: qsTr("正在编码"),
             validating: qsTr("验证输出视频"), encoder_fallback: qsTr("切换编码器"), completed: qsTr("处理完成"),
             failed: qsTr("处理失败"), cancelling: qsTr("正在安全取消"), cancelled: qsTr("已取消"), unavailable: qsTr("处理组件未启用")}
         return labels[value] || qsTr("正在处理")
@@ -646,6 +705,7 @@ ApplicationWindow {
                         }
                     }
                     ActionButton {
+                        objectName: "studioAdvancedModelToggle"
                         text: window.advancedOpen ? qsTr("收起模型与运行库设置") : qsTr("高级设置 · 模型与运行库")
                         flat: true
                         Layout.alignment: Qt.AlignLeft
@@ -672,6 +732,32 @@ ApplicationWindow {
                                 Label { text: qsTr("运行库"); Layout.preferredWidth: 70 }
                                 TextField { Layout.fillWidth: true; readOnly: true; text: window.runtimeFolder.toString(); placeholderText: qsTr("包含 ONNX Runtime / CUDA DLL 的目录"); selectByMouse: true }
                                 ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: runtimeDialog.open() }
+                            }
+                            RowLayout {
+                                Label { text: qsTr("超分模型"); Layout.preferredWidth: 70 }
+                                ComboBox {
+                                    id: restorationModelSelector
+                                    objectName: "studioRestorationModel"
+                                    Layout.fillWidth: true
+                                    model: window.restorationModelOptions()
+                                    textRole: "label"
+                                    currentIndex: window.selectedRestorationModelIndex()
+                                    enabled: !window.active && !taskQueue.verifyingModels
+                                    onActivated: {
+                                        const choice = window.restorationModelOptions()[currentIndex]
+                                        window.restorationModelFolder = choice && choice.directory ? taskQueue.localUrl(choice.directory) : ""
+                                        window.persistLocalDefaults()
+                                    }
+                                }
+                            }
+                            Label {
+                                objectName: "studioRestorationOutputSummary"
+                                visible: restorationModelSelector.currentIndex > 0
+                                text: window.restorationOutputLabel() + qsTr("。仅使用已校验的本地 SDR 模型；补帧后的每一帧都会运行超分，耗时会增加。")
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                                color: "#697B8B"
+                                font.pixelSize: 12
                             }
                             RowLayout {
                                 Label { text: qsTr("推理后端"); Layout.preferredWidth: 70 }
@@ -740,7 +826,8 @@ ApplicationWindow {
                             highlighted: true
                             primary: true
                             onClicked: studio.start(rate.editText, window.modelFolder, window.runtimeFolder,
-                                window.selectedEncoderId, window.encodingOptions(), window.inferenceBackend, window.cutMeanDifference)
+                                window.selectedEncoderId, window.encodingOptions(), window.inferenceBackend,
+                                window.cutMeanDifference, window.restorationModelFolder)
                         }
                     }
                     ProgressBar {
@@ -765,6 +852,8 @@ ApplicationWindow {
                                 .arg((Number(value.sourcePreparationSeconds || 0) + Number(value.inputUploadSeconds || 0) + Number(value.outputDownloadSeconds || 0) + Number(value.colorRestoreSeconds || 0)).toFixed(1))
                             if (!studio.busy)
                                 summary += qsTr(" · 输出验证 %1 秒").arg(seconds("outputValidationSeconds"))
+                            if (window.restorationModelFolder.toString() !== "")
+                                summary += qsTr(" · 超分 %1 秒").arg(seconds("restorationSeconds"))
                             return summary
                         }
                         color: "#647685"

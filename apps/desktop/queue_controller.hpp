@@ -39,7 +39,7 @@ public:
     Q_INVOKABLE void addItems(const QList<QUrl>& sources, const QUrl& outputFolder, const QString& rate,
         const QUrl& model, const QUrl& runtime, const QString& encoder, const QString& container,
         const QVariantMap& encodingOptions, bool recursive, const QString& inferenceBackend = QStringLiteral("auto"),
-        double cutMeanDifference = 0.25);
+        double cutMeanDifference = 0.25, const QUrl& restorationModel = QUrl());
     Q_INVOKABLE void start();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void resume();
@@ -63,6 +63,7 @@ public:
     Q_INVOKABLE void addLocalModel(const QUrl& directory);
     Q_INVOKABLE void removeLocalModel(const QUrl& directory);
     Q_INVOKABLE void setDefaultModel(const QUrl& directory);
+    Q_INVOKABLE void setDefaultRestorationModel(const QUrl& directory);
     Q_INVOKABLE bool supportsModelInputProfile(const QUrl& directory, const QString& profile) const;
     Q_INVOKABLE QUrl localUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
     Q_INVOKABLE QString localPath(const QUrl& url) const { return url.isLocalFile() ? url.toLocalFile() : QString(); }

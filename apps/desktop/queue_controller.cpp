@@ -151,6 +151,29 @@ public:
         const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
         if (!warning.isEmpty()) post([warning](QueueController& c) { c.detail_ = warning; emit c.changed(); });
     }
+    void saveRestorationModel(QString modelPath) {
+        try {
+            if (!settings_) throw std::runtime_error("Local settings are unavailable");
+            if (!modelPath.isEmpty()) {
+                const auto pack = rifelove::restoration::loadModelPack(path(modelPath));
+                const auto& caps = pack.capabilities;
+                const bool supported =
+                    std::find(caps.tasks.begin(),caps.tasks.end(),rifelove::restoration::Task::superResolution) != caps.tasks.end() &&
+                    std::find(caps.placements.begin(),caps.placements.end(),rifelove::restoration::Placement::outputRateAfterInterpolation) != caps.placements.end() &&
+                    caps.temporalFramesBefore == 0 && caps.temporalFramesAfter == 0 &&
+                    caps.scaleDenominator == 1 && caps.scaleNumerator >= 2 && caps.scaleNumerator <= 4;
+                if (!supported) throw std::invalid_argument("The selected local model does not support output-rate x2/x3/x4 super-resolution");
+            }
+            settings_->setValue("restorationModel",modelPath.isEmpty() ? QUrl() : QUrl::fromLocalFile(QFileInfo(modelPath).absoluteFilePath()));
+            settings_->sync();
+            if (settings_->status() != QSettings::NoError) throw std::runtime_error("Could not save the local restoration model selection");
+            const auto values = readDefaults();
+            post([values](QueueController& c) { c.defaults_ = values; emit c.defaultsChanged(); });
+        } catch (const std::exception& error) {
+            const auto detail = QString::fromUtf8(error.what());
+            post([detail](QueueController& c) { c.detail_ = detail; c.state_ = "error"; emit c.changed(); });
+        }
+    }
     void saveProfile(QString name, QVariantMap values) {
         try {
             if (!settings_) throw std::runtime_error("Local settings are unavailable");
@@ -248,13 +271,15 @@ public:
             post([message=text(error.what())](QueueController& c) { c.verifyingModels_ = false; c.setError(message); });
         }
     }
-    void importItems(QList<QUrl> inputs, QUrl output, QString rate, QUrl model, QUrl runtime, QString encoder, QString container,
-        QVariantMap encodingOptions, bool recursive, QString inferenceBackend, double cutMeanDifference, std::stop_token stop) {
+    void importItems(QList<QUrl> inputs, QUrl output, QString rate, QUrl model, QUrl runtime, QUrl restorationModel,
+        QString encoder, QString container, QVariantMap encodingOptions, bool recursive, QString inferenceBackend,
+        double cutMeanDifference, std::stop_token stop) {
         try {
             requireQueue();
             if (!std::isfinite(cutMeanDifference) || cutMeanDifference < 0.0 || cutMeanDifference > 1.0)
                 throw std::invalid_argument("Scene-cut threshold must be a finite value from zero to one");
-            if (!model.isLocalFile() || !runtime.isLocalFile() || (!output.isEmpty() && !output.isLocalFile()))
+            if (!model.isLocalFile() || !runtime.isLocalFile() || (!restorationModel.isEmpty() && !restorationModel.isLocalFile()) ||
+                (!output.isEmpty() && !output.isLocalFile()))
                 throw std::invalid_argument("Select local model, runtime and output directories");
             ImportRequest request;
             for (const auto& input : inputs) {
@@ -264,6 +289,7 @@ public:
             if (!output.isEmpty()) request.outputDirectory = path(output.toLocalFile());
             request.container = utf8(container); request.recursive = recursive;
             request.settings.modelDirectory = path(model.toLocalFile()); request.settings.runtimeDirectory = path(runtime.toLocalFile());
+            if (!restorationModel.isEmpty()) request.settings.restorationModelDirectory = path(restorationModel.toLocalFile());
             request.settings.settings.targetRate = Rational::parse(utf8(rate));
             request.settings.settings.inferenceBackend = utf8(inferenceBackend);
             request.settings.settings.scene.cutMeanDifference = cutMeanDifference;
@@ -279,6 +305,7 @@ public:
                 if (skipped.size() >= 50) break;
                 const auto reason = rejected.reason == ImportRejection::unsupportedColor ? tr("视频色彩标签、像素格式或位深不在支持范围内。") :
                     rejected.reason == ImportRejection::unsupportedModelProfile ? tr("当前模型未声明支持这个视频输入配置。") :
+                    rejected.reason == ImportRejection::unsupportedRestorationModelProfile ? tr("所选超分模型不支持这个色彩配置或分辨率。") :
                     rejected.reason == ImportRejection::unsupportedEncoder ? tr("所选视频编码器无法初始化：") + text(rejected.detail) :
                     rejected.reason == ImportRejection::noVideo ? tr("文件中没有视频轨。") : tr("无法读取媒体：") + text(rejected.detail);
                 skipped.push_back(QString::fromStdWString(rejected.path.filename().wstring()) + ": " + reason);
@@ -486,7 +513,7 @@ private:
         auto rate = settings_->value("rate","60").toString();
         try { if (Rational::parse(utf8(rate)) <= Rational(0)) rate = "60"; } catch (...) { rate = "60"; }
         result["rate"] = rate;
-        for (const auto& key : {"model","runtime","output"}) { const auto url = settings_->value(key).toUrl(); result[key] = url.isLocalFile() ? url : QUrl(); }
+        for (const auto& key : {"model","runtime","output","restorationModel"}) { const auto url = settings_->value(key).toUrl(); result[key] = url.isLocalFile() ? url : QUrl(); }
         const auto encoder = settings_->value("encoder","auto").toString(), container = settings_->value("container","mkv").toString();
         result["encoder"] = QStringList{"auto","libopenh264","libkvazaar","libaom-av1","h264_nvenc"}.contains(encoder) ? encoder : QString("auto");
         result["container"] = QStringList{"mkv","mp4","mov"}.contains(container) ? container : QString("mkv");
@@ -558,11 +585,11 @@ void QueueController::snapshot(std::vector<UiTaskRow> rows) {
 void QueueController::reconnect() { if (available_ || busy_ || importing_) return; state_ = "loading"; emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->initialize(); },Qt::QueuedConnection); }
 void QueueController::addItems(const QList<QUrl>& sources, const QUrl& output, const QString& rate, const QUrl& model,
     const QUrl& runtime, const QString& encoder, const QString& container, const QVariantMap& encodingOptions, bool recursive,
-    const QString& inferenceBackend, double cutMeanDifference) {
+    const QString& inferenceBackend, double cutMeanDifference, const QUrl& restorationModel) {
     if (!available_ || busy_ || importing_) { setError(tr("队列忙碌或尚未连接，请等待当前操作结束。")); return; }
     importing_ = true; state_ = "importing"; detail_.clear(); importCancel_ = std::stop_source(); const auto stop = importCancel_.get_token(); emit changed();
-    QMetaObject::invokeMethod(worker_,[w=worker_,sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,inferenceBackend,cutMeanDifference,stop] {
-        w->importItems(sources,output,rate,model,runtime,encoder,container,encodingOptions,recursive,inferenceBackend,cutMeanDifference,stop);
+    QMetaObject::invokeMethod(worker_,[w=worker_,sources,output,rate,model,runtime,restorationModel,encoder,container,encodingOptions,recursive,inferenceBackend,cutMeanDifference,stop] {
+        w->importItems(sources,output,rate,model,runtime,restorationModel,encoder,container,encodingOptions,recursive,inferenceBackend,cutMeanDifference,stop);
     },Qt::QueuedConnection);
 }
 void QueueController::start() { if (!available_ || busy_ || importing_) return; busy_ = true; state_ = "running"; detail_.clear(); emit changed(); QMetaObject::invokeMethod(worker_,[w=worker_] { w->start(); },Qt::QueuedConnection); }
@@ -649,6 +676,28 @@ void QueueController::setDefaultModel(const QUrl& directory) {
         {{"bitrateKbps",defaults_.value("bitrateKbps",8000)}, {"qualityMode",defaults_.value("qualityMode","bitrate")},
          {"quality",defaults_.value("quality",32)}, {"gopSize",defaults_.value("gopSize",120)}},
         defaults_.value("inferenceBackend","auto").toString(),defaults_.value("cutMeanDifference",0.25).toDouble());
+}
+void QueueController::setDefaultRestorationModel(const QUrl& directory) {
+    QString selectedPath;
+    if (!directory.isEmpty()) {
+        if (!directory.isLocalFile() || directory.toLocalFile().isEmpty()) {
+            setError(tr("超分模型必须位于本机目录。")); return;
+        }
+        selectedPath = QFileInfo(directory.toLocalFile()).absoluteFilePath();
+        const bool verified = std::any_of(models_.begin(),models_.end(),[&](const QVariant& value) {
+            const auto entry = value.toMap();
+            const auto tasks = entry.value("tasks").toStringList();
+            const auto placements = entry.value("placements").toStringList();
+            return entry.value("valid").toBool() && entry.value("family").toString() == QStringLiteral("video-restoration") &&
+                tasks.contains(QStringLiteral("super-resolution")) &&
+                placements.contains(QStringLiteral("output-rate-after-interpolation")) &&
+                entry.value("temporalFramesBefore").toInt() == 0 && entry.value("temporalFramesAfter").toInt() == 0 &&
+                entry.value("scaleDenominator").toInt() == 1 && entry.value("scaleNumerator").toInt() >= 2 &&
+                entry.value("scaleNumerator").toInt() <= 4 && samePath(entry.value("directory").toString(),selectedPath);
+        });
+        if (!verified) { setError(tr("请先在本地模型中心校验兼容的 x2、x3 或 x4 超分模型。")); return; }
+    }
+    QMetaObject::invokeMethod(worker_,[w=worker_,selectedPath] { w->saveRestorationModel(selectedPath); },Qt::QueuedConnection);
 }
 bool QueueController::supportsModelInputProfile(const QUrl& directory, const QString& profile) const {
     if (!directory.isLocalFile() || directory.toLocalFile().isEmpty() || profile.isEmpty()) return false;

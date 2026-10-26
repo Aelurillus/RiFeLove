@@ -1120,6 +1120,47 @@
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>Inference precision is fixed to FP32. FP16 has not passed numerical and image-quality validation, so it is not used for processing.</translation>
     </message>
+
+    <message>
+        <source>关闭超分</source>
+        <translation>Disable super-resolution</translation>
+    </message>
+    <message>
+        <source>本地超分模型</source>
+        <translation>Local super-resolution model</translation>
+    </message>
+    <message>
+        <source>输出分辨率按所选模型的倍率生成。</source>
+        <translation>Output resolution follows the selected model scale.</translation>
+    </message>
+    <message>
+        <source>超分输出：%1 × %2（模型倍率 ×%3）</source>
+        <translation>Super-resolution output: %1 × %2 (model scale ×%3)</translation>
+    </message>
+    <message>
+        <source>所选超分模型不支持这个色彩配置或分辨率</source>
+        <translation>The selected super-resolution model does not support this color profile or resolution.</translation>
+    </message>
+    <message>
+        <source>加载本地超分模型</source>
+        <translation>Loading local super-resolution model</translation>
+    </message>
+    <message>
+        <source>正在进行超分</source>
+        <translation>Upscaling</translation>
+    </message>
+    <message>
+        <source>超分模型</source>
+        <translation>Super-resolution model</translation>
+    </message>
+    <message>
+        <source>。仅使用已校验的本地 SDR 模型；补帧后的每一帧都会运行超分，耗时会增加。</source>
+        <translation>. Only validated local SDR models are used. Super-resolution runs on every interpolated frame and adds processing time.</translation>
+    </message>
+    <message>
+        <source> · 超分 %1 秒</source>
+        <translation> · Super-resolution %1 s</translation>
+    </message>
 </context>
 <context>
     <name>ModelCenterPage</name>
@@ -1338,6 +1379,20 @@ Add a RIFE or video restoration model pack containing model.json</translation>
         <location filename="../../apps/desktop/queue_controller.cpp" line="644" />
         <source>请先校验该模型包，再将其设为默认模型。</source>
         <translation>Verify this model pack before setting it as the default.</translation>
+    </message>
+
+    <message>
+        <source>超分模型必须位于本机目录。</source>
+        <translation>Super-resolution models must be stored in a local folder.</translation>
+    </message>
+        <message>
+        <source>请先在本地模型中心校验兼容的 x2、x3 或 x4 超分模型。</source>
+        <translation>First verify a compatible x2, x3, or x4 super-resolution model in Model Center.</translation>
+    </message>
+
+    <message>
+        <source>所选超分模型不支持这个色彩配置或分辨率。</source>
+        <translation>The selected super-resolution model does not support this color profile or resolution.</translation>
     </message>
 </context>
 <context>
@@ -1844,6 +1899,31 @@ Import multiple videos or a folder to get started</translation>
         <location filename="../QueuePage.qml" line="287" />
         <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
         <translation>Lower values detect more scene changes and reduce interpolation across cuts.</translation>
+    </message>
+
+    <message>
+        <source>关闭超分</source>
+        <translation>Disable super-resolution</translation>
+    </message>
+    <message>
+        <source>本地超分模型</source>
+        <translation>Local super-resolution model</translation>
+    </message>
+    <message>
+        <source>加载本地超分模型</source>
+        <translation>Loading local super-resolution model</translation>
+    </message>
+    <message>
+        <source>正在进行超分</source>
+        <translation>Upscaling</translation>
+    </message>
+    <message>
+        <source>超分模型</source>
+        <translation>Super-resolution model</translation>
+    </message>
+    <message>
+        <source>仅使用已校验的本地 SDR x2、x3 或 x4 模型；每个输出帧都会超分并增加处理时间。</source>
+        <translation>Only verified local SDR x2, x3, or x4 models are used. Every output frame is upscaled, which adds processing time.</translation>
     </message>
 </context>
 <context>

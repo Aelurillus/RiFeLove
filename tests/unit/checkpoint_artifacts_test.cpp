@@ -108,10 +108,12 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
         {"mediaRuntime","ffmpeg fixture"},{"framesPerSegment",256}};
     Json current = legacy;
     current["schemaVersion"] = 2;
-    current["job"]["schemaVersion"] = 3;
+    current["job"]["schemaVersion"] = 4;
     current["job"]["inferenceBackend"] = "auto";
     current["job"]["expectedModelAdapterId"] = "rife-sdr-v1";
     current["job"]["expectedModelAdapterVersion"] = 1;
+    current["job"]["restorationModelDirectory"] = "";
+    current["job"]["expectedRestorationDescriptorSha256"] = "";
     current["identity"]["schemaVersion"] = 2;
     current["identity"]["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
     EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
@@ -120,6 +122,8 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
     versionTwo["schemaVersion"] = 2;
     versionTwo["job"]["schemaVersion"] = 2;
     versionTwo["job"].erase("inferenceBackend");
+    versionTwo["job"].erase("restorationModelDirectory");
+    versionTwo["job"].erase("expectedRestorationDescriptorSha256");
     EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(versionTwo.dump(),current.dump()));
     auto changedBackend = current;
     changedBackend["job"]["inferenceBackend"] = "cuda";
@@ -134,6 +138,11 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
     current["identity"]["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
     current["framesPerSegment"] = 128;
     EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+    auto legacyWithRestoration = legacy;
+    legacyWithRestoration["job"]["restorationModelDirectory"] = "C:/local-model";
+    legacyWithRestoration["job"]["expectedRestorationDescriptorSha256"] = std::string(64,'c');
+    legacyWithRestoration["framesPerSegment"] = 128;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(legacyWithRestoration.dump(),current.dump()));
 }
 
 TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
@@ -161,6 +170,8 @@ TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
     oldConfiguration["schemaVersion"] = 1;
     oldConfiguration.erase("expectedModelAdapterId");
     oldConfiguration.erase("expectedModelAdapterVersion");
+    oldConfiguration.erase("restorationModelDirectory");
+    oldConfiguration.erase("expectedRestorationDescriptorSha256");
     auto manifestJob = oldConfiguration;
     manifestJob["expectedSourceSha256"] = sourceIdentity.sha256;
     const nlohmann::json identity{

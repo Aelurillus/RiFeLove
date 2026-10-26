@@ -1,5 +1,6 @@
 #include "application/job_serialization.hpp"
 #include "inference/model_pack.hpp"
+#include "restoration/model_pack.hpp"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -87,9 +88,13 @@ Json timingBreakdown(const PipelineTimingBreakdown& value) {
 }
 void validate(const ProcessingJob& job) {
     text(job.source,32768); text(job.output,32768); text(utf8(job.modelDirectory),32768); text(utf8(job.runtimeDirectory),32768);
+    text(utf8(job.restorationModelDirectory),32768,false);
     if (job.deviceOrdinal < 0 || job.settings.targetRate <= Rational(0) || !job.settings.hostFloatBufferLimit) throw std::invalid_argument("Invalid target/device/buffer configuration");
     if (job.sourceDurationEstimate && *job.sourceDurationEstimate <= Rational(0)) throw std::invalid_argument("Invalid source duration estimate");
     hash(job.expectedSourceSha256); hash(job.expectedModelSha256);
+    hash(job.expectedRestorationDescriptorSha256);
+    if (job.restorationModelDirectory.empty() != job.expectedRestorationDescriptorSha256.empty())
+        throw std::invalid_argument("A local restoration model path and pinned descriptor hash must be supplied together");
     text(job.expectedModelId,256,false); text(job.expectedModelVersion,256,false);
     if (job.expectedModelAdapterId.empty()) {
         if (job.expectedModelAdapterVersion != 0) throw std::invalid_argument("An unpinned model adapter must use version zero");
@@ -112,7 +117,9 @@ void validate(const ProcessingJob& job) {
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",3},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",4},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+        {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
+        {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
         {"runtimeDirectory",utf8(job.runtimeDirectory)},{"deviceOrdinal",job.deviceOrdinal},{"hostFloatBufferLimit",job.settings.hostFloatBufferLimit},
         {"inferenceBackend",job.settings.inferenceBackend},
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
@@ -126,11 +133,15 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 3) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 3 && schemaVersion != 4) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
     job.modelDirectory = path(json.at("modelDirectory").get<std::string>()); job.runtimeDirectory = path(json.at("runtimeDirectory").get<std::string>());
+    if (schemaVersion >= 4) {
+        job.restorationModelDirectory = path(json.at("restorationModelDirectory").get<std::string>());
+        job.expectedRestorationDescriptorSha256 = json.at("expectedRestorationDescriptorSha256").get<std::string>();
+    }
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
     if (schemaVersion >= 3) job.settings.inferenceBackend = json.at("inferenceBackend").get<std::string>();
     job.expectedSourceSha256 = json.at("expectedSourceSha256").get<std::string>(); job.expectedModelSha256 = json.at("expectedModelSha256").get<std::string>();
@@ -167,6 +178,25 @@ void pinModelDescriptor(ProcessingJob& job) {
         throw std::invalid_argument("Selected model differs from the pinned task descriptor");
     job.expectedModelSha256 = digest; job.expectedModelId = id; job.expectedModelVersion = version;
     job.expectedModelAdapterId = adapterId; job.expectedModelAdapterVersion = adapterVersion;
+}
+void pinRestorationModelDescriptor(ProcessingJob& job) {
+    if (job.restorationModelDirectory.empty()) {
+        if (!job.expectedRestorationDescriptorSha256.empty())
+            throw std::invalid_argument("A pinned local restoration model has no directory");
+        return;
+    }
+    const auto model = restoration::loadModelPack(job.restorationModelDirectory);
+    const auto hasSuperResolution = std::find(model.capabilities.tasks.begin(),model.capabilities.tasks.end(),restoration::Task::superResolution) != model.capabilities.tasks.end();
+    const auto hasOutputPlacement = std::find(model.capabilities.placements.begin(),model.capabilities.placements.end(),restoration::Placement::outputRateAfterInterpolation) != model.capabilities.placements.end();
+    if (!hasSuperResolution || !hasOutputPlacement || model.capabilities.temporalFramesBefore != 0 ||
+        model.capabilities.temporalFramesAfter != 0 || model.capabilities.scaleDenominator != 1 ||
+        model.capabilities.scaleNumerator < 2 || model.capabilities.scaleNumerator > 4)
+        throw std::invalid_argument("The selected local restoration pack is not a supported output-rate x2, x3 or x4 super-resolution model");
+    const auto descriptorHash = inference::sha256File(model.directory / "model.json",256 * 1024);
+    if (!job.expectedRestorationDescriptorSha256.empty() && job.expectedRestorationDescriptorSha256 != descriptorHash)
+        throw std::invalid_argument("Selected restoration model differs from its pinned local descriptor");
+    job.restorationModelDirectory = model.directory;
+    job.expectedRestorationDescriptorSha256 = descriptorHash;
 }
 std::string serializeIdentity(const ProcessingIdentity& i) {
     if (!adapterIdentifier(i.adapterId) || i.adapterVersion <= 0) throw std::invalid_argument("Processing identity has an invalid model adapter");

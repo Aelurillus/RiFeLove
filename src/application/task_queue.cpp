@@ -132,10 +132,13 @@ std::vector<std::string> TaskQueue::enqueue(std::vector<ProcessingJob> jobs, std
         job.output = utf8(std::filesystem::weakly_canonical(std::filesystem::absolute(path(job.output))));
         job.modelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.modelDirectory));
         job.runtimeDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.runtimeDirectory));
+        if (!job.restorationModelDirectory.empty())
+            job.restorationModelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.restorationModelDirectory));
         if (!std::filesystem::is_regular_file(path(job.source)) || std::filesystem::exists(path(job.output)) || !std::filesystem::is_directory(path(job.output).parent_path()))
             throw std::invalid_argument("Source must exist and output must be a new file in an existing local directory");
         if (!outputs.insert(path(job.output).wstring()).second) throw std::invalid_argument("Another pending/interrupted task or this batch owns this output path");
         pinModelDescriptor(job);
+        pinRestorationModelDescriptor(job);
         batch.push_back({job.source,job.output,serializeJob(job)});
     }
     return store_.createConfigured(batch,stop);

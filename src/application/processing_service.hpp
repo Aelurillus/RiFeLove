@@ -13,6 +13,7 @@ struct ProcessingJob {
     std::string output;
     std::filesystem::path modelDirectory;
     std::filesystem::path runtimeDirectory;
+    std::filesystem::path restorationModelDirectory;
     PipelineSettings settings;
     std::optional<Rational> sourceDurationEstimate;
     int deviceOrdinal = 0;
@@ -24,6 +25,9 @@ struct ProcessingJob {
     // the model graph hash so interrupted work cannot resume under new code.
     std::string expectedModelAdapterId;
     int expectedModelAdapterVersion = 0;
+    // The local restoration descriptor hash pins its graph and all verified
+    // sidecar metadata for persistent queue and checkpoint identity.
+    std::string expectedRestorationDescriptorSha256;
 };
 struct ProcessingIdentity {
     FileIdentity source;

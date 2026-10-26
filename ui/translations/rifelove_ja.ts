@@ -1120,6 +1120,47 @@
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>推論精度は FP32 に固定されています。FP16 は数値と画質の検証に合格していないため、処理には使用されません。</translation>
     </message>
+
+    <message>
+        <source>关闭超分</source>
+        <translation>超解像を無効化</translation>
+    </message>
+    <message>
+        <source>本地超分模型</source>
+        <translation>ローカル超解像モデル</translation>
+    </message>
+    <message>
+        <source>输出分辨率按所选模型的倍率生成。</source>
+        <translation>出力解像度は選択したモデルの倍率に従います。</translation>
+    </message>
+    <message>
+        <source>超分输出：%1 × %2（模型倍率 ×%3）</source>
+        <translation>超解像出力: %1 × %2（モデル倍率 ×%3）</translation>
+    </message>
+    <message>
+        <source>所选超分模型不支持这个色彩配置或分辨率</source>
+        <translation>選択した超解像モデルは、この色設定または解像度をサポートしていません。</translation>
+    </message>
+    <message>
+        <source>加载本地超分模型</source>
+        <translation>ローカル超解像モデルを読み込み中</translation>
+    </message>
+    <message>
+        <source>正在进行超分</source>
+        <translation>超解像処理中</translation>
+    </message>
+    <message>
+        <source>超分模型</source>
+        <translation>超解像モデル</translation>
+    </message>
+    <message>
+        <source>。仅使用已校验的本地 SDR 模型；补帧后的每一帧都会运行超分，耗时会增加。</source>
+        <translation>。検証済みのローカル SDR モデルのみ使用します。補間後の各フレームに超解像を適用するため、処理時間が長くなります。</translation>
+    </message>
+    <message>
+        <source> · 超分 %1 秒</source>
+        <translation> · 超解像 %1 秒</translation>
+    </message>
 </context>
 <context>
     <name>ModelCenterPage</name>
@@ -1338,6 +1379,20 @@ model.json を含む RIFE または映像修復モデルパックを追加して
         <location filename="../../apps/desktop/queue_controller.cpp" line="644" />
         <source>请先校验该模型包，再将其设为默认模型。</source>
         <translation>既定モデルにする前に、このモデルパックを検証してください。</translation>
+    </message>
+
+    <message>
+        <source>超分模型必须位于本机目录。</source>
+        <translation>超解像モデルはローカルフォルダーに配置してください。</translation>
+    </message>
+        <message>
+        <source>请先在本地模型中心校验兼容的 x2、x3 或 x4 超分模型。</source>
+        <translation>まずモデルセンターで互換性のある x2、x3、x4 の超解像モデルを検証してください。</translation>
+    </message>
+
+    <message>
+        <source>所选超分模型不支持这个色彩配置或分辨率。</source>
+        <translation>選択した超解像モデルは、この色設定または解像度をサポートしていません。</translation>
     </message>
 </context>
 <context>
@@ -1844,6 +1899,31 @@ model.json を含む RIFE または映像修復モデルパックを追加して
         <location filename="../QueuePage.qml" line="287" />
         <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
         <translation>値を低くすると、より多くの画面変化をカットとして扱い、カットをまたぐ補間を減らします。</translation>
+    </message>
+
+    <message>
+        <source>关闭超分</source>
+        <translation>超解像を無効化</translation>
+    </message>
+    <message>
+        <source>本地超分模型</source>
+        <translation>ローカル超解像モデル</translation>
+    </message>
+    <message>
+        <source>加载本地超分模型</source>
+        <translation>ローカル超解像モデルを読み込み中</translation>
+    </message>
+    <message>
+        <source>正在进行超分</source>
+        <translation>超解像処理中</translation>
+    </message>
+    <message>
+        <source>超分模型</source>
+        <translation>超解像モデル</translation>
+    </message>
+    <message>
+        <source>仅使用已校验的本地 SDR x2、x3 或 x4 模型；每个输出帧都会超分并增加处理时间。</source>
+        <translation>検証済みのローカル SDR x2、x3、x4 モデルのみ使用します。出力フレームごとに超解像を行うため、処理時間が長くなります。</translation>
     </message>
 </context>
 <context>

@@ -1120,6 +1120,47 @@
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>推論精度目前固定為 FP32。FP16 尚未通過數值與畫質驗證，因此不會用於處理。</translation>
     </message>
+
+    <message>
+        <source>关闭超分</source>
+        <translation>停用超分辨率</translation>
+    </message>
+    <message>
+        <source>本地超分模型</source>
+        <translation>本機超分辨率模型</translation>
+    </message>
+    <message>
+        <source>输出分辨率按所选模型的倍率生成。</source>
+        <translation>輸出解析度依所選模型倍率產生。</translation>
+    </message>
+    <message>
+        <source>超分输出：%1 × %2（模型倍率 ×%3）</source>
+        <translation>超分輸出：%1 × %2（模型倍率 ×%3）</translation>
+    </message>
+    <message>
+        <source>所选超分模型不支持这个色彩配置或分辨率</source>
+        <translation>所選超分模型不支援此色彩設定或解析度</translation>
+    </message>
+    <message>
+        <source>加载本地超分模型</source>
+        <translation>正在載入本機超分辨率模型</translation>
+    </message>
+    <message>
+        <source>正在进行超分</source>
+        <translation>正在進行超分辨率處理</translation>
+    </message>
+    <message>
+        <source>超分模型</source>
+        <translation>超分辨率模型</translation>
+    </message>
+    <message>
+        <source>。仅使用已校验的本地 SDR 模型；补帧后的每一帧都会运行超分，耗时会增加。</source>
+        <translation>。僅使用已驗證的本機 SDR 模型；補幀後的每一格都會執行超分辨率處理，因此耗時較長。</translation>
+    </message>
+    <message>
+        <source> · 超分 %1 秒</source>
+        <translation> · 超分辨率 %1 秒</translation>
+    </message>
 </context>
 <context>
     <name>ModelCenterPage</name>
@@ -1338,6 +1379,20 @@
         <location filename="../../apps/desktop/queue_controller.cpp" line="644" />
         <source>请先校验该模型包，再将其设为默认模型。</source>
         <translation>請先驗證此模型套件，再設為預設模型。</translation>
+    </message>
+
+    <message>
+        <source>超分模型必须位于本机目录。</source>
+        <translation>超分辨率模型必須位於本機資料夾。</translation>
+    </message>
+        <message>
+        <source>请先在本地模型中心校验兼容的 x2、x3 或 x4 超分模型。</source>
+        <translation>請先在本機模型中心驗證相容的 x2、x3 或 x4 超分辨率模型。</translation>
+    </message>
+
+    <message>
+        <source>所选超分模型不支持这个色彩配置或分辨率。</source>
+        <translation>所選超分模型不支援此色彩設定或解析度。</translation>
     </message>
 </context>
 <context>
@@ -1844,6 +1899,31 @@
         <location filename="../QueuePage.qml" line="287" />
         <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
         <translation>較低的值會將更多畫面變化判定為鏡頭切換，並減少跨切鏡補幀。</translation>
+    </message>
+
+    <message>
+        <source>关闭超分</source>
+        <translation>停用超分辨率</translation>
+    </message>
+    <message>
+        <source>本地超分模型</source>
+        <translation>本機超分辨率模型</translation>
+    </message>
+    <message>
+        <source>加载本地超分模型</source>
+        <translation>正在載入本機超分辨率模型</translation>
+    </message>
+    <message>
+        <source>正在进行超分</source>
+        <translation>正在進行超分辨率處理</translation>
+    </message>
+    <message>
+        <source>超分模型</source>
+        <translation>超分辨率模型</translation>
+    </message>
+    <message>
+        <source>仅使用已校验的本地 SDR x2、x3 或 x4 模型；每个输出帧都会超分并增加处理时间。</source>
+        <translation>僅使用已驗證的本機 SDR x2、x3 或 x4 模型；每個輸出影格都會執行超分辨率處理，因此耗時較長。</translation>
     </message>
 </context>
 <context>
