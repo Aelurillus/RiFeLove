@@ -3,8 +3,10 @@
 
 The RRDBNet layer layout follows BasicSR's Apache-2.0 implementation. The
 Real-ESRGAN pretrained checkpoint is deliberately not copied into the output
-pack. Its upstream repository is BSD-3-Clause, but the checkpoint's separate
-license scope is unresolved; the generated manifest records that limitation.
+pack. The upstream repository is BSD-3-Clause and publishes this checkpoint as a
+release asset, but RifeLove has not established whether that license clearly
+covers redistribution of the weight asset; the generated manifest records this
+limitation.
 This script is a developer tool and is never required by the Windows app.
 """
 
@@ -28,9 +30,11 @@ UPSTREAM_REPOSITORY = "https://github.com/xinntao/Real-ESRGAN"
 UPSTREAM_COMMIT = "4c05b20cb30aded73ed3731848a9fbbf70c7c0ac"
 WEIGHT_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 WEIGHT_SCOPE_EVIDENCE = (
-    "The upstream repository's BSD-3-Clause license covers source code; separate pretrained-weight terms were not stated. "
-    "See https://github.com/xinntao/Real-ESRGAN/issues/1015 and "
-    "https://github.com/xinntao/Real-ESRGAN/issues/1016. Local evaluation only; do not redistribute this model pack."
+    "The upstream Real-ESRGAN repository is BSD-3-Clause and its model zoo links this checkpoint as a release asset, "
+    "but the RifeLove audit has not established whether the repository license clearly covers redistribution of this weight asset. "
+    "See https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE, "
+    "https://github.com/xinntao/Real-ESRGAN/blob/master/docs/model_zoo.md, and "
+    "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0. Local evaluation only; do not redistribute this model pack."
 )
 ADAPTER_ID = "image-sr-rgb-f32-nchw-v1"
 
