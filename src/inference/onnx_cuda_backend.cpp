@@ -103,10 +103,16 @@ public:
     }
     void preloadTensorRtProviderDependencies() {
         if (tensorRtProviderDependenciesLoaded_) return;
-        // TensorRT loads its builder resources by basename while creating a
-        // new engine. A different ONNX Runtime installation earlier on PATH
-        // can contain an incompatible DLL with the same basename. Pin the
-        // selected runtime's matching libraries in this process first.
+        // TensorRT's builder opens its resource library by basename. An
+        // AddDllDirectory entry is only searched by such default LoadLibrary
+        // calls after the process opts into the safe default search path.
+        // Keep that path limited to the application, explicitly registered
+        // runtime directories, and System32; never depend on or mutate PATH.
+        if (!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS))
+            throw InferenceError(InferenceErrorKind::unavailable,
+                "Could not enable the safe native DLL search path for TensorRT; Windows error " + std::to_string(GetLastError()));
+        // Pin the selected runtime's matching libraries in this process first,
+        // even when another ONNX Runtime installation is present on PATH.
         constexpr const wchar_t* dependencies[] = {
             L"nvinfer_plugin_10.dll", L"nvonnxparser_10.dll", L"nvinfer_builder_resource_10.dll"};
         for (const auto* name : dependencies) {

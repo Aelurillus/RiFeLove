@@ -404,6 +404,7 @@ private:
         QStringList paths;
         for (const auto& value : stored) {
             const auto normalized = canonical(value);
+            if (!QFileInfo(QDir(normalized).filePath(QStringLiteral("model.json"))).isFile()) continue;
             if (std::none_of(paths.begin(),paths.end(),[&](const QString& item) { return samePath(item,normalized); }))
                 paths.push_back(normalized);
         }
@@ -422,7 +423,8 @@ private:
         const auto selected = settings.value("model").toUrl();
         if (selected.isLocalFile()) {
             const auto selectedPath = canonical(selected.toLocalFile());
-            if (std::none_of(rifePaths.begin(),rifePaths.end(),[&](const QString& value) { return samePath(value,selectedPath); }))
+            const bool hasDescriptor = QFileInfo(QDir(selectedPath).filePath(QStringLiteral("model.json"))).isFile();
+            if (hasDescriptor && std::none_of(rifePaths.begin(),rifePaths.end(),[&](const QString& value) { return samePath(value,selectedPath); }))
                 rifePaths.push_back(selectedPath);
         }
         saveCatalogPaths(settings,QStringLiteral("modelCatalog/paths"),rifePaths);

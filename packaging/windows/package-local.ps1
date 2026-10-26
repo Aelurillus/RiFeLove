@@ -166,7 +166,7 @@ $readmeLines = @(
     '',
     'GPU 运行库使用本机依赖目录中的 ONNX Runtime CUDA 1.22.0、TensorRT 10.9、CUDA 12.8 和 cuDNN 9；runtime 联接指向完整的本机推理运行库。它不是跨电脑可搬运的发行包。目标电脑需要兼容的 NVIDIA 驱动。此本机目录不代表完成了公开发行所需的第三方再分发审核。',
     '',
-    '当前验证边界：本地 GTX 1660 SUPER；RIFE 4.25、4.25 Lite 与 4.26 FP32 均通过六组小尺寸 CPU/CUDA/TensorRT 数值对比；4.25 另通过合成 720p BT.709、30→60 FPS 端到端验证，并保留音轨和 0.5 秒时长。RIFE 4.26 TensorRT FP32 六组对照最大绝对误差 0.00183、最低 PSNR 85.94 dB；RIFE 4.25 Lite TensorRT FP32 六组最大误差 0.000382、最低 PSNR 93.96 dB；Lite 的本机 720p 合成端到端速度与另外两款相近；相同模型的 TensorRT FP16 六组测试未通过门槛（最大误差 0.953、最低 PSNR 16.53 dB），因此当前只启用 FP32。BT.470BG/SMPTE 170M 8-bit SDR 通过 CUDA RIFE 合成片段验证；BT.709 10-bit SDR 通过 96x64 合成 RIFE 插帧、AV1 回退和输出色彩/时间轴检查，但不是实际素材画质验收。这些结果没有证明 4.26 或 Lite 在真实素材上画质更好。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用源格式兼容的软件编码，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR 和真实素材对比仍未验证。',
+    '当前验证边界：本地 GTX 1660 SUPER；RIFE 4.22 Lite、4.25、4.25 Lite 与 4.26 FP32 均通过六组小尺寸 CPU/CUDA/TensorRT 数值对比；4.25 另通过合成 720p BT.709、30→60 FPS 端到端验证，并保留音轨和 0.5 秒时长。RIFE 4.26 TensorRT FP32 六组对照最大绝对误差 0.00183、最低 PSNR 85.94 dB；RIFE 4.25 Lite TensorRT FP32 六组最大误差 0.000382、最低 PSNR 93.96 dB；Lite 的本机 720p 合成端到端速度与另外两款相近；4.22 Lite 是可选候选模型，不作为默认模型。短合成素材的新增帧 PSNR/SSIM 均值分别为 30.27 dB/0.9643（4.22 Lite）、30.61 dB/0.9649（4.25）、30.88 dB/0.9681（4.25 Lite）和 30.62 dB/0.9647（4.26）；这些数据不是盲测，也不代表真实视频画质排名。相同模型的 TensorRT FP16 六组测试未通过门槛（最大误差 0.953、最低 PSNR 16.53 dB），因此当前只启用 FP32。BT.470BG/SMPTE 170M 8-bit SDR 通过 CUDA RIFE 合成片段验证；BT.709 10-bit SDR 通过 96x64 合成 RIFE 插帧、AV1 回退和输出色彩/时间轴检查，但不是实际素材画质验收。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用源格式兼容的软件编码，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR 和真实素材对比仍未验证。',
     '任务、偏好设置和模型中心目录保存在 data/preferences.ini 与 data/queue.sqlite.'
 )
 $readme = ($readmeLines -join [Environment]::NewLine) -f $modelNames, [string]$defaultModelPack.descriptor.displayName, [string]$defaultModelPack.descriptor.id
@@ -331,6 +331,41 @@ Set-Content -LiteralPath (Join-Path $packageRoot "SHA256SUMS.txt") -Value $manif
 # switch while either app from this exact package is open, so SQLite data and
 # loaded files remain stable throughout the upgrade.
 Promote-PackageDirectory -StagingPath $packageRoot -TargetPath $target
+$finalScreenshot = Join-Path $outputRoot ("{0}-model-center.png" -f $packageLeaf)
+$temporaryFinalScreenshot = Join-Path $outputRoot (".{0}-model-center-{1}.png" -f $packageLeaf, [Guid]::NewGuid().ToString("N"))
+$savedPath = $env:PATH
+$savedQpa = $env:QT_QPA_PLATFORM
+$savedQuick = $env:QT_QUICK_BACKEND
+$savedFont = $env:QT_QPA_FONTDIR
+try {
+    $env:PATH = "$target;$qt/bin;$qt/Tools/mingw1510_64/mingw64/bin;$ffmpeg/bin;$onnx;$savedPath"
+    $env:QT_QPA_PLATFORM = "offscreen"
+    $env:QT_QUICK_BACKEND = "software"
+    $env:QT_QPA_FONTDIR = "C:/Windows/Fonts"
+    $quotedFinalScreenshot = '"' + $temporaryFinalScreenshot + '"'
+    $finalSmoke = Start-Process -FilePath (Join-Path $target "RifeLove.exe") `
+        -ArgumentList "--smoke-screenshot $quotedFinalScreenshot --smoke-page models" -Wait -PassThru -WindowStyle Hidden
+    if ($finalSmoke.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $temporaryFinalScreenshot -PathType Leaf)) {
+        throw "Post-promotion model-center check failed with exit code $($finalSmoke.ExitCode)"
+    }
+    Move-Item -LiteralPath $temporaryFinalScreenshot -Destination $finalScreenshot -Force
+} finally {
+    $env:PATH = $savedPath
+    $env:QT_QPA_PLATFORM = $savedQpa
+    $env:QT_QUICK_BACKEND = $savedQuick
+    $env:QT_QPA_FONTDIR = $savedFont
+    if (Test-Path -LiteralPath $temporaryFinalScreenshot) { Remove-Item -LiteralPath $temporaryFinalScreenshot -Force }
+}
+$finalPreferences = Get-Content -LiteralPath (Join-Path $target "data/preferences.ini") -Raw
+if ($finalPreferences -match '\.staging-[0-9a-fA-F]{32}' -or
+    $finalPreferences -notmatch [regex]::Escape($packageLeaf)) {
+    throw "The final portable settings still reference a temporary staging path instead of $target."
+}
+foreach ($pack in $modelPacks) {
+    if ($finalPreferences -notmatch [regex]::Escape([string]$pack.descriptor.id)) {
+        throw "The relocated model catalog is missing $($pack.descriptor.id)."
+    }
+}
 Write-Output "Packaged local RifeLove build: $target"
 } catch {
     if (Test-Path -LiteralPath $packageRoot) {

@@ -164,7 +164,8 @@ int main(int argc, char** argv) {
         initialSettings.setValue("encoding/bitrateKbps",4500); initialSettings.setValue("encoding/qualityMode","bitrate");
         initialSettings.setValue("encoding/quality",32); initialSettings.setValue("encoding/gopSize",60);
         initialSettings.setValue("model",QUrl::fromLocalFile(arguments[3])); initialSettings.setValue("runtime",QUrl::fromLocalFile(arguments[4]));
-        initialSettings.setValue("modelCatalog/paths",QStringList{QFileInfo(arguments[3]).absoluteFilePath()});
+        const auto staleStagingModel = QDir(QFileInfo(queueDatabase).absolutePath()).filePath(".RifeLove-local.staging-0123456789abcdef0123456789abcdef/models/rife-stale");
+        initialSettings.setValue("modelCatalog/paths",QStringList{QFileInfo(arguments[3]).absoluteFilePath(),staleStagingModel});
         initialSettings.sync(); require(initialSettings.status() == QSettings::NoError, "Could not prepare saved first-run preferences");
         QueueController taskQueue(queueDatabase);
         waitUntil([&] { return taskQueue.available() || taskQueue.state() == "error"; }, "Local desktop queue did not initialize");
@@ -237,6 +238,9 @@ int main(int argc, char** argv) {
             return !taskQueue.verifyingModels() && taskQueue.models().size() == 1 &&
                 taskQueue.models().front().toMap().value("valid").toBool();
         }, "Saved local model was not verified before the Studio workflow");
+        initialSettings.sync();
+        require(initialSettings.value("modelCatalog/paths").toStringList().size() == 1,
+            "A model catalog entry from a removed package staging directory was retained after relocation");
         require(root->property("selectedModelVerified").toBool(), "Saved local model path is not reflected as verified in Studio");
         require(button && !button->property("enabled").toBool(), "Start should be disabled without input/model");
         require(statusLabel, "Studio status label is unavailable");
