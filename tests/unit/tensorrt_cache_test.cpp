@@ -26,3 +26,18 @@ TEST(TensorRtCache, PrefixIsStableAndBindsModelRuntimeDeviceAndBuildOptions) {
     changedDevice = device; changedDevice.driverCudaApiVersion++;
     EXPECT_NE(prefix,tensorRtEngineCachePrefix(model,changedDevice,identity));
 }
+
+TEST(TensorRtCache, NamespacesRestorationEnginesByGraphAndPipeline) {
+    rifelove::gpu::DeviceInfo device{0,"NVIDIA GeForce GTX 1660 SUPER","00000000:01:00.0",7,5,126,6ULL * 1024 * 1024 * 1024};
+    TensorRtCacheIdentity identity{"1.22.0","10.9.0.34","12.8.90","fp32","sr-rgb-fp32-min64-opt256-max320",512ULL * 1024 * 1024};
+    const auto restoration = tensorRtEngineCachePrefix("restoration","realesrgan-x4plus-sdr8-local","1.0",
+        "a4b9b36f8adfcbd4eac11a38c434472e55ef411e864db3aa8e21d8c2ff113bc4",device,identity);
+    const auto rife = tensorRtEngineCachePrefix("rife","realesrgan-x4plus-sdr8-local","1.0",
+        "a4b9b36f8adfcbd4eac11a38c434472e55ef411e864db3aa8e21d8c2ff113bc4",device,identity);
+    EXPECT_TRUE(restoration.starts_with("restoration-"));
+    EXPECT_NE(restoration,rife);
+    EXPECT_EQ(restoration,tensorRtEngineCachePrefix("restoration","realesrgan-x4plus-sdr8-local","1.0",
+        "a4b9b36f8adfcbd4eac11a38c434472e55ef411e864db3aa8e21d8c2ff113bc4",device,identity));
+    EXPECT_NE(restoration,tensorRtEngineCachePrefix("restoration","realesrgan-x4plus-sdr8-local","1.0",
+        std::string(64,'f'),device,identity));
+}

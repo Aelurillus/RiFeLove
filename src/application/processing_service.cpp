@@ -84,6 +84,9 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         restoration::OnnxCudaRestorationConfig restorationConfig;
         restorationConfig.runtimeDirectory = job.runtimeDirectory;
         restorationConfig.hostFloatBufferLimit = pipelineSettings.hostFloatBufferLimit;
+        if (job.settings.inferenceBackend == "cuda") restorationConfig.providerPreference = inference::ProviderPreference::cudaOnly;
+        else if (job.settings.inferenceBackend == "tensorrt") restorationConfig.providerPreference = inference::ProviderPreference::requireTensorRt;
+        else if (job.settings.inferenceBackend != "auto") throw std::invalid_argument("Unsupported restoration backend preference");
         restorationBackend = std::make_shared<restoration::OnnxCudaVideoRestorationBackend>(device,std::move(restorationConfig));
         restorationBackend->loadModel(restorationPack);
         pipelineSettings.restorationBackend = restorationBackend;

@@ -29,6 +29,10 @@ struct Capabilities {
     int scaleNumerator = 1;
     int scaleDenominator = 1;
     bool supportsBoundaryPadding = false;
+    // Runtime-selected provider diagnostics. These are populated by a backend,
+    // never trusted from a local model descriptor.
+    std::string runtimeBackend;
+    std::string fallbackReason;
 };
 
 struct Request {

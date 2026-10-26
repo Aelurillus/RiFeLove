@@ -93,6 +93,8 @@ struct PipelineResult {
     std::string adapterId = "rife-sdr-v1";
     int adapterVersion = 1;
     std::string restorationModelId;
+    std::string restorationBackend;
+    std::string restorationFallbackReason;
     int restorationScaleNumerator = 1;
     int restorationScaleDenominator = 1;
     std::string inferenceFallbackReason;

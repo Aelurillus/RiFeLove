@@ -556,6 +556,12 @@ std::pair<std::string,std::array<std::int64_t,4>> inspectTensor(const OrtApi& ap
         throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must accept RGB NCHW batch-one tensors");
     return {std::move(copiedName),dimensions};
 }
+std::filesystem::path restorationEngineCacheDirectory() {
+    std::array<wchar_t,32768> value{};
+    const DWORD size = GetEnvironmentVariableW(L"LOCALAPPDATA",value.data(),static_cast<DWORD>(value.size()));
+    if (size && size < value.size()) return std::filesystem::path(value.data()) / L"RifeLove" / L"Cache" / L"TensorRT";
+    return std::filesystem::temp_directory_path() / L"RifeLove" / L"Cache" / L"TensorRT";
+}
 }
 
 class OnnxCudaVideoRestorationBackend::Impl final {
@@ -595,41 +601,111 @@ public:
 
         const auto graph = inference::readVerifiedFile(pack.graphPath,pack.graphSha256,2ULL * 1024 * 1024 * 1024);
         auto context = device->activate();
-        inference::Handle<OrtSessionOptions> options(api.ReleaseSessionOptions);
-        inference::check(api,api.CreateSessionOptions(&options.value));
-        inference::check(api,api.SetSessionExecutionMode(options.value,ORT_SEQUENTIAL));
-        inference::check(api,api.SetIntraOpNumThreads(options.value,2));
-        inference::check(api,api.SetInterOpNumThreads(options.value,1));
-        inference::check(api,api.SetSessionGraphOptimizationLevel(options.value,ORT_ENABLE_EXTENDED));
-        inference::Handle<OrtCUDAProviderOptionsV2> cuda(api.ReleaseCUDAProviderOptions);
-        inference::check(api,api.CreateCUDAProviderOptions(&cuda.value));
-        const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
-        const char* keys[] = {"device_id","gpu_mem_limit","arena_extend_strategy","cudnn_conv_algo_search","cudnn_conv_use_max_workspace","use_tf32","do_copy_in_default_stream"};
-        const char* values[] = {ordinal.c_str(),budget.c_str(),"kSameAsRequested","DEFAULT","0","0","1"};
-        inference::check(api,api.UpdateCUDAProviderOptions(cuda.value,keys,values,std::size(keys)));
-        inference::check(api,api.UpdateCUDAProviderOptionsWithValue(cuda.value,"user_compute_stream",reinterpret_cast<void*>(device->streamAddress())));
-        try { inference::check(api,api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value,cuda.value)); }
-        catch (const inference::InferenceError& error) {
-            throw inference::InferenceError(inference::InferenceErrorKind::unavailable,"CUDA restoration provider could not initialize: " + std::string(error.what()));
-        }
 
-        inference::Handle<OrtSession> next(api.ReleaseSession);
-        inference::check(api,api.CreateSessionFromArray(runtime->environment(),graph.data(),graph.size(),options.value,&next.value));
+        // Read the dynamic input name/shape with a lightweight CPU-only session
+        // before constructing TensorRT's explicit optimization profile.
+        inference::Handle<OrtSessionOptions> inspectOptions(api.ReleaseSessionOptions);
+        inference::check(api,api.CreateSessionOptions(&inspectOptions.value));
+        inference::check(api,api.SetSessionGraphOptimizationLevel(inspectOptions.value,ORT_DISABLE_ALL));
+        inference::Handle<OrtSession> inspectSession(api.ReleaseSession);
+        inference::check(api,api.CreateSessionFromArray(runtime->environment(),graph.data(),graph.size(),inspectOptions.value,&inspectSession.value));
         std::size_t inputs = 0, outputs = 0;
-        inference::check(api,api.SessionGetInputCount(next.value,&inputs));
-        inference::check(api,api.SessionGetOutputCount(next.value,&outputs));
+        inference::check(api,api.SessionGetInputCount(inspectSession.value,&inputs));
+        inference::check(api,api.SessionGetOutputCount(inspectSession.value,&outputs));
         if (inputs != 1 || outputs != 1)
             throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must expose exactly one input and one output");
-        const auto [nextInputName,nextInputShape] = inspectTensor(api,next.value,false);
-        const auto [nextOutputName,nextOutputShape] = inspectTensor(api,next.value,true);
+        const auto [nextInputName,nextInputShape] = inspectTensor(api,inspectSession.value,false);
+        const auto [nextOutputName,nextOutputShape] = inspectTensor(api,inspectSession.value,true);
         if (nextInputShape[2] > 0 || nextInputShape[3] > 0 || nextOutputShape[2] > 0 || nextOutputShape[3] > 0)
             throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Tiled restoration requires dynamic height and width axes");
+        inspectSession.value = nullptr;
+
+        const auto buildSession = [&](bool useTensorRt) {
+            inference::Handle<OrtSessionOptions> options(api.ReleaseSessionOptions);
+            inference::check(api,api.CreateSessionOptions(&options.value));
+            inference::check(api,api.SetSessionExecutionMode(options.value,ORT_SEQUENTIAL));
+            inference::check(api,api.SetIntraOpNumThreads(options.value,2));
+            inference::check(api,api.SetInterOpNumThreads(options.value,1));
+            inference::check(api,api.SetSessionGraphOptimizationLevel(options.value,ORT_ENABLE_EXTENDED));
+            if (useTensorRt) {
+                runtime->ensureTensorRtProvider();
+                const auto trtVersion = runtime->tensorRtVersion();
+                runtime->preloadTensorRtProviderDependencies();
+                const auto deviceInfo = device->info();
+                const auto cudaVersion = runtime->cudaRuntimeVersion();
+                const int minProfile = 64;
+                const int maxProfile = config.tileSize + 2 * config.tileOverlap;
+                const int optProfile = std::min(config.tileSize,maxProfile);
+                const std::string profileIdentity = "sr-rgb-fp32-min64-opt" + std::to_string(optProfile) + "-max" + std::to_string(maxProfile);
+                const inference::TensorRtCacheIdentity identity{"1.22.0",trtVersion,cudaVersion,"fp32",profileIdentity,512ULL * 1024 * 1024};
+                const auto prefix = inference::tensorRtEngineCachePrefix("restoration",pack.id,pack.version,pack.graphSha256,deviceInfo,identity);
+                auto cacheRoot = config.engineCacheDirectory.empty() ? restorationEngineCacheDirectory() : config.engineCacheDirectory;
+                const auto cacheDirectory = cacheRoot / prefix;
+                std::error_code error;
+                std::filesystem::create_directories(cacheDirectory,error);
+                if (error) throw inference::InferenceError(inference::InferenceErrorKind::unavailable,
+                    "Could not create the local TensorRT restoration cache: " + error.message());
+                const auto cachePath = inference::utf8Path(cacheDirectory);
+                inference::Handle<OrtTensorRTProviderOptionsV2> tensorRt(api.ReleaseTensorRTProviderOptions);
+                inference::check(api,api.CreateTensorRTProviderOptions(&tensorRt.value));
+                const std::string tensorRtOrdinal = std::to_string(deviceInfo.ordinal);
+                const std::string workspace = std::to_string(identity.workspaceBytes);
+                const std::string minShapes = nextInputName + ":1x3x" + std::to_string(minProfile) + "x" + std::to_string(minProfile);
+                const std::string optShapes = nextInputName + ":1x3x" + std::to_string(optProfile) + "x" + std::to_string(optProfile);
+                const std::string maxShapes = nextInputName + ":1x3x" + std::to_string(maxProfile) + "x" + std::to_string(maxProfile);
+                const char* trtKeys[] = {"device_id","trt_engine_cache_enable","trt_engine_cache_path","trt_engine_cache_prefix",
+                    "trt_fp16_enable","trt_max_workspace_size","trt_profile_min_shapes","trt_profile_opt_shapes","trt_profile_max_shapes"};
+                const char* trtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),prefix.c_str(),"0",workspace.c_str(),
+                    minShapes.c_str(),optShapes.c_str(),maxShapes.c_str()};
+                inference::check(api,api.UpdateTensorRTProviderOptions(tensorRt.value,trtKeys,trtValues,std::size(trtKeys)));
+                inference::check(api,api.SessionOptionsAppendExecutionProvider_TensorRT_V2(options.value,tensorRt.value));
+            }
+            inference::Handle<OrtCUDAProviderOptionsV2> cuda(api.ReleaseCUDAProviderOptions);
+            inference::check(api,api.CreateCUDAProviderOptions(&cuda.value));
+            const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
+            const char* keys[] = {"device_id","gpu_mem_limit","arena_extend_strategy","cudnn_conv_algo_search","cudnn_conv_use_max_workspace","use_tf32","do_copy_in_default_stream"};
+            const char* values[] = {ordinal.c_str(),budget.c_str(),"kSameAsRequested","DEFAULT","0","0","1"};
+            inference::check(api,api.UpdateCUDAProviderOptions(cuda.value,keys,values,std::size(keys)));
+            inference::check(api,api.UpdateCUDAProviderOptionsWithValue(cuda.value,"user_compute_stream",reinterpret_cast<void*>(device->streamAddress())));
+            try { inference::check(api,api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value,cuda.value)); }
+            catch (const inference::InferenceError& error) {
+                throw inference::InferenceError(inference::InferenceErrorKind::unavailable,"CUDA restoration provider could not initialize: " + std::string(error.what()));
+            }
+            inference::Handle<OrtSession> next(api.ReleaseSession);
+            inference::check(api,api.CreateSessionFromArray(runtime->environment(),graph.data(),graph.size(),options.value,&next.value));
+            std::size_t actualInputs = 0, actualOutputs = 0;
+            inference::check(api,api.SessionGetInputCount(next.value,&actualInputs));
+            inference::check(api,api.SessionGetOutputCount(next.value,&actualOutputs));
+            if (actualInputs != 1 || actualOutputs != 1)
+                throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must expose exactly one input and one output");
+            const auto [actualInputName,actualInputShape] = inspectTensor(api,next.value,false);
+            const auto [actualOutputName,actualOutputShape] = inspectTensor(api,next.value,true);
+            if (actualInputName != nextInputName || actualInputShape != nextInputShape || actualOutputName != nextOutputName || actualOutputShape != nextOutputShape)
+                throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX tensor contract changed while initializing an execution provider");
+            return next;
+        };
+
+        inference::Handle<OrtSession> next(api.ReleaseSession);
+        std::string selectedBackend = "onnxruntime_cuda";
+        std::string selectedFallbackReason;
+        if (config.providerPreference != inference::ProviderPreference::cudaOnly) {
+            try {
+                next = buildSession(true);
+                selectedBackend = "onnxruntime_tensorrt_cuda";
+            } catch (const inference::InferenceError& error) {
+                if (config.providerPreference == inference::ProviderPreference::requireTensorRt) throw;
+                selectedFallbackReason = error.what();
+            }
+        }
+        if (!next.value) next = buildSession(false);
         session = std::move(next);
         inputName = nextInputName;
         outputName = nextOutputName;
         inputShape = nextInputShape;
         outputShape = nextOutputShape;
         modelCapabilities = pack.capabilities;
+        modelCapabilities.runtimeBackend = std::move(selectedBackend);
+        modelCapabilities.fallbackReason = std::move(selectedFallbackReason);
         modelId = pack.id;
         inputBuffer.reset();
         outputBuffer.reset();

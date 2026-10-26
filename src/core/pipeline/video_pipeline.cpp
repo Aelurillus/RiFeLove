@@ -255,6 +255,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.adapterId = capabilities.adapterId; result.adapterVersion = capabilities.adapterVersion;
     if (restorationCapabilities) {
         result.restorationModelId = restorationCapabilities->modelId;
+        result.restorationBackend = restorationCapabilities->runtimeBackend;
+        result.restorationFallbackReason = restorationCapabilities->fallbackReason;
         result.restorationScaleNumerator = restorationCapabilities->scaleNumerator;
         result.restorationScaleDenominator = restorationCapabilities->scaleDenominator;
     }

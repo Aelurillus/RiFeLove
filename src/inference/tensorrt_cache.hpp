@@ -18,5 +18,8 @@ struct TensorRtCacheIdentity {
 
 [[nodiscard]] std::string tensorRtEngineCachePrefix(const ModelPack& model, const gpu::DeviceInfo& device,
     const TensorRtCacheIdentity& identity);
+[[nodiscard]] std::string tensorRtEngineCachePrefix(std::string_view pipeline, std::string_view modelId,
+    std::string_view modelVersion, std::string_view modelSha256, const gpu::DeviceInfo& device,
+    const TensorRtCacheIdentity& identity);
 
 } // namespace rifelove::inference

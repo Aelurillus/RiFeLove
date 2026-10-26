@@ -124,6 +124,8 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             restoration::OnnxCudaRestorationConfig restorationConfig;
             restorationConfig.runtimeDirectory = runtimeDirectory;
             restorationConfig.hostFloatBufferLimit = settings.hostFloatBufferLimit;
+            if (settings.inferenceBackend == "cuda") restorationConfig.providerPreference = inference::ProviderPreference::cudaOnly;
+            else if (settings.inferenceBackend == "tensorrt") restorationConfig.providerPreference = inference::ProviderPreference::requireTensorRt;
             restorationBackend = std::make_shared<restoration::OnnxCudaVideoRestorationBackend>(device,restorationConfig);
             restorationBackend->loadModel(*restorationPack);
             settings.restorationBackend = restorationBackend;
@@ -149,6 +151,8 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             << ",\"backend\":" << jsonString(result.backend) << ",\"encoder\":" << jsonString(result.video.encoder)
             << ",\"model_adapter\":" << jsonString(result.adapterId) << ",\"model_adapter_version\":" << result.adapterVersion
             << ",\"restoration_model\":" << (restorationPack ? jsonString(restorationPack->id) : "null")
+            << ",\"restoration_backend\":" << (result.restorationBackend.empty() ? "null" : jsonString(result.restorationBackend))
+            << ",\"restoration_fallback_reason\":" << jsonString(result.restorationFallbackReason)
             << ",\"restoration_scale\":" << jsonString(std::to_string(result.restorationScaleNumerator) + "/" + std::to_string(result.restorationScaleDenominator))
             << ",\"inference_fallback_reason\":" << jsonString(result.inferenceFallbackReason)
             << ",\"encoder_fallback_reason\":" << jsonString(result.encoderFallbackReason) << ",\"target_fps\":" << jsonString(settings.targetRate.toString())
