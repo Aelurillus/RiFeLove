@@ -192,7 +192,7 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("目标 FPS"); font.bold: true }
-                        ComboBox { id: rateBox; objectName: "queueTargetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; onEditTextChanged: page.targetRate = editText; onActivated: page.persistDefaults(); onAccepted: page.persistDefaults() }
+                        ComboBox { id: rateBox; objectName: "queueTargetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "300", "360", "480", "600", "60000/1001"]; onEditTextChanged: page.targetRate = editText; onActivated: page.persistDefaults(); onAccepted: page.persistDefaults() }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true

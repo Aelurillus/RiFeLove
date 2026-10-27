@@ -595,7 +595,7 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 12
-                                    ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "60000/1001"]; enabled: !window.active; onActivated: window.persistLocalDefaults(); onAccepted: window.persistLocalDefaults() }
+                                    ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "300", "360", "480", "600", "60000/1001"]; enabled: !window.active; onActivated: window.persistLocalDefaults(); onAccepted: window.persistLocalDefaults() }
                                     ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
                                 }
                             }

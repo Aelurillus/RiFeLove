@@ -152,6 +152,14 @@ class NativeRifePipeline(unittest.TestCase):
         self.verify_timing(output,result); self.assertEqual(Fraction(result["first_pts"]),5)
         self.assertGreater(result["ai_frames"],0)
 
+    def test_360fps_target_uses_exact_timeline_and_real_rife_frames(self):
+        output = self.root / "rife-360.mkv"
+        result,_ = self.run_job(self.complex,output,"360","--encoder","ffv1")
+        self.assertEqual(result["target_fps"],"360/1")
+        self.assertGreater(result["output_frames"],70)
+        self.assertGreater(result["ai_frames"],0)
+        self.verify_timing(output,result)
+
     def test_cut_and_duplicate_protection_never_generates_a_crossfade(self):
         output = self.root / "cut-8.mkv"
         result,_ = self.run_job(self.cut,output,"8","--encoder","ffv1")

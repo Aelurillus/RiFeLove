@@ -7,7 +7,8 @@ param(
     [string[]]$RemoveArchivedVersionZip = @(),
     [string[]]$KeepPackage = @(
         "RifeLove-local-2026-10-26-user-delivery",
-        "RifeLove-local-2026-10-26-tensorrt-sr"
+        "RifeLove-local-2026-10-26-tensorrt-sr",
+        "RifeLove-offline-2026-10-26-v0.1.3"
     )
 )
 
