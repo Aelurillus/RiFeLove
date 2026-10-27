@@ -222,7 +222,7 @@ if(RIFELOVE_BUILD_DESKTOP)
       target_sources(rifelove-desktop PRIVATE apps/desktop/rifelove.rc)
     endif()
     set_target_properties(rifelove-desktop PROPERTIES OUTPUT_NAME "RifeLove")
-    qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/LocalProfilePicker.qml ui/ProgressEstimate.js ui/ActionButton.qml)
+    qt_add_qml_module(rifelove-desktop URI RifeLove VERSION 1.0 QML_FILES ui/Main.qml ui/HomePage.qml ui/QueuePage.qml ui/ModelCenterPage.qml ui/ComparisonPage.qml ui/LocalProfilePicker.qml ui/PlatformExportPicker.qml ui/PlatformExportProfiles.js ui/ProgressEstimate.js ui/ActionButton.qml)
     set_source_files_properties(ui/assets/rifelove-icon.svg PROPERTIES QT_RESOURCE_ALIAS "rifelove-icon.svg")
     qt_add_resources(rifelove-desktop rifelove_icon_resources
       PREFIX "/rifelove/assets"

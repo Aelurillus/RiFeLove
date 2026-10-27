@@ -53,7 +53,8 @@ public:
     Q_INVOKABLE void exportReport(const QUrl& destination);
     Q_INVOKABLE void saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
         const QString& encoder, const QString& container, const QVariantMap& encodingOptions,
-        const QString& inferenceBackend = QStringLiteral("auto"), double cutMeanDifference = 0.25);
+        const QString& inferenceBackend = QStringLiteral("auto"), double cutMeanDifference = 0.25,
+        const QString& platformExportProfile = QString());
     Q_INVOKABLE void saveProfile(const QString& name, const QVariantMap& values);
     Q_INVOKABLE void removeProfile(const QString& id);
     Q_INVOKABLE void applyProfile(const QString& id);

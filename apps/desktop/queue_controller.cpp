@@ -146,9 +146,9 @@ public:
         });
     }); }
     void saveDefaults(QString rate, QUrl model, QUrl runtime, QUrl output, QString encoder, QString container,
-        QVariantMap encodingOptions, QString inferenceBackend, double cutMeanDifference) {
+        QVariantMap encodingOptions, QString inferenceBackend, double cutMeanDifference, QString platformExportProfile) {
         if (!settings_) return;
-        const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
+        const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference,platformExportProfile);
         if (!warning.isEmpty()) post([warning](QueueController& c) { c.detail_ = warning; emit c.changed(); });
     }
     void saveRestorationModel(QString modelPath) {
@@ -307,7 +307,7 @@ public:
             }
             if (result.taskIds.empty()) throw std::invalid_argument(utf8(tr("没有找到当前模型可处理的视频。\n") + skipped.join('\n')));
             output = QUrl::fromLocalFile(QString::fromStdWString(result.outputDirectory.wstring()));
-            const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
+            const auto warning = writeDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference,QString());
             snapshot();
             post([count=result.taskIds.size(),rejected=result.rejected.size(),skipped,warning](QueueController& c) {
                 c.importing_ = false; c.state_ = "ready"; c.detail_ = tr("已加入 %1 个任务。输出使用新文件名。").arg(count);
@@ -511,6 +511,9 @@ private:
         result["rate"] = rate;
         for (const auto& key : {"model","runtime","output","restorationModel"}) { const auto url = settings_->value(key).toUrl(); result[key] = url.isLocalFile() ? url : QUrl(); }
         const auto encoder = settings_->value("encoder","auto").toString(), container = settings_->value("container","mkv").toString();
+        const auto exportProfile = settings_->value("platformExportProfile","custom").toString();
+        result["platformExportProfile"] = QStringList{"custom","youtube60","bilibili60","bilibili120","douyin30","douyin60"}.contains(exportProfile)
+            ? exportProfile : QStringLiteral("custom");
         result["encoder"] = QStringList{"auto","libopenh264","libkvazaar","libaom-av1","h264_nvenc"}.contains(encoder) ? encoder : QString("auto");
         result["container"] = QStringList{"mkv","mp4","mov"}.contains(container) ? container : QString("mkv");
         const auto backend = settings_->value("inferenceBackend","auto").toString();
@@ -528,16 +531,19 @@ private:
     }
     QString writeDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
         const QString& encoder, const QString& container, const QVariantMap& encodingOptions, const QString& inferenceBackend,
-        double cutMeanDifference) {
+        double cutMeanDifference, const QString& platformExportProfile) {
         if (!settings_) return tr("默认设置未保存。");
         try { (void)desktop::makeVideoEncodingSettings(encoder,encodingOptions); }
         catch (const std::exception&) { return tr("高级编码参数超出范围或与当前编码器不兼容，默认设置未保存。"); }
         if (!QStringList{"auto","cuda","tensorrt"}.contains(inferenceBackend)) return tr("推理后端选择无效，默认设置未保存。");
         if (!std::isfinite(cutMeanDifference) || cutMeanDifference < 0.0 || cutMeanDifference > 1.0)
             return tr("镜头切换阈值必须介于 0 和 1 之间，默认设置未保存。");
+        if (!platformExportProfile.isEmpty() && !QStringList{"custom","youtube60","bilibili60","bilibili120","douyin30","douyin60"}.contains(platformExportProfile))
+            return tr("平台导出预设无效，默认设置未保存。");
         settings_->setValue("rate",rate); settings_->setValue("model",model); settings_->setValue("runtime",runtime);
         if (!output.isEmpty()) settings_->setValue("output",output);
         settings_->setValue("encoder",encoder); settings_->setValue("container",container); settings_->setValue("inferenceBackend",inferenceBackend);
+        if (!platformExportProfile.isEmpty()) settings_->setValue("platformExportProfile",platformExportProfile);
         settings_->setValue("cutMeanDifference",cutMeanDifference);
         for (auto it = encodingOptions.cbegin(); it != encodingOptions.cend(); ++it) settings_->setValue(QStringLiteral("encoding/") + it.key(),it.value());
         settings_->sync();
@@ -603,9 +609,9 @@ void QueueController::exportReport(const QUrl& destination) {
 }
 void QueueController::saveDefaults(const QString& rate, const QUrl& model, const QUrl& runtime, const QUrl& output,
     const QString& encoder, const QString& container, const QVariantMap& encodingOptions, const QString& inferenceBackend,
-    double cutMeanDifference) {
-    if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference] {
-        w->saveDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference);
+    double cutMeanDifference, const QString& platformExportProfile) {
+    if (available_) QMetaObject::invokeMethod(worker_,[w=worker_,rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference,platformExportProfile] {
+        w->saveDefaults(rate,model,runtime,output,encoder,container,encodingOptions,inferenceBackend,cutMeanDifference,platformExportProfile);
     },Qt::QueuedConnection);
 }
 void QueueController::saveProfile(const QString& name, const QVariantMap& values) {
@@ -627,10 +633,13 @@ void QueueController::applyProfile(const QString& id) {
     QVariantMap options{{"bitrateKbps",profile.value("bitrateKbps",8000)},
         {"qualityMode",profile.value("qualityMode","bitrate")},
         {"quality",profile.value("quality",32)}, {"gopSize",profile.value("gopSize",120)}};
+    const auto requestedExportProfile = profile.value("platformExportProfile","custom").toString();
+    const auto exportProfile = QStringList{"custom","youtube60","bilibili60","bilibili120","douyin30","douyin60"}.contains(requestedExportProfile)
+        ? requestedExportProfile : QStringLiteral("custom");
     saveDefaults(profile.value("rate","60").toString(),profile.value("model").toUrl(),
         profile.value("runtime").toUrl(),profile.value("output").toUrl(),
         profile.value("encoder","auto").toString(),profile.value("container","mkv").toString(),options,
-        profile.value("inferenceBackend","auto").toString(),profile.value("cutMeanDifference",0.25).toDouble());
+        profile.value("inferenceBackend","auto").toString(),profile.value("cutMeanDifference",0.25).toDouble(),exportProfile);
     emit profileApplied(profile);
     emit profileOperationFinished(true,QStringLiteral("apply"));
 }
@@ -671,7 +680,7 @@ void QueueController::setDefaultModel(const QUrl& directory) {
         defaults_.value("output").toUrl(),defaults_.value("encoder","auto").toString(),defaults_.value("container","mkv").toString(),
         {{"bitrateKbps",defaults_.value("bitrateKbps",8000)}, {"qualityMode",defaults_.value("qualityMode","bitrate")},
          {"quality",defaults_.value("quality",32)}, {"gopSize",defaults_.value("gopSize",120)}},
-        defaults_.value("inferenceBackend","auto").toString(),defaults_.value("cutMeanDifference",0.25).toDouble());
+        defaults_.value("inferenceBackend","auto").toString(),defaults_.value("cutMeanDifference",0.25).toDouble(),QString());
 }
 void QueueController::setDefaultRestorationModel(const QUrl& directory) {
     QString selectedPath;

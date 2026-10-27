@@ -15,6 +15,27 @@ CATALOGS = {
 }
 
 _DATA = r"""
+输出分辨率按所选模型的倍率生成。|Output resolution follows the selected model's scale factor.|輸出解析度依所選模型的倍率產生。|出力解像度は選択したモデルの倍率に従います。
+超分输出：%1 × %2（模型倍率 ×%3）|Super-resolution output: %1 × %2 (model scale ×%3)|超解析輸出：%1 × %2（模型倍率 ×%3）|超解像出力：%1 × %2（モデル倍率 ×%3）
+等待 GPU 输出新帧|Waiting for the GPU to produce new frames|等待 GPU 產生新影格|GPU が新しいフレームを出力するのを待っています
+插帧工作室|Interpolation Studio|補幀工作室|フレーム補間スタジオ
+收起媒体详细信息|Hide media details|收合媒體詳細資訊|メディア詳細を閉じる
+详细媒体信息（%1 条轨道）|Media details (%1 streams)|媒體詳細資訊（%1 條軌道）|メディア詳細（%1 ストリーム）
+超过 60 秒没有新帧；可能是 GPU 资源竞争或推理卡住。输出尚未完成验证。|No new frames for over 60 seconds; the GPU may be busy or inference may be stuck. The output has not been validated.|超過 60 秒沒有新影格；GPU 可能正在處理其他工作，或推論已卡住。輸出尚未完成驗證。|60 秒以上新しいフレームがありません。GPU の競合または推論の停止が考えられます。出力はまだ検証されていません。
+平台导出预设无效，默认设置未保存。|The platform export preset is invalid; defaults were not saved.|平台輸出預設無效，未儲存預設值。|プラットフォーム出力プリセットが無効なため、既定値は保存されませんでした。
+平台导出预设|Platform export preset|平台輸出預設|プラットフォーム出力プリセット
+本机高帧率母版 / 自定义|Local high-frame-rate master / Custom|本機高影格率母版 / 自訂|ローカル高フレームレートマスター / カスタム
+YouTube · 60 FPS 上传副本|YouTube · 60 FPS upload copy|YouTube · 60 FPS 上傳副本|YouTube · 60 FPS アップロード用コピー
+Bilibili · 60 FPS 上传副本|Bilibili · 60 FPS upload copy|Bilibili · 60 FPS 上傳副本|Bilibili · 60 FPS アップロード用コピー
+Bilibili · 120 FPS 实验|Bilibili · 120 FPS experimental|Bilibili · 120 FPS 實驗|Bilibili · 120 FPS 実験
+抖音 · 30 FPS 上传副本|Douyin · 30 FPS upload copy|抖音 · 30 FPS 上傳副本|Douyin · 30 FPS アップロード用コピー
+抖音 · 60 FPS 上传副本|Douyin · 60 FPS upload copy|抖音 · 60 FPS 上傳副本|Douyin · 60 FPS アップロード用コピー
+Bilibili 的 120 FPS 依据历史官方活动信息；当前账号与转码行为仍需实测。|The 120 FPS option is based on a historical official Bilibili event; current account access and transcoding still need testing.|Bilibili 的 120 FPS 依據歷史官方活動資訊；目前帳號權限與轉碼行為仍需實測。|120 FPS は Bilibili の過去の公式イベント情報に基づきます。現在のアカウント権限とトランスコード動作は実測が必要です。
+YouTube 60 FPS SDR 按当前视频分辨率使用官方建议码率；未加载视频时按 1080p 默认。平台仍会转码，300 FPS 以上母版需单独输出。|YouTube 60 FPS SDR uses the official recommended bitrate for the current video's resolution; it defaults to 1080p when no video is loaded. The platform still transcodes, so export a 300+ FPS master separately.|YouTube 60 FPS SDR 會依目前影片解析度採用官方建議位元率；尚未載入影片時預設為 1080p。平台仍會轉碼，300 FPS 以上母版需另外輸出。|YouTube 60 FPS SDR は現在の動画解像度に応じた公式推奨ビットレートを使用します。動画未読込時は 1080p が既定です。プラットフォームで再エンコードされるため、300 FPS 以上のマスターは別途出力してください。
+YouTube 60 FPS SDR 队列使用官方 1080p 建议码率；混合分辨率请在高级编码中调整。平台仍会转码，300 FPS 以上母版需单独输出。|The YouTube 60 FPS SDR queue preset uses the official 1080p recommended bitrate; adjust it in Advanced Encoding for mixed resolutions. The platform still transcodes, so export a 300+ FPS master separately.|YouTube 60 FPS SDR 佇列預設使用官方 1080p 建議位元率；混合解析度請在進階編碼中調整。平台仍會轉碼，300 FPS 以上母版需另外輸出。|YouTube 60 FPS SDR のキュープリセットは公式の 1080p 推奨ビットレートを使用します。解像度が混在する場合は詳細エンコードで調整してください。プラットフォームで再エンコードされるため、300 FPS 以上のマスターは別途出力してください。
+抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。|The public Douyin upload API lists no frame-rate ceiling; this is a local compatibility preset, not a platform guarantee.|抖音公開上傳 API 未列出影格率上限；此處是本機相容性預設，不代表平台保證。|公開されている Douyin アップロード API にフレームレート上限は記載されていません。このローカル互換プリセットはプラットフォームの保証ではありません。
+Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。|Bilibili 60 FPS is a compatibility preset; the bitrate is a local recommendation, and current upload rules should be checked for your account.|Bilibili 60 FPS 是相容性預設；位元率是本機建議值，目前上傳規則需依帳號驗證。|Bilibili 60 FPS は互換性プリセットです。ビットレートはローカル推奨値で、現在のアップロード規則はアカウントごとに確認してください。
+平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。|Platforms re-encode video. Export a local 300+ FPS master separately; platform presets create compatibility copies.|平台會重新編碼影片。300 FPS 以上的本機母版需另外輸出；平台預設會產生相容性副本。|プラットフォームは動画を再エンコードします。300 FPS 以上のローカルマスターは別途出力してください。プラットフォームプリセットは互換性コピーを作成します。
 尚未选择视频|No video selected|尚未選擇影片|動画が選択されていません
 选择原视频|Select source video|選擇原始影片|元動画を選択
 视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)|Video files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)|影片檔案 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)|動画ファイル (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)

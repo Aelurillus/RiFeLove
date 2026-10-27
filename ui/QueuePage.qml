@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import "ProgressEstimate.js" as ProgressEstimate
+import "PlatformExportProfiles.js" as PlatformExportProfiles
 
 Item {
     id: page
@@ -18,6 +19,8 @@ Item {
     property string inferenceBackend: "auto"
     property real cutMeanDifference: 0.25
     property string container: "mkv"
+    property string platformExportProfile: "custom"
+    property bool applyingPlatformExportProfile: false
     property bool recursive: false
     property bool advancedOpen: false
     property bool encodingAdvancedOpen: false
@@ -53,6 +56,7 @@ Item {
     }
 
     function applyDefaults(profileValues) {
+        applyingPlatformExportProfile = true
         const values = profileValues || queueController.defaults || ({})
         if (values.rate) { targetRate = values.rate; rateBox.editText = values.rate }
         if (profileValues) {
@@ -68,6 +72,7 @@ Item {
         }
         if (values.encoder) { encoder = values.encoder; encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(values.encoder) }
         if (values.container) { container = values.container; containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container) }
+        platformExportProfile = values.platformExportProfile || "custom"
         inferenceBackend = ["auto", "cuda", "tensorrt"].includes(values.inferenceBackend) ? values.inferenceBackend : "auto"
         const threshold = Number(values.cutMeanDifference)
         cutMeanDifference = Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : 0.25
@@ -76,6 +81,39 @@ Item {
         encodingGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
         encodingQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" || values.qualityMode === "cq" ? 1 : 0
         normalizeEncodingMode()
+        applyingPlatformExportProfile = false
+    }
+    function markPlatformExportCustom() {
+        if (!applyingPlatformExportProfile) platformExportProfile = "custom"
+    }
+    function applyPlatformExportProfile(profileId) {
+        const preset = PlatformExportProfiles.makePreset(profileId, 1080)
+        applyingPlatformExportProfile = true
+        platformExportProfile = profileId || "custom"
+        if (preset) {
+            targetRate = preset.rate
+            rateBox.editText = preset.rate
+            container = preset.container
+            containerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(preset.container)
+            encoder = preset.encoder
+            encoderBox.currentIndex = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"].indexOf(preset.encoder)
+            encodingBitrate.value = preset.bitrateKbps
+            encodingQualityMode.currentIndex = 0
+            encodingGop.value = preset.gopSize
+        }
+        applyingPlatformExportProfile = false
+        persistDefaults()
+    }
+    function platformExportHint() {
+        if (platformExportProfile === "bilibili120")
+            return qsTr("Bilibili 的 120 FPS 依据历史官方活动信息；当前账号与转码行为仍需实测。")
+        if (platformExportProfile === "youtube60")
+            return qsTr("YouTube 60 FPS SDR 队列使用官方 1080p 建议码率；混合分辨率请在高级编码中调整。平台仍会转码，300 FPS 以上母版需单独输出。")
+        if (platformExportProfile === "douyin30" || platformExportProfile === "douyin60")
+            return qsTr("抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。")
+        if (platformExportProfile === "bilibili60")
+            return qsTr("Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。")
+        return qsTr("平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。")
     }
     function normalizeEncodingMode() {
         if (![2, 3, 4].includes(encoderBox.currentIndex) && encodingQualityMode.currentIndex > 0) encodingQualityMode.currentIndex = 0
@@ -94,7 +132,7 @@ Item {
             output: outputFolder, encoder: encoder, container: containerBox.currentText || "mkv",
             bitrateKbps: options.bitrateKbps, qualityMode: options.qualityMode,
             quality: options.quality, gopSize: options.gopSize, inferenceBackend: inferenceBackend,
-            cutMeanDifference: cutMeanDifference}
+            cutMeanDifference: cutMeanDifference, platformExportProfile: platformExportProfile}
     }
     function add(sources) {
         if (!sources || sources.length === 0) return
@@ -106,7 +144,7 @@ Item {
     function persistDefaults() {
         const codecs = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"]
         queueController.saveDefaults(rateBox.editText, modelFolder, runtimeFolder, outputFolder,
-            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference)
+            codecs[encoderBox.currentIndex] || "auto", containerBox.currentText || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference, platformExportProfile)
         queueController.setDefaultRestorationModel(restorationModelFolder)
     }
     function statusText(value) {
@@ -192,20 +230,41 @@ Item {
                 }
                 RowLayout {
                     Layout.fillWidth: true
+                    Label { text: qsTr("平台导出预设"); font.bold: true; Layout.preferredWidth: 100 }
+                    PlatformExportPicker {
+                        objectName: "queuePlatformExportProfile"
+                        Layout.fillWidth: true
+                        profileId: page.platformExportProfile
+                        controlObjectName: "queuePlatformExportProfileCombo"
+                        onActivated: function(profileId) { page.applyPlatformExportProfile(profileId) }
+                    }
+                }
+                Label { text: page.platformExportHint(); color: "#697B8B"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12 }
+                RowLayout {
+                    Layout.fillWidth: true
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("目标 FPS"); font.bold: true }
-                        ComboBox { id: rateBox; objectName: "queueTargetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "300", "360", "480", "600", "60000/1001"]; onEditTextChanged: page.targetRate = editText; onActivated: page.persistDefaults(); onAccepted: page.persistDefaults() }
+                        ComboBox {
+                            id: rateBox
+                            objectName: "queueTargetRate"
+                            Layout.fillWidth: true
+                            editable: true
+                            model: ["30", "60", "120", "144", "240", "300", "360", "480", "600", "60000/1001"]
+                            onEditTextChanged: { page.targetRate = editText; page.markPlatformExportCustom() }
+                            onActivated: { page.markPlatformExportCustom(); page.persistDefaults() }
+                            onAccepted: { page.markPlatformExportCustom(); page.persistDefaults() }
+                        }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("输出容器"); font.bold: true }
-                        ComboBox { id: containerBox; Layout.fillWidth: true; model: ["mkv", "mp4", "mov"]; onActivated: { page.container = currentText; page.persistDefaults() } }
+                        ComboBox { id: containerBox; objectName: "queueContainer"; Layout.fillWidth: true; model: ["mkv", "mp4", "mov"]; onActivated: { page.markPlatformExportCustom(); page.container = currentText; page.persistDefaults() } }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
                         Label { text: qsTr("编码器"); font.bold: true }
-                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; onActivated: { page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
+                        ComboBox { id: encoderBox; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; onActivated: { page.markPlatformExportCustom(); page.encoder = ["auto", "libopenh264", "libkvazaar", "libaom-av1", "h264_nvenc"][currentIndex]; page.normalizeEncodingMode(); page.persistDefaults() } }
                     }
                 }
                 ActionButton { text: page.encodingAdvancedOpen ? qsTr("收起高级编码") : qsTr("高级编码设置"); flat: true; Layout.alignment: Qt.AlignLeft; onClicked: page.encodingAdvancedOpen = !page.encodingAdvancedOpen }
@@ -228,7 +287,7 @@ Item {
                                         : encoderBox.currentIndex === 3 ? [qsTr("目标码率"), qsTr("恒定质量 CRF")]
                                         : encoderBox.currentIndex === 4 ? [qsTr("目标码率"), qsTr("恒定质量 CQ")]
                                         : [qsTr("目标码率")]
-                                    onActivated: page.persistDefaults()
+                                    onActivated: { page.markPlatformExportCustom(); page.persistDefaults() }
                                 }
                             }
                             ColumnLayout {
@@ -241,18 +300,18 @@ Item {
                                     to: [2, 4].includes(encoderBox.currentIndex) ? 51 : 63
                                     value: 32
                                     enabled: encodingQualityMode.currentIndex === 1
-                                    onValueModified: page.persistDefaults()
+                                    onValueModified: { page.markPlatformExportCustom(); page.persistDefaults() }
                                 }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Label { text: qsTr("目标码率（kbit/s）") }
-                                SpinBox { id: encodingBitrate; objectName: "queueBitrateKbps"; from: 250; to: 200000; stepSize: 250; value: 8000; enabled: encodingQualityMode.currentIndex === 0; onValueModified: page.persistDefaults() }
+                                SpinBox { id: encodingBitrate; objectName: "queueBitrateKbps"; from: 250; to: 200000; stepSize: 250; value: 8000; enabled: encodingQualityMode.currentIndex === 0; onValueModified: { page.markPlatformExportCustom(); page.persistDefaults() } }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Label { text: qsTr("关键帧间隔（帧）") }
-                                SpinBox { id: encodingGop; objectName: "queueGopSize"; from: 0; to: 1000; value: 120; onValueModified: page.persistDefaults() }
+                                SpinBox { id: encodingGop; objectName: "queueGopSize"; from: 0; to: 1000; value: 120; onValueModified: { page.markPlatformExportCustom(); page.persistDefaults() } }
                             }
                         }
                         Label {

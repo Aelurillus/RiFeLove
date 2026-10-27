@@ -5,7 +5,7 @@ This document defines local export presets for creator uploads. RifeLove does no
 ## Two outputs, two purposes
 
 - **High-frame-rate master:** preserve the requested local target such as 120, 240, 300, 360, 480 or 600 FPS. This file is for local playback, editing and archival. It does not promise that a social platform will preserve playback above 60 FPS.
-- **Platform copy:** use the selected platform's currently documented compatibility range, container, color tags, dimensions and bitrate guidance. The first implementation should cap platform copies at 60 FPS unless current official documentation and an upload test establish a higher playback rate.
+- **Platform copy:** use the selected platform's documented compatibility range, container, color tags, dimensions and bitrate guidance. Default to 60 FPS; offer 120 FPS only as an explicitly experimental Bilibili option based on historical official documentation, with no playback guarantee until an account upload is tested.
 
 An upload platform transcodes the submitted file. A high bitrate cannot prevent that transcode; the preset should avoid unnecessary generation loss by matching the intended output rate, aspect ratio, resolution, color metadata and codec.
 
@@ -15,13 +15,15 @@ An upload platform transcodes the submitted file. A high bitrate cannot prevent 
 
 The current YouTube upload guidance recommends matching the recording frame rate, lists 24/25/30/48/50/60 as common, and says other rates are accepted. It recommends MP4, progressive H.264, 4:2:0, variable bitrate and BT.709 for SDR. For high-frame-rate SDR uploads, the recommended video bitrates are 12 Mbps at 1080p, 24 Mbps at 1440p and 53–68 Mbps at 2160p. These are upload recommendations, not a guarantee of the exact playback transcode. See [YouTube recommended upload encoding settings](https://support.google.com/youtube/answer/1722171?hl=en).
 
-The preset should keep an existing 300+ FPS master separate from the YouTube copy. Until a YouTube upload is tested end to end, use the documented 48–60 FPS guidance for the platform copy and make the selected output rate visible before processing.
+The preset keeps an existing 300+ FPS master separate from the YouTube copy. The Studio preset uses the official high-frame-rate bitrate by the current source height, with 1080p as the no-video fallback. Queue applies one bitrate to all selected files and uses the official 1080p reference, so mixed resolutions may need a manual adjustment. Until an upload is tested end to end, use 60 FPS for the platform copy and make the selected output rate visible before processing.
 
 ### Bilibili
 
 Bilibili's official quality announcement documents 720p60 and 1080p60 playback tiers. The page is an older announcement and includes historical limits, so its old bitrate numbers must not be treated as current upload rules. See [Bilibili's 60 FPS quality announcement](https://www.bilibili.com/blackboard/activity-quality2pc.html).
 
-The initial preset should target 1080p60 H.264 MP4 as a compatibility option, while leaving bitrate configurable and labeling the current upload limits as unverified. Before publishing a stronger preset, check the current Creator Center rules and upload a sample through the user's actual account tier.
+Bilibili also published an official 4K120 activity page. This confirms a historical 120 FPS workflow, but does not establish current eligibility or playback behavior for every account. The 120 FPS option is therefore labeled experimental and needs a fresh upload test through the user's account. See [Bilibili's 4K120 activity page](https://www.bilibili.com/blackboard/activity-4K120FPS-PC.html).
+
+The 60 FPS preset targets H.264 MP4 as a compatibility option. The 120 FPS preset is experimental; both use local bitrate estimates, not current platform rules. Before relying on either, check Creator Center and inspect a sample upload through the user's account tier.
 
 ### Douyin
 
@@ -40,7 +42,7 @@ The initial local preset should preserve the input aspect ratio unless the user 
 
 ## Remaining qualification work
 
-1. Add platform profiles to Studio and Queue and persist the chosen profile locally.
+1. Add platform profiles to Studio and Queue and persist the chosen profile locally. Implemented: YouTube 60 FPS, Bilibili 60 FPS and experimental 120 FPS, and Douyin 30/60 FPS presets; all produce local MP4 settings and never upload from RifeLove.
 2. Test H.264/AAC container compatibility and metadata on each platform's current upload flow.
 3. Upload short, consented samples through real Bilibili, Douyin and YouTube accounts; inspect the processed playback stream and compare it with the local file.
 4. Re-check official platform rules before each release. Do not infer a 300+ FPS playback guarantee from accepting a high-frame-rate upload file.

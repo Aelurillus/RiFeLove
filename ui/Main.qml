@@ -4,6 +4,7 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import "ProgressEstimate.js" as ProgressEstimate
+import "PlatformExportProfiles.js" as PlatformExportProfiles
 
 ApplicationWindow {
     id: window
@@ -32,6 +33,8 @@ ApplicationWindow {
     property url runtimeFolder: ""
     property url restorationModelFolder: ""
     property string inferenceBackend: "auto"
+    property string platformExportProfile: "custom"
+    property bool applyingPlatformExportProfile: false
     property real cutMeanDifference: 0.25
     property bool advancedOpen: false
     property bool encodingAdvancedOpen: false
@@ -150,6 +153,7 @@ ApplicationWindow {
 
     function applyLocalDefaults(profileValues) {
         if (!processingAvailable) return
+        applyingPlatformExportProfile = true
         const values = profileValues || taskQueue.defaults || ({})
         if (profileValues) {
             modelFolder = values.model && values.model.toString() ? values.model : ""
@@ -160,6 +164,8 @@ ApplicationWindow {
             if (!runtimeFolder.toString() && values.runtime && values.runtime.toString()) runtimeFolder = values.runtime
             if (!restorationModelFolder.toString() && values.restorationModel && values.restorationModel.toString()) restorationModelFolder = values.restorationModel
         }
+        platformExportProfile = values.platformExportProfile || "custom"
+        if (values.container) studioContainerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(values.container)
         if (values.rate) rate.editText = values.rate
         if (values.encoder) encoder.currentIndex = window.encoderIds.indexOf(values.encoder)
         inferenceBackend = ["auto", "cuda", "tensorrt"].includes(values.inferenceBackend) ? values.inferenceBackend : "auto"
@@ -170,6 +176,7 @@ ApplicationWindow {
         studioGop.value = Number(values.gopSize === undefined ? 120 : values.gopSize)
         studioQualityMode.currentIndex = values.qualityMode === "qp" || values.qualityMode === "crf" || values.qualityMode === "cq" ? 1 : 0
         normalizeEncodingMode()
+        applyingPlatformExportProfile = false
     }
     function normalizeEncodingMode() {
         if (![2, 3, 4].includes(encoder.currentIndex) && studioQualityMode.currentIndex > 0) studioQualityMode.currentIndex = 0
@@ -198,16 +205,45 @@ ApplicationWindow {
     function persistLocalDefaults() {
         if (!processingAvailable) return
         taskQueue.saveDefaults(rate.editText, modelFolder, runtimeFolder, taskQueue.defaults.output || "",
-            window.selectedEncoderId, taskQueue.defaults.container || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference)
+            window.selectedEncoderId, studioContainerBox.currentText || "mkv", encodingOptions(), inferenceBackend, cutMeanDifference, platformExportProfile)
         taskQueue.setDefaultRestorationModel(restorationModelFolder)
     }
     function localProfileValues() {
         const options = encodingOptions()
         return {rate: rate.editText, model: modelFolder, runtime: runtimeFolder,
             output: taskQueue.defaults.output || "", encoder: window.selectedEncoderId,
-            container: taskQueue.defaults.container || "mkv", bitrateKbps: options.bitrateKbps,
+            container: studioContainerBox.currentText || "mkv", platformExportProfile: platformExportProfile, bitrateKbps: options.bitrateKbps,
             qualityMode: options.qualityMode, quality: options.quality, gopSize: options.gopSize,
             inferenceBackend: inferenceBackend, cutMeanDifference: cutMeanDifference}
+    }
+    function applyPlatformExportProfile(profileId) {
+        const preset = PlatformExportProfiles.makePreset(profileId, window.info.height)
+        applyingPlatformExportProfile = true
+        platformExportProfile = profileId || "custom"
+        if (preset) {
+            rate.editText = preset.rate
+            studioContainerBox.currentIndex = ["mkv", "mp4", "mov"].indexOf(preset.container)
+            encoder.currentIndex = window.encoderIds.indexOf(preset.encoder)
+            studioBitrate.value = preset.bitrateKbps
+            studioQualityMode.currentIndex = 0
+            studioGop.value = preset.gopSize
+        }
+        applyingPlatformExportProfile = false
+        persistLocalDefaults()
+    }
+    function platformExportHint() {
+        if (platformExportProfile === "bilibili120")
+            return qsTr("Bilibili 的 120 FPS 依据历史官方活动信息；当前账号与转码行为仍需实测。")
+        if (platformExportProfile === "youtube60")
+            return qsTr("YouTube 60 FPS SDR 按当前视频分辨率使用官方建议码率；未加载视频时按 1080p 默认。平台仍会转码，300 FPS 以上母版需单独输出。")
+        if (platformExportProfile === "douyin30" || platformExportProfile === "douyin60")
+            return qsTr("抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。")
+        if (platformExportProfile === "bilibili60")
+            return qsTr("Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。")
+        return qsTr("平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。")
+    }
+    function markPlatformExportCustom() {
+        if (!applyingPlatformExportProfile) platformExportProfile = "custom"
     }
     function ensureStartupModelValidation() {
         if (!processingAvailable || !taskQueue || !taskQueue.available || window.startupModelValidationStarted ||
@@ -578,6 +614,31 @@ ApplicationWindow {
                             available: processingAvailable && !window.active && taskQueue.available
                         }
                     }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: 13
+                        color: "#F8FAFB"
+                        border.color: "#DCE4E9"
+                        implicitHeight: exportProfileLayout.implicitHeight + 20
+                        ColumnLayout {
+                            id: exportProfileLayout
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 5
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("平台导出预设"); font.bold: true; Layout.preferredWidth: 105 }
+                                PlatformExportPicker {
+                                    objectName: "studioPlatformExportProfile"
+                                    Layout.fillWidth: true
+                                    profileId: window.platformExportProfile
+                                    controlObjectName: "studioPlatformExportProfileCombo"
+                                    onActivated: function(profileId) { window.applyPlatformExportProfile(profileId) }
+                                }
+                            }
+                            Label { text: window.platformExportHint(); color: "#697B8B"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12 }
+                        }
+                    }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 16
@@ -595,13 +656,39 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Label { text: qsTr("目标帧率"); font.bold: true; Layout.fillWidth: true }
+                                    Label { text: qsTr("输出容器"); font.bold: true; Layout.fillWidth: true }
                                     Label { text: qsTr("编码器"); font.bold: true; Layout.fillWidth: true }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 12
-                                    ComboBox { id: rate; objectName: "targetRate"; Layout.fillWidth: true; editable: true; model: ["60", "120", "144", "240", "300", "360", "480", "600", "60000/1001"]; enabled: !window.active; onActivated: window.persistLocalDefaults(); onAccepted: window.persistLocalDefaults() }
-                                    ComboBox { id: encoder; objectName: "studioEncoder"; Layout.fillWidth: true; model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]; enabled: !window.active; onActivated: { window.normalizeEncodingMode(); window.persistLocalDefaults() } }
+                                    ComboBox {
+                                        id: rate
+                                        objectName: "targetRate"
+                                        Layout.fillWidth: true
+                                        editable: true
+                                        model: ["30", "60", "120", "144", "240", "300", "360", "480", "600", "60000/1001"]
+                                        enabled: !window.active
+                                        onEditTextChanged: window.markPlatformExportCustom()
+                                        onActivated: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
+                                        onAccepted: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
+                                    }
+                                    ComboBox {
+                                        id: studioContainerBox
+                                        objectName: "studioContainer"
+                                        Layout.fillWidth: true
+                                        model: ["mkv", "mp4", "mov"]
+                                        enabled: !window.active
+                                        onActivated: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
+                                    }
+                                    ComboBox {
+                                        id: encoder
+                                        objectName: "studioEncoder"
+                                        Layout.fillWidth: true
+                                        model: [qsTr("自动编码（优先 NVENC）"), qsTr("H.264 软件"), qsTr("HEVC 软件"), qsTr("AV1 软件"), qsTr("NVIDIA H.264（NVENC）")]
+                                        enabled: !window.active
+                                        onActivated: { window.markPlatformExportCustom(); window.normalizeEncodingMode(); window.persistLocalDefaults() }
+                                    }
                                 }
                             }
                         }
@@ -653,7 +740,7 @@ ApplicationWindow {
                                             : encoder.currentIndex === 4 ? [qsTr("目标码率"), qsTr("恒定质量 CQ")]
                                             : [qsTr("目标码率")]
                                         enabled: !window.active
-                                        onActivated: window.persistLocalDefaults()
+                                        onActivated: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
                                     }
                                 }
                                 ColumnLayout {
@@ -666,7 +753,7 @@ ApplicationWindow {
                                         to: [2, 4].includes(encoder.currentIndex) ? 51 : 63
                                         value: 32
                                         enabled: !window.active && studioQualityMode.currentIndex === 1
-                                        onValueModified: window.persistLocalDefaults()
+                                        onValueModified: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
                                     }
                                 }
                                 ColumnLayout {
@@ -680,7 +767,7 @@ ApplicationWindow {
                                         stepSize: 250
                                         value: 8000
                                         enabled: !window.active && studioQualityMode.currentIndex === 0
-                                        onValueModified: window.persistLocalDefaults()
+                                        onValueModified: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
                                     }
                                 }
                                 ColumnLayout {
@@ -693,7 +780,7 @@ ApplicationWindow {
                                         to: 1000
                                         value: 120
                                         enabled: !window.active
-                                        onValueModified: window.persistLocalDefaults()
+                                        onValueModified: { window.markPlatformExportCustom(); window.persistLocalDefaults() }
                                     }
                                 }
                             }

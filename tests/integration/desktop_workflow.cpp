@@ -339,6 +339,38 @@ int main(int argc, char** argv) {
             taskQueue.defaults().value("container").toString() == QStringLiteral("mp4") &&
             std::abs(taskQueue.defaults().value("cutMeanDifference").toDouble() - 0.73) < 1e-12; },
             "The desktop did not restore its defaults after the profile workflow");
+        require(QMetaObject::invokeMethod(root,"applyPlatformExportProfile",Qt::DirectConnection,
+                    Q_ARG(QVariant,QVariant(QStringLiteral("youtube60")))),
+            "Studio did not expose the platform export profile action");
+        waitUntil([&] { return taskQueue.defaults().value("platformExportProfile").toString() == QStringLiteral("youtube60") &&
+            taskQueue.defaults().value("rate").toString() == QStringLiteral("60") &&
+            taskQueue.defaults().value("container").toString() == QStringLiteral("mp4") &&
+            taskQueue.defaults().value("bitrateKbps").toInt() == 12000; },
+            "Studio did not persist the YouTube SDR profile settings");
+        require(QMetaObject::invokeMethod(queuePage,"applyPlatformExportProfile",Qt::DirectConnection,
+                    Q_ARG(QVariant,QVariant(QStringLiteral("bilibili120")))),
+            "Queue did not expose the platform export profile action");
+        waitUntil([&] { return taskQueue.defaults().value("platformExportProfile").toString() == QStringLiteral("bilibili120") &&
+            taskQueue.defaults().value("rate").toString() == QStringLiteral("120") &&
+            taskQueue.defaults().value("container").toString() == QStringLiteral("mp4") &&
+            taskQueue.defaults().value("bitrateKbps").toInt() == 40000; },
+            "Queue did not persist the Bilibili experimental profile settings");
+        const auto queueContainer = queuePage->findChild<QObject*>("queueContainer");
+        require(queueContainer && queueContainer->property("currentText").toString() == QStringLiteral("mp4"),
+            "Queue did not apply the MP4 container to its export controls");
+        require(targetRate->setProperty("editText","360") &&
+                QMetaObject::invokeMethod(root,"persistLocalDefaults",Qt::DirectConnection),
+            "Could not change the platform profile back to a high-frame-rate master");
+        waitUntil([&] { return taskQueue.defaults().value("platformExportProfile").toString() == QStringLiteral("custom") &&
+            taskQueue.defaults().value("rate").toString() == QStringLiteral("360"); },
+            "Manually changing the frame rate did not restore the custom master profile");
+        taskQueue.saveDefaults(QStringLiteral("240"),QUrl::fromLocalFile(arguments[3]),QUrl::fromLocalFile(arguments[4]),
+            QUrl::fromLocalFile(queueFolder),QStringLiteral("libopenh264"),QStringLiteral("mp4"),
+            {{"bitrateKbps",4500},{"qualityMode",QStringLiteral("bitrate")},{"quality",32},{"gopSize",60}},
+            QStringLiteral("auto"),0.73,QStringLiteral("custom"));
+        waitUntil([&] { return taskQueue.defaults().value("platformExportProfile").toString() == QStringLiteral("custom") &&
+            taskQueue.defaults().value("rate").toString() == QStringLiteral("240"); },
+            "The desktop did not restore the custom high-frame-rate master profile");
         // Confirm restoration above, then keep the synthetic workflow short.
         require(targetRate->setProperty("editText","60"), "Could not set the synthetic workflow FPS");
         const auto unverifiedModel = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("corrupt-model-copy");
