@@ -461,705 +461,724 @@
 <context>
     <name>Main</name>
     <message>
-        <location filename="../Main.qml" line="465" />
+        <location filename="../Main.qml" line="529" />
         <source>详细媒体信息（%1 条轨道）</source>
         <translation>媒體詳細資訊（%1 條軌道）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="464" />
+        <location filename="../Main.qml" line="528" />
         <source>收起媒体详细信息</source>
         <translation>收起媒體詳細資訊</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="59" />
+        <location filename="../Main.qml" line="60" />
         <source>模型校验失败</source>
         <translation>模型驗證失敗</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="62" />
+        <location filename="../Main.qml" line="63" />
         <source>正在校验本地模型…</source>
         <translation>正在驗證本機模型…</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="62" />
+        <location filename="../Main.qml" line="63" />
         <source>本地模型未校验</source>
         <translation>本機模型尚未驗證</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="132" />
+        <location filename="../Main.qml" line="193" />
         <source>软件 H.264</source>
         <translation>軟體 H.264</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="133" />
+        <location filename="../Main.qml" line="194" />
         <source>软件 HEVC</source>
         <translation>軟體 HEVC</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="134" />
+        <location filename="../Main.qml" line="195" />
         <source>软件 AV1</source>
         <translation>軟體 AV1</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="135" />
+        <location filename="../Main.qml" line="196" />
         <source>兼容的软件编码器</source>
         <translation>相容的軟體編碼器</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="157" />
+        <location filename="../Main.qml" line="219" />
         <source>导入后会检查本机的 GPU 与视频编码能力。</source>
         <translation>匯入後會檢查本機 GPU 與影片編碼能力。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="158" />
+        <location filename="../Main.qml" line="220" />
         <source>所选模型没有声明支持这个 10-bit SDR 输入配置。</source>
         <translation>所選模型未宣告支援此 10-bit SDR 輸入設定檔。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="162" />
+        <location filename="../Main.qml" line="224" />
         <source>NVENC 恒定质量 CQ 可用；画质参数由 NVIDIA 视频编码器处理。</source>
         <translation>NVENC 固定品質 CQ 可用；畫質參數由 NVIDIA 影片編碼器處理。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="163" />
+        <location filename="../Main.qml" line="225" />
         <source>当前源视频无法初始化 NVENC；请切换到自动编码或软件编码。</source>
         <translation>目前來源影片無法初始化 NVENC；請改用自動或軟體編碼。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="166" />
+        <location filename="../Main.qml" line="228" />
         <source>NVENC 当前不可用；自动模式会用%1编码，RIFE 仍由 CUDA 推理。</source>
         <translation>NVENC 目前無法使用；自動模式會使用%1編碼，RIFE 仍由 CUDA 推論。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="168" />
+        <location filename="../Main.qml" line="230" />
         <source>NVENC 可以初始化；最终以实际导出结果为准。</source>
         <translation>NVENC 已成功初始化；實際編碼結果仍以匯出檔案為準。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="169" />
+        <location filename="../Main.qml" line="231" />
         <source>没有兼容的自动编码器，请检查本机视频运行环境。</source>
         <translation>沒有相容的自動編碼器，請檢查本機影片執行環境。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="188" />
+        <location filename="../Main.qml" line="250" />
         <source>色彩格式暂不支持</source>
         <translation>暫不支援此色彩格式</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="189" />
+        <location filename="../Main.qml" line="251" />
         <source>NVIDIA GPU 不可用</source>
         <translation>NVIDIA GPU 無法使用</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="190" />
+        <location filename="../Main.qml" line="252" />
         <source>请先在模型中心选择本地模型</source>
         <translation>請先在模型中心選擇本機模型</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="191" />
+        <location filename="../Main.qml" line="253" />
         <source>正在校验所选本地模型…</source>
         <translation>正在驗證所選本機模型…</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="192" />
+        <location filename="../Main.qml" line="254" />
         <source>所选模型未通过本机校验，请在模型中心检查</source>
         <translation>所選模型未通過本機驗證，請在模型中心檢查</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="193" />
+        <location filename="../Main.qml" line="255" />
         <source>所选模型不支持此输入配置</source>
         <translation>所選模型不支援此輸入設定檔</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="194" />
+        <location filename="../Main.qml" line="257" />
         <source>所选编码器不可用</source>
         <translation>所選編碼器無法使用</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="195" />
+        <location filename="../Main.qml" line="258" />
         <source>请配置本地推理运行库</source>
         <translation>請設定本機推論執行階段</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="196" />
-        <location filename="../Main.qml" line="198" />
+        <location filename="../Main.qml" line="259" />
+        <location filename="../Main.qml" line="261" />
         <source>可以开始</source>
         <translation>可以開始</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="198" />
+        <location filename="../Main.qml" line="261" />
         <source>等待导入</source>
         <translation>等待匯入</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="198" />
+        <location filename="../Main.qml" line="261" />
         <source>读取视频信息</source>
         <translation>正在讀取影片資訊</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="199" />
+        <location filename="../Main.qml" line="262" />
         <source>校验源文件</source>
         <translation>正在驗證來源檔案</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="199" />
+        <location filename="../Main.qml" line="262" />
         <source>等待处理引擎</source>
         <translation>等待處理引擎</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="200" />
+        <location filename="../Main.qml" line="263" />
         <source>加载本地模型</source>
         <translation>正在載入本機模型</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="200" />
+        <location filename="../Main.qml" line="264" />
         <source>正在补帧</source>
         <translation>正在補幀</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="186" />
+        <location filename="../Main.qml" line="248" />
         <source>等待 GPU 输出新帧</source>
         <translation>等待 GPU 輸出新影格</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="779" />
+        <location filename="../Main.qml" line="873" />
         <source>超过 60 秒没有新帧；可能是 GPU 资源竞争或推理卡住。输出尚未完成验证。</source>
         <translation>超過 60 秒沒有新影格；可能是 GPU 資源競爭或推論沒有回應。輸出尚未完成驗證。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="200" />
+        <location filename="../Main.qml" line="264" />
         <source>正在编码</source>
         <translation>正在編碼</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="201" />
+        <location filename="../Main.qml" line="265" />
         <source>验证输出视频</source>
         <translation>正在驗證輸出影片</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="201" />
+        <location filename="../Main.qml" line="265" />
         <source>切换编码器</source>
         <translation>正在切換編碼器</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="201" />
+        <location filename="../Main.qml" line="265" />
         <source>处理完成</source>
         <translation>處理完成</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="202" />
+        <location filename="../Main.qml" line="266" />
         <source>处理失败</source>
         <translation>處理失敗</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="202" />
+        <location filename="../Main.qml" line="266" />
         <source>正在安全取消</source>
         <translation>正在安全取消</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="202" />
+        <location filename="../Main.qml" line="266" />
         <source>已取消</source>
         <translation>已取消</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="202" />
+        <location filename="../Main.qml" line="266" />
         <source>处理组件未启用</source>
         <translation>處理元件未啟用</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="203" />
+        <location filename="../Main.qml" line="267" />
         <source>正在处理</source>
         <translation>正在處理</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="213" />
+        <location filename="../Main.qml" line="277" />
         <source>选择视频</source>
         <translation>選擇影片</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="214" />
+        <location filename="../Main.qml" line="278" />
         <source>视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)</source>
         <translation>影片檔案 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="214" />
+        <location filename="../Main.qml" line="278" />
         <source>所有文件 (*)</source>
         <translation>所有檔案 (*)</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="219" />
+        <location filename="../Main.qml" line="283" />
         <source>保存补帧视频</source>
         <translation>儲存補幀影片</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="224" />
+        <location filename="../Main.qml" line="288" />
         <source>选择 ONNX CUDA 运行库目录</source>
         <translation>選擇 ONNX CUDA 執行階段資料夾</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="232" />
+        <location filename="../Main.qml" line="296" />
         <source>正在处理视频</source>
         <translation>正在處理影片</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="234" />
+        <location filename="../Main.qml" line="298" />
         <source>取消导入或当前任务，并等待资源清理后，可关闭窗口。</source>
         <translation>取消匯入或目前任務，並等待資源清理後再關閉視窗。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="270" />
+        <location filename="../Main.qml" line="334" />
         <source>离线视频工作台</source>
         <translation>離線影片工作區</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="274" />
-        <location filename="../Main.qml" line="275" />
+        <location filename="../Main.qml" line="338" />
+        <location filename="../Main.qml" line="339" />
         <source>工作区</source>
         <translation>工作區</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="292" />
+        <location filename="../Main.qml" line="356" />
         <source>本机加速器</source>
         <translation>本機加速器</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="295" />
+        <location filename="../Main.qml" line="359" />
         <source>未检测到 NVIDIA GPU</source>
         <translation>未偵測到 NVIDIA GPU</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="303" />
+        <location filename="../Main.qml" line="367" />
         <source>显存 %1 GB · CUDA %2</source>
         <translation>顯示記憶體 %1 GB · CUDA %2</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="312" />
+        <location filename="../Main.qml" line="376" />
         <source>NVENC 不可用 · 自动使用%1</source>
         <translation>NVENC 無法使用 · 自動改用%1</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="313" />
+        <location filename="../Main.qml" line="377" />
         <source>NVENC 编码器可初始化</source>
         <translation>NVENC 編碼器已初始化</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="313" />
+        <location filename="../Main.qml" line="377" />
         <source>H.264 编码器不可用</source>
         <translation>H.264 編碼器無法使用</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="319" />
+        <location filename="../Main.qml" line="383" />
         <source>源文件不会被修改</source>
         <translation>來源檔案不會被修改</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="276" />
+        <location filename="../Main.qml" line="340" />
         <source>插帧工作室</source>
         <translation>補幀工作室</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="277" />
+        <location filename="../Main.qml" line="69" />
+        <source>关闭视频修复</source>
+        <translation>停用影片修復</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="80" />
+        <source>本地修复模型</source>
+        <translation>本機修復模型</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="81" />
+        <source>去模糊（实验）</source>
+        <translation>去模糊（實驗）</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="121" />
+        <source>逐帧去模糊：输出保持 %1 × %2。该模型无时间上下文，可能出现闪烁，建议先测试短片。</source>
+        <translation>逐格去模糊：輸出維持 %1 × %2。此模型沒有時間上下文，可能會閃爍，建議先測試短片。</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="256" />
+        <source>所选视频修复模型不支持这个色彩配置或分辨率</source>
+        <translation>所選影片修復模型不支援此色彩設定或解析度</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="263" />
+        <source>加载视频修复模型（TensorRT 首次构建可能需要数分钟）</source>
+        <translation>正在載入影片修復模型（首次建置 TensorRT 引擎可能需要數分鐘）</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="264" />
+        <source>正在进行视频修复</source>
+        <translation>正在進行影片修復</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="341" />
         <source>任务队列</source>
         <translation>任務佇列</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="278" />
+        <location filename="../Main.qml" line="342" />
         <source>模型中心</source>
         <translation>模型中心</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="279" />
+        <location filename="../Main.qml" line="343" />
         <source>对比预览</source>
         <translation>比較預覽</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="377" />
+        <location filename="../Main.qml" line="441" />
         <source>让每一段运动都更流畅</source>
         <translation>讓每一段動作都更流暢</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="378" />
+        <location filename="../Main.qml" line="442" />
         <source>选择视频与目标帧率，RifeLove 会保留原片并生成新文件。</source>
         <translation>選擇影片與目標影格率，RifeLove 會保留原片並建立新檔案。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="452" />
+        <location filename="../Main.qml" line="516" />
         <source>导入视频</source>
         <translation>匯入影片</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="453" />
+        <location filename="../Main.qml" line="517" />
         <source>选择文件</source>
         <translation>選擇檔案</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="455" />
+        <location filename="../Main.qml" line="519" />
         <source>将一个视频拖到这里，或选择文件</source>
         <translation>將影片拖曳到此處，或選擇檔案</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="533" />
+        <location filename="../Main.qml" line="597" />
         <source>目标帧率</source>
         <translation>目標影格率</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="534" />
+        <location filename="../Main.qml" line="598" />
         <source>编码器</source>
         <translation>編碼器</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="540" />
+        <location filename="../Main.qml" line="604" />
         <source>自动编码（优先 NVENC）</source>
         <translation>自動編碼（優先使用 NVENC）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="540" />
+        <location filename="../Main.qml" line="604" />
         <source>H.264 软件</source>
         <translation>H.264 軟體</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="540" />
+        <location filename="../Main.qml" line="604" />
         <source>HEVC 软件</source>
         <translation>HEVC 軟體</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="540" />
+        <location filename="../Main.qml" line="604" />
         <source>AV1 软件</source>
         <translation>AV1 軟體</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="540" />
+        <location filename="../Main.qml" line="604" />
         <source>NVIDIA H.264（NVENC）</source>
         <translation>NVIDIA H.264（NVENC）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="558" />
+        <location filename="../Main.qml" line="622" />
         <source>输出文件</source>
         <translation>輸出檔案</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="559" />
+        <location filename="../Main.qml" line="623" />
         <source>选择位置</source>
         <translation>選擇位置</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="561" />
+        <location filename="../Main.qml" line="625" />
         <source>导入视频后自动生成新文件名</source>
         <translation>匯入影片後會自動產生新檔名</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="566" />
+        <location filename="../Main.qml" line="630" />
         <source>收起高级编码</source>
         <translation>收合進階編碼</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="566" />
+        <location filename="../Main.qml" line="630" />
         <source>高级编码设置</source>
         <translation>進階編碼設定</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="572" />
+        <location filename="../Main.qml" line="636" />
         <source>高级编码</source>
         <translation>進階編碼</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="582" />
+        <location filename="../Main.qml" line="646" />
         <source>码率控制</source>
         <translation>位元率控制</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="587" />
-        <location filename="../Main.qml" line="588" />
-        <location filename="../Main.qml" line="589" />
-        <location filename="../Main.qml" line="590" />
+        <location filename="../Main.qml" line="651" />
+        <location filename="../Main.qml" line="652" />
+        <location filename="../Main.qml" line="653" />
+        <location filename="../Main.qml" line="654" />
         <source>目标码率</source>
         <translation>目標位元率</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="587" />
+        <location filename="../Main.qml" line="651" />
         <source>恒定量化 QP</source>
         <translation>固定量化 QP</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="588" />
+        <location filename="../Main.qml" line="652" />
         <source>恒定质量 CRF</source>
         <translation>固定品質 CRF</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="589" />
+        <location filename="../Main.qml" line="653" />
         <source>恒定质量 CQ</source>
         <translation>固定品質 CQ</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="597" />
+        <location filename="../Main.qml" line="661" />
         <source>QP（0–51）</source>
         <translation>QP（0–51）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="597" />
+        <location filename="../Main.qml" line="661" />
         <source>CQ（0–51）</source>
         <translation>CQ（0–51）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="597" />
+        <location filename="../Main.qml" line="661" />
         <source>CRF（0–63）</source>
         <translation>CRF（0–63）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="597" />
+        <location filename="../Main.qml" line="661" />
         <source>目标质量</source>
         <translation>目標品質</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="610" />
+        <location filename="../Main.qml" line="674" />
         <source>目标码率（kbit/s）</source>
         <translation>目標位元率（kbit/s）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="624" />
+        <location filename="../Main.qml" line="688" />
         <source>关键帧间隔（帧）</source>
         <translation>關鍵影格間隔（格）</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="637" />
+        <location filename="../Main.qml" line="701" />
         <source>HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。</source>
         <translation>HEVC 固定量化使用 Kvazaar QP；較低的 QP 通常會產生較大的檔案。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="638" />
+        <location filename="../Main.qml" line="702" />
         <source>AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。</source>
         <translation>AV1 固定品質使用 CRF；較低的 CRF 通常會產生較大的檔案。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="639" />
+        <location filename="../Main.qml" line="703" />
         <source>NVENC 恒定质量使用 VBR + CQ（0–51），需要可用的 NVIDIA 视频编码驱动；较低 CQ 通常会生成更大的文件。</source>
         <translation>NVENC 固定品質使用 VBR + CQ（0–51），需要可用的 NVIDIA 影片編碼驅動程式；較低的 CQ 通常會產生較大的檔案。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="640" />
+        <location filename="../Main.qml" line="704" />
         <source>自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。</source>
         <translation>自動模式會依照驅動程式與來源像素格式選擇 NVENC、軟體 H.264、HEVC 或 AV1，並盡可能保留來源位元深度。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="649" />
+        <location filename="../Main.qml" line="714" />
         <source>收起模型与运行库设置</source>
         <translation>收合模型與執行階段設定</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="649" />
+        <location filename="../Main.qml" line="714" />
         <source>高级设置 · 模型与运行库</source>
         <translation>進階設定 · 模型與執行階段</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="655" />
+        <location filename="../Main.qml" line="720" />
         <source>本地模型与运行库</source>
         <translation>本機模型與執行階段</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="662" />
+        <location filename="../Main.qml" line="727" />
         <source>模型包</source>
         <translation>模型套件</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="665" />
+        <location filename="../Main.qml" line="730" />
         <source>尚未选择已校验模型</source>
         <translation>尚未選擇已驗證模型</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="669" />
+        <location filename="../Main.qml" line="734" />
         <source>打开模型中心</source>
         <translation>開啟模型中心</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="672" />
+        <location filename="../Main.qml" line="737" />
         <source>运行库</source>
         <translation>執行階段</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="673" />
+        <location filename="../Main.qml" line="738" />
         <source>包含 ONNX Runtime / CUDA DLL 的目录</source>
         <translation>包含 ONNX Runtime / CUDA DLL 的資料夾</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="674" />
+        <location filename="../Main.qml" line="739" />
         <source>浏览</source>
         <translation>瀏覽</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="702" />
+        <location filename="../Main.qml" line="742" />
+        <source>视频修复</source>
+        <translation>影片修復</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="761" />
+        <source>。只运行已校验的本地 SDR 模型；每个输出帧都会修复并增加处理时间。去模糊为实验功能。</source>
+        <translation>。只使用已驗證的本機 SDR 模型；每個輸出影格都會修復，因此需要更多處理時間。去模糊功能仍屬實驗性。</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="793" />
         <source>模型必须先在本地模型中心通过完整性校验，再设为默认模型。色彩路径支持明确标记的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩的视频会被拦截。模型和运行库只从本机目录读取。</source>
         <translation>模型必須先在本機模型中心通過完整性檢查，才能設為預設模型。色彩路徑支援明確標記的 BT.709 與 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位元深度及未標記色彩的影片會被拒絕。模型與執行階段只會從本機資料夾讀取。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="717" />
+        <location filename="../Main.qml" line="808" />
         <source>CPU H.264</source>
         <translation>CPU H.264</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="718" />
+        <location filename="../Main.qml" line="809" />
         <source>CPU HEVC</source>
         <translation>CPU HEVC</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="719" />
+        <location filename="../Main.qml" line="810" />
         <source>CPU AV1</source>
         <translation>CPU AV1</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="720" />
+        <location filename="../Main.qml" line="811" />
         <source>CPU 软件</source>
         <translation>CPU 軟體</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="721" />
+        <location filename="../Main.qml" line="812" />
         <source>%1 / 约 %2 帧</source>
         <translation>%1 / 約 %2 格</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="721" />
+        <location filename="../Main.qml" line="812" />
         <source>%1 帧</source>
         <translation>%1 格</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="722" />
+        <location filename="../Main.qml" line="813" />
         <source> 处理 FPS</source>
         <translation> 處理 FPS</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="724" />
+        <location filename="../Main.qml" line="815" />
         <source>%1 编码 · CUDA RIFE 插帧</source>
         <translation>%1 編碼 · CUDA RIFE 補幀</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="727" />
+        <location filename="../Main.qml" line="818" />
         <source>剩余约 %1</source>
         <translation>剩餘約 %1</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="729" />
+        <location filename="../Main.qml" line="820" />
         <source>预计剩余时间计算中</source>
         <translation>正在計算預估剩餘時間</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="735" />
+        <location filename="../Main.qml" line="826" />
         <source>取消</source>
         <translation>取消</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="738" />
+        <location filename="../Main.qml" line="829" />
         <source>开始补帧</source>
         <translation>開始補幀</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="761" />
+        <location filename="../Main.qml" line="853" />
         <source>累计耗时：RIFE 推理 %1 秒 · 视频编码 %2 秒 · 解码 %3 秒 · 预处理/色彩 %4 秒</source>
         <translation>累計耗時：RIFE 推論 %1 秒 · 影片編碼 %2 秒 · 解碼 %3 秒 · 前處理/色彩 %4 秒</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="767" />
+        <location filename="../Main.qml" line="859" />
         <source> · 输出验证 %1 秒</source>
         <translation> · 輸出驗證 %1 秒</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="777" />
+        <location filename="../Main.qml" line="861" />
+        <source> · 视频修复 %1 秒</source>
+        <translation> · 影片修復 %1 秒</translation>
+    </message>
+    <message>
+        <location filename="../Main.qml" line="871" />
         <source>请使用启用媒体和 ONNX CUDA 的桌面构建。</source>
         <translation>請使用已啟用媒體與 ONNX CUDA 的桌面建置版本。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="376" />
+        <location filename="../Main.qml" line="440" />
         <source>RIFELOVE  /  MOTION STUDIO</source>
         <translation>RIFELOVE  /  MOTION STUDIO</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="414" />
+        <location filename="../Main.qml" line="478" />
         <source>源帧     ·     RIFE 生成     ·     补帧输出</source>
         <translation>來源影格     ·     RIFE 補幀     ·     輸出影片</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="422" />
+        <location filename="../Main.qml" line="486" />
         <source>●  本地模型已校验 · CUDA 推理</source>
         <translation>●  本機模型已驗證 · CUDA 推論</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="422" />
+        <location filename="../Main.qml" line="486" />
         <source>●  CUDA 推理</source>
         <translation>●  CUDA 推論</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="677" />
+        <location filename="../Main.qml" line="768" />
         <source>推理后端</source>
         <translation>推理後端</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="681" />
+        <location filename="../Main.qml" line="772" />
         <source>自动：TensorRT 优先，失败时回退 CUDA</source>
         <translation>自動：優先使用 TensorRT，失敗時回退至 CUDA</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="681" />
+        <location filename="../Main.qml" line="772" />
         <source>仅 ONNX Runtime CUDA</source>
         <translation>僅使用 ONNX Runtime CUDA</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="681" />
+        <location filename="../Main.qml" line="772" />
         <source>必须使用 TensorRT</source>
         <translation>必須使用 TensorRT</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="688" />
+        <location filename="../Main.qml" line="779" />
         <source>镜头切换阈值</source>
         <translation>鏡頭切換閾值</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="701" />
+        <location filename="../Main.qml" line="792" />
         <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
         <translation>較低的值會將更多畫面變化判定為鏡頭切換，並減少跨切鏡補幀。</translation>
     </message>
     <message>
-        <location filename="../Main.qml" line="703" />
+        <location filename="../Main.qml" line="794" />
         <source>推理精度当前固定为 FP32。FP16 尚未通过数值与画质验证，因此不会用于处理。</source>
         <translation>推論精度目前固定為 FP32。FP16 尚未通過數值與畫質驗證，因此不會用於處理。</translation>
     </message>
-
     <message>
-        <source>关闭超分</source>
-        <translation>停用超分辨率</translation>
-    </message>
-    <message>
-        <source>本地超分模型</source>
-        <translation>本機超分辨率模型</translation>
-    </message>
-    <message>
+        <location filename="../Main.qml" line="123" />
         <source>输出分辨率按所选模型的倍率生成。</source>
         <translation>輸出解析度依所選模型倍率產生。</translation>
     </message>
     <message>
+        <location filename="../Main.qml" line="124" />
         <source>超分输出：%1 × %2（模型倍率 ×%3）</source>
         <translation>超分輸出：%1 × %2（模型倍率 ×%3）</translation>
-    </message>
-    <message>
-        <source>所选超分模型不支持这个色彩配置或分辨率</source>
-        <translation>所選超分模型不支援此色彩設定或解析度</translation>
-    </message>
-    <message>
-        <source>加载本地超分模型</source>
-        <translation>正在載入本機超分辨率模型</translation>
-    </message>
-    <message>
-        <source>正在进行超分</source>
-        <translation>正在進行超分辨率處理</translation>
-    </message>
-    <message>
-        <source>超分模型</source>
-        <translation>超分辨率模型</translation>
-    </message>
-    <message>
-        <source>。仅使用已校验的本地 SDR 模型；补帧后的每一帧都会运行超分，耗时会增加。</source>
-        <translation>。僅使用已驗證的本機 SDR 模型；補幀後的每一格都會執行超分辨率處理，因此耗時較長。</translation>
-    </message>
-    <message>
-        <source> · 超分 %1 秒</source>
-        <translation> · 超分辨率 %1 秒</translation>
     </message>
 </context>
 <context>
@@ -1336,594 +1355,600 @@
 <context>
     <name>QueueController</name>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="560" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="585" />
         <source>队列忙碌或尚未连接，请等待当前操作结束。</source>
         <translation>佇列忙碌或尚未連線，請等待目前作業完成。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="576" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="601" />
         <source>本地任务队列尚未连接，无法导出报告。</source>
         <translation>本機任務佇列尚未連線，無法匯出報告。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="622" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="647" />
         <source>正在校验本地模型及 SHA-256…</source>
         <translation>正在驗證本機模型與 SHA-256…</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="626" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="651" />
         <source>队列忙碌或本地模型校验正在运行。</source>
         <translation>佇列忙碌或本機模型正在驗證。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="627" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="652" />
         <source>只能添加本机目录中的模型包。</source>
         <translation>只能新增本機資料夾中的模型套件。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="628" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="653" />
         <source>正在验证模型描述、许可证和 ONNX SHA-256…</source>
         <translation>正在驗證模型描述檔、授權條款與 ONNX SHA-256…</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="633" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="658" />
         <source>正在更新本地模型列表…</source>
         <translation>正在更新本機模型清單…</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="637" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="662" />
         <source>默认模型必须位于本机目录。</source>
         <translation>預設模型必須位於本機資料夾。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="644" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="669" />
         <source>请先校验该模型包，再将其设为默认模型。</source>
         <translation>請先驗證此模型套件，再設為預設模型。</translation>
     </message>
-
     <message>
-        <source>超分模型必须位于本机目录。</source>
-        <translation>超分辨率模型必須位於本機資料夾。</translation>
+        <location filename="../../apps/desktop/queue_controller.cpp" line="680" />
+        <source>视频修复模型必须位于本机目录。</source>
+        <translation>影片修復模型必須位於本機資料夾。</translation>
     </message>
-        <message>
-        <source>请先在本地模型中心校验兼容的 x2、x3 或 x4 超分模型。</source>
-        <translation>請先在本機模型中心驗證相容的 x2、x3 或 x4 超分辨率模型。</translation>
-    </message>
-
     <message>
-        <source>所选超分模型不支持这个色彩配置或分辨率。</source>
-        <translation>所選超分模型不支援此色彩設定或解析度。</translation>
+        <location filename="../../apps/desktop/queue_controller.cpp" line="699" />
+        <source>请先在本地模型中心校验兼容的去模糊或 x2、x3、x4 超分模型。</source>
+        <translation>請先在本機模型中心驗證相容的去模糊或 x2、x3、x4 超解析度模型。</translation>
     </message>
 </context>
 <context>
     <name>QueuePage</name>
     <message>
-        <location filename="../QueuePage.qml" line="80" />
+        <location filename="../QueuePage.qml" line="113" />
         <source>等待处理</source>
         <translation>等待處理</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="80" />
+        <location filename="../QueuePage.qml" line="113" />
         <source>正在处理</source>
         <translation>正在處理</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="80" />
+        <location filename="../QueuePage.qml" line="113" />
         <source>已暂停</source>
         <translation>已暫停</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="81" />
+        <location filename="../QueuePage.qml" line="114" />
         <source>已中断</source>
         <translation>已中斷</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="81" />
+        <location filename="../QueuePage.qml" line="114" />
         <source>失败</source>
         <translation>失敗</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="81" />
+        <location filename="../QueuePage.qml" line="114" />
         <source>已取消</source>
         <translation>已取消</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="81" />
+        <location filename="../QueuePage.qml" line="114" />
         <source>已完成</source>
         <translation>已完成</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="85" />
+        <location filename="../QueuePage.qml" line="118" />
         <source>校验源文件</source>
         <translation>正在驗證來源檔案</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="85" />
+        <location filename="../QueuePage.qml" line="118" />
         <source>等待处理引擎</source>
         <translation>等待處理引擎</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="86" />
+        <location filename="../QueuePage.qml" line="119" />
         <source>加载模型</source>
         <translation>載入模型</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="86" />
+        <location filename="../QueuePage.qml" line="119" />
         <source>AI 补帧</source>
         <translation>AI 補幀</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="86" />
+        <location filename="../QueuePage.qml" line="119" />
+        <source>加载修复模型（TensorRT 首次构建可能需要数分钟）</source>
+        <translation>正在載入修復模型（首次建置 TensorRT 引擎可能需要數分鐘）</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="120" />
         <source>读取已完成片段</source>
         <translation>讀取已完成片段</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="86" />
+        <location filename="../QueuePage.qml" line="120" />
         <source>编码视频</source>
         <translation>正在編碼影片</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="87" />
+        <location filename="../QueuePage.qml" line="120" />
+        <source>正在进行视频修复</source>
+        <translation>正在進行影片修復</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="121" />
         <source>验证输出</source>
         <translation>正在驗證輸出</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="87" />
+        <location filename="../QueuePage.qml" line="121" />
         <source>校验发布文件</source>
         <translation>正在驗證已發布檔案</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="87" />
+        <location filename="../QueuePage.qml" line="121" />
         <source>切换编码器</source>
         <translation>正在切換編碼器</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="87" />
+        <location filename="../QueuePage.qml" line="121" />
         <source>安全暂停点</source>
         <translation>安全暫停點</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="99" />
+        <location filename="../QueuePage.qml" line="133" />
         <source>批量选择视频</source>
         <translation>批次選擇影片</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="101" />
+        <location filename="../QueuePage.qml" line="135" />
         <source>视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts *.m2ts *.wmv *.flv *.mxf *.ogv *.vob *.3gp *.asf *.gif)</source>
         <translation>影片檔案 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts *.m2ts *.wmv *.flv *.mxf *.ogv *.vob *.3gp *.asf *.gif)</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="101" />
+        <location filename="../QueuePage.qml" line="135" />
         <source>所有文件 (*)</source>
         <translation>所有檔案 (*)</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="106" />
+        <location filename="../QueuePage.qml" line="140" />
         <source>导出队列报告</source>
         <translation>匯出佇列報告</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="108" />
+        <location filename="../QueuePage.qml" line="142" />
         <source>JSON 报告 (*.json)</source>
         <translation>JSON 報告 (*.json)</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="111" />
+        <location filename="../QueuePage.qml" line="145" />
         <source>选择包含视频的文件夹</source>
         <translation>選擇包含影片的資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="112" />
+        <location filename="../QueuePage.qml" line="146" />
         <source>选择输出文件夹</source>
         <translation>選擇輸出資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="113" />
+        <location filename="../QueuePage.qml" line="147" />
         <source>选择已校验的本地 RIFE 模型包</source>
         <translation>選擇已驗證的本機 RIFE 模型套件</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="114" />
+        <location filename="../QueuePage.qml" line="148" />
         <source>选择 ONNX Runtime CUDA 运行库目录</source>
         <translation>選擇 ONNX Runtime CUDA 執行階段資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="124" />
+        <location filename="../QueuePage.qml" line="158" />
         <source>任务队列</source>
         <translation>任務佇列</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="125" />
+        <location filename="../QueuePage.qml" line="159" />
         <source>批量导入并持久保存任务。已完成片段会在本机校验和保存；中断后可继续，也可从头重启。</source>
         <translation>批次匯入並持續保存任務。已完成片段會在本機驗證並保存；中斷後可繼續或從頭重啟。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="127" />
+        <location filename="../QueuePage.qml" line="161" />
         <source>重新连接</source>
         <translation>重新連線</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="147" />
+        <location filename="../QueuePage.qml" line="181" />
         <source>导入到队列</source>
         <translation>匯入至佇列</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="148" />
+        <location filename="../QueuePage.qml" line="182" />
         <source>选择多个视频</source>
         <translation>選擇多個影片</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="149" />
+        <location filename="../QueuePage.qml" line="183" />
         <source>选择文件夹</source>
         <translation>選擇資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="151" />
+        <location filename="../QueuePage.qml" line="185" />
         <source>拖入视频文件或文件夹；自动检查媒体轨道和模型支持的色彩格式。重复文件、已有队列输出和输出目录中的已生成文件会跳过。</source>
         <translation>拖曳影片檔案或資料夾；系統會自動檢查媒體軌道與模型支援的色彩格式。重複檔案、佇列中已有的輸出，以及輸出資料夾內已存在的檔案都會略過。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="163" />
+        <location filename="../QueuePage.qml" line="197" />
         <source>目标 FPS</source>
         <translation>目標 FPS</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="168" />
+        <location filename="../QueuePage.qml" line="202" />
         <source>输出容器</source>
         <translation>輸出容器</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="173" />
+        <location filename="../QueuePage.qml" line="207" />
         <source>编码器</source>
         <translation>編碼器</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="174" />
+        <location filename="../QueuePage.qml" line="208" />
         <source>自动编码（优先 NVENC）</source>
         <translation>自動編碼（優先使用 NVENC）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="174" />
+        <location filename="../QueuePage.qml" line="208" />
         <source>H.264 软件</source>
         <translation>H.264 軟體</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="174" />
+        <location filename="../QueuePage.qml" line="208" />
         <source>HEVC 软件</source>
         <translation>HEVC 軟體</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="174" />
+        <location filename="../QueuePage.qml" line="208" />
         <source>AV1 软件</source>
         <translation>AV1 軟體</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="174" />
+        <location filename="../QueuePage.qml" line="208" />
         <source>NVIDIA H.264（NVENC）</source>
         <translation>NVIDIA H.264（NVENC）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="177" />
+        <location filename="../QueuePage.qml" line="211" />
         <source>收起高级编码</source>
         <translation>收合進階編碼</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="177" />
+        <location filename="../QueuePage.qml" line="211" />
         <source>高级编码设置</source>
         <translation>進階編碼設定</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="179" />
+        <location filename="../QueuePage.qml" line="213" />
         <source>高级编码</source>
         <translation>進階編碼</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="189" />
+        <location filename="../QueuePage.qml" line="223" />
         <source>码率控制</source>
         <translation>位元率控制</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="193" />
-        <location filename="../QueuePage.qml" line="194" />
-        <location filename="../QueuePage.qml" line="195" />
-        <location filename="../QueuePage.qml" line="196" />
+        <location filename="../QueuePage.qml" line="227" />
+        <location filename="../QueuePage.qml" line="228" />
+        <location filename="../QueuePage.qml" line="229" />
+        <location filename="../QueuePage.qml" line="230" />
         <source>目标码率</source>
         <translation>目標位元率</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="193" />
+        <location filename="../QueuePage.qml" line="227" />
         <source>恒定量化 QP</source>
         <translation>固定量化 QP</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="194" />
+        <location filename="../QueuePage.qml" line="228" />
         <source>恒定质量 CRF</source>
         <translation>固定品質 CRF</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="195" />
+        <location filename="../QueuePage.qml" line="229" />
         <source>恒定质量 CQ</source>
         <translation>固定品質 CQ</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="202" />
+        <location filename="../QueuePage.qml" line="236" />
         <source>QP（0–51）</source>
         <translation>QP（0–51）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="202" />
+        <location filename="../QueuePage.qml" line="236" />
         <source>CQ（0–51）</source>
         <translation>CQ（0–51）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="202" />
+        <location filename="../QueuePage.qml" line="236" />
         <source>CRF（0–63）</source>
         <translation>CRF（0–63）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="202" />
+        <location filename="../QueuePage.qml" line="236" />
         <source>目标质量</source>
         <translation>目標品質</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="215" />
+        <location filename="../QueuePage.qml" line="249" />
         <source>目标码率（kbit/s）</source>
         <translation>目標位元率（kbit/s）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="220" />
+        <location filename="../QueuePage.qml" line="254" />
         <source>关键帧间隔（帧）</source>
         <translation>關鍵影格間隔（格）</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="225" />
+        <location filename="../QueuePage.qml" line="259" />
         <source>HEVC 恒定量化使用 Kvazaar QP；较低 QP 通常会生成更大的文件。</source>
         <translation>HEVC 固定量化使用 Kvazaar QP；較低的 QP 通常會產生較大的檔案。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="226" />
+        <location filename="../QueuePage.qml" line="260" />
         <source>AV1 恒定质量使用 CRF；较低 CRF 通常会生成更大的文件。</source>
         <translation>AV1 固定品質使用 CRF；較低的 CRF 通常會產生較大的檔案。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="227" />
+        <location filename="../QueuePage.qml" line="261" />
         <source>NVENC 恒定质量使用 VBR + CQ（0–51），需要可用的 NVIDIA 视频编码驱动；较低 CQ 通常会生成更大的文件。</source>
         <translation>NVENC 固定品質使用 VBR + CQ（0–51），需要可用的 NVIDIA 影片編碼驅動程式；較低的 CQ 通常會產生較大的檔案。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="228" />
+        <location filename="../QueuePage.qml" line="262" />
         <source>自动模式按驱动与源像素格式选择 NVENC、软件 H.264、HEVC 或 AV1，并尽量保留源位深。</source>
         <translation>自動模式會依照驅動程式與來源像素格式選擇 NVENC、軟體 H.264、HEVC 或 AV1，並盡可能保留來源位元深度。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="238" />
+        <location filename="../QueuePage.qml" line="272" />
         <source>输出位置</source>
         <translation>輸出位置</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="239" />
+        <location filename="../QueuePage.qml" line="273" />
         <source>留空时使用首个来源文件夹</source>
         <translation>留空時使用第一個來源資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="240" />
-        <location filename="../QueuePage.qml" line="249" />
-        <location filename="../QueuePage.qml" line="256" />
+        <location filename="../QueuePage.qml" line="274" />
+        <location filename="../QueuePage.qml" line="283" />
+        <location filename="../QueuePage.qml" line="290" />
         <source>选择</source>
         <translation>選擇</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="241" />
+        <location filename="../QueuePage.qml" line="275" />
         <source>清除</source>
         <translation>清除</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="243" />
+        <location filename="../QueuePage.qml" line="277" />
         <source>收起模型与运行库</source>
         <translation>收合模型與執行階段</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="243" />
+        <location filename="../QueuePage.qml" line="277" />
         <source>高级设置 · 模型与运行库</source>
         <translation>進階設定 · 模型與執行階段</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="247" />
+        <location filename="../QueuePage.qml" line="281" />
         <source>RIFE 模型</source>
         <translation>RIFE 模型</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="248" />
+        <location filename="../QueuePage.qml" line="282" />
         <source>选择 model.json 所在的已校验目录</source>
         <translation>選擇含有 model.json 的已驗證資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="254" />
+        <location filename="../QueuePage.qml" line="288" />
         <source>CUDA 运行库</source>
         <translation>CUDA 執行階段</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="255" />
+        <location filename="../QueuePage.qml" line="289" />
         <source>选择 ONNX Runtime 与 CUDA DLL 目录</source>
         <translation>選擇含有 ONNX Runtime 與 CUDA DLL 的資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="290" />
+        <location filename="../QueuePage.qml" line="309" />
+        <source>视频修复</source>
+        <translation>影片修復</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="324" />
+        <source>仅使用已校验的本地 SDR 模型；逐帧去模糊为实验功能，可能闪烁。每个输出帧都会修复并增加处理时间。</source>
+        <translation>只使用已驗證的本機 SDR 模型；逐格去模糊為實驗功能，可能會閃爍。每個輸出影格都會修復，因此需要更多處理時間。</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="349" />
         <source>扫描子文件夹</source>
         <translation>掃描子資料夾</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="293" />
-        <location filename="../QueuePage.qml" line="316" />
+        <location filename="../QueuePage.qml" line="352" />
+        <location filename="../QueuePage.qml" line="376" />
         <source>取消导入</source>
         <translation>取消匯入</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="293" />
+        <location filename="../QueuePage.qml" line="352" />
         <source>加入队列</source>
         <translation>加入佇列</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="310" />
+        <location filename="../QueuePage.qml" line="370" />
         <source>%1 项</source>
         <translation>%1 個項目</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="311" />
+        <location filename="../QueuePage.qml" line="371" />
         <source>等待 %1 · 运行 %2 · 完成 %3 · 失败 %4</source>
         <translation>等待 %1 · 執行中 %2 · 完成 %3 · 失敗 %4</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="312" />
+        <location filename="../QueuePage.qml" line="372" />
         <source>导出报告</source>
         <translation>匯出報告</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="313" />
+        <location filename="../QueuePage.qml" line="373" />
         <source>开始队列</source>
         <translation>開始佇列</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="314" />
+        <location filename="../QueuePage.qml" line="374" />
         <source>暂停</source>
         <translation>暫停</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="315" />
+        <location filename="../QueuePage.qml" line="375" />
         <source>继续</source>
         <translation>繼續</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="316" />
+        <location filename="../QueuePage.qml" line="376" />
         <source>停止队列</source>
         <translation>停止佇列</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="363" />
+        <location filename="../QueuePage.qml" line="423" />
         <source> FPS</source>
         <translation> FPS</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="368" />
+        <location filename="../QueuePage.qml" line="428" />
         <source>模型：</source>
         <translation>模型：</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="372" />
+        <location filename="../QueuePage.qml" line="432" />
         <source>%1 / 约 %2 帧</source>
         <translation>%1 / 約 %2 格</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="372" />
+        <location filename="../QueuePage.qml" line="432" />
         <source>%1 帧</source>
         <translation>%1 格</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="373" />
+        <location filename="../QueuePage.qml" line="433" />
         <source> · AI %1 帧 · %2 FPS</source>
         <translation> · AI %1 格 · %2 FPS</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="376" />
+        <location filename="../QueuePage.qml" line="436" />
         <source> · 剩余约 %1</source>
         <translation> · 剩餘約 %1</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="378" />
+        <location filename="../QueuePage.qml" line="438" />
         <source> · 预计剩余时间计算中</source>
         <translation> · 正在計算預估剩餘時間</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="390" />
+        <location filename="../QueuePage.qml" line="450" />
         <source>取消任务</source>
         <translation>取消任務</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="391" />
+        <location filename="../QueuePage.qml" line="451" />
         <source>重试</source>
         <translation>重試</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="392" />
+        <location filename="../QueuePage.qml" line="452" />
         <source>从检查点继续</source>
         <translation>從檢查點繼續</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="393" />
+        <location filename="../QueuePage.qml" line="453" />
         <source>从头重启</source>
         <translation>從頭重啟</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="394" />
+        <location filename="../QueuePage.qml" line="454" />
         <source>打开输出位置</source>
         <translation>開啟輸出位置</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="401" />
+        <location filename="../QueuePage.qml" line="461" />
         <source>队列为空
 导入多个视频或整个文件夹开始处理</source>
         <translation>佇列是空的
 匯入多個影片或整個資料夾以開始處理</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="261" />
+        <location filename="../QueuePage.qml" line="295" />
         <source>推理后端</source>
         <translation>推理後端</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="265" />
+        <location filename="../QueuePage.qml" line="27" />
+        <source>关闭视频修复</source>
+        <translation>停用影片修復</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="38" />
+        <source>本地修复模型</source>
+        <translation>本機修復模型</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="39" />
+        <source>去模糊（实验）</source>
+        <translation>去模糊（實驗）</translation>
+    </message>
+    <message>
+        <location filename="../QueuePage.qml" line="299" />
         <source>自动：TensorRT 优先，失败时回退 CUDA</source>
         <translation>自動：優先使用 TensorRT，失敗時回退至 CUDA</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="265" />
+        <location filename="../QueuePage.qml" line="299" />
         <source>仅 ONNX Runtime CUDA</source>
         <translation>僅使用 ONNX Runtime CUDA</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="265" />
+        <location filename="../QueuePage.qml" line="299" />
         <source>必须使用 TensorRT</source>
         <translation>必須使用 TensorRT</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="270" />
+        <location filename="../QueuePage.qml" line="304" />
         <source>FP32 固定；FP16 尚未通过数值与画质验证。</source>
         <translation>固定使用 FP32；FP16 尚未通過數值與畫質驗證。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="275" />
+        <location filename="../QueuePage.qml" line="334" />
         <source>镜头切换阈值</source>
         <translation>鏡頭切換閾值</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="287" />
+        <location filename="../QueuePage.qml" line="346" />
         <source>较低值会把更多画面变化当作切镜，并减少跨切镜生成帧。</source>
         <translation>較低的值會將更多畫面變化判定為鏡頭切換，並減少跨切鏡補幀。</translation>
-    </message>
-
-    <message>
-        <source>关闭超分</source>
-        <translation>停用超分辨率</translation>
-    </message>
-    <message>
-        <source>本地超分模型</source>
-        <translation>本機超分辨率模型</translation>
-    </message>
-    <message>
-        <source>加载本地超分模型</source>
-        <translation>正在載入本機超分辨率模型</translation>
-    </message>
-    <message>
-        <source>正在进行超分</source>
-        <translation>正在進行超分辨率處理</translation>
-    </message>
-    <message>
-        <source>超分模型</source>
-        <translation>超分辨率模型</translation>
-    </message>
-    <message>
-        <source>仅使用已校验的本地 SDR x2、x3 或 x4 模型；每个输出帧都会超分并增加处理时间。</source>
-        <translation>僅使用已驗證的本機 SDR x2、x3 或 x4 模型；每個輸出影格都會執行超分辨率處理，因此耗時較長。</translation>
     </message>
 </context>
 <context>
@@ -1964,54 +1989,59 @@
         <translation>佇列報告已儲存：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="228" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="246" />
         <source>已校验并加入本地模型：</source>
         <translation>已驗證並加入本機模型：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="275" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="296" />
         <source>正在检查视频 %1 / %2</source>
         <translation>正在檢查影片 %1 / %2</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="280" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="301" />
         <source>视频色彩标签、像素格式或位深不在支持范围内。</source>
         <translation>影片色彩標籤、像素格式或位元深度不在支援範圍內。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="281" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="302" />
         <source>当前模型未声明支持这个视频输入配置。</source>
         <translation>目前模型未宣告支援此影片輸入設定檔。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="282" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="303" />
+        <source>所选视频修复模型不支持这个色彩配置或分辨率。</source>
+        <translation>所選影片修復模型不支援此色彩設定或解析度。</translation>
+    </message>
+    <message>
+        <location filename="../../apps/desktop/queue_controller.cpp" line="304" />
         <source>所选视频编码器无法初始化：</source>
         <translation>所選影片編碼器無法初始化：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="283" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="305" />
         <source>文件中没有视频轨。</source>
         <translation>檔案中沒有影片軌。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="283" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="305" />
         <source>无法读取媒体：</source>
         <translation>無法讀取媒體：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="286" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="308" />
         <source>没有找到当前模型可处理的视频。
 </source>
         <translation>找不到目前模型可處理的影片。
 </translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="291" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="313" />
         <source>已加入 %1 个任务。输出使用新文件名。</source>
         <translation>已加入 %1 個任務。輸出會使用新檔名。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="292" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="314" />
         <source>
 跳过 %1 个不支持的文件：
 </source>
@@ -2020,44 +2050,44 @@
 </translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="293" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="315" />
         <source>
 仅显示前 50 条详情。</source>
         <translation>
 僅顯示前 50 筆詳細資料。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="299" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="321" />
         <source>导入已取消，未加入部分任务。</source>
         <translation>匯入已取消，未加入部分任務。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="450" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="475" />
         <source>队列已停止。已排队但未运行的任务会保留；中断任务可校验片段后继续或从头重启。</source>
         <translation>佇列已停止。已排隊但尚未執行的任務會保留；中斷的任務可在驗證片段後繼續，或從頭重啟。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="507" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="532" />
         <source>默认设置未保存。</source>
         <translation>預設設定未儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="509" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="534" />
         <source>高级编码参数超出范围或与当前编码器不兼容，默认设置未保存。</source>
         <translation>進階編碼參數超出範圍或與目前編碼器不相容，預設設定未儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="512" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="537" />
         <source>镜头切换阈值必须介于 0 和 1 之间，默认设置未保存。</source>
         <translation>鏡頭切換閾值必須介於 0 和 1 之間，預設設定未儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="519" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="544" />
         <source>任务可继续使用，但默认设置未能保存。</source>
         <translation>任務可繼續使用，但預設設定未能儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="510" />
+        <location filename="../../apps/desktop/queue_controller.cpp" line="535" />
         <source>推理后端选择无效，默认设置未保存。</source>
         <translation>推論後端選擇無效，預設設定未儲存。</translation>
     </message>
@@ -2065,259 +2095,259 @@
 <context>
     <name>StudioController</name>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="252" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="262" />
         <source>%1 秒</source>
         <translation>%1 秒</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="253" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="263" />
         <source>%1 kb/s</source>
         <translation>%1 kb/s</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="254" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="264" />
         <source>容器 %1 · 时长 %2 · 总码率 %3 · %4 条轨道 · %5 个章节</source>
         <translation>容器 %1 · 時長 %2 · 總位元率 %3 · %4 條軌道 · %5 個章節</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="261" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="271" />
         <source>视频</source>
         <translation>影片</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="262" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="272" />
         <source>音频</source>
         <translation>音訊</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="263" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="273" />
         <source>字幕</source>
         <translation>字幕</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="264" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="274" />
         <source>数据</source>
         <translation>資料</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="265" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="275" />
         <source>附件</source>
         <translation>附件</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="266" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="276" />
         <source>其他</source>
         <translation>其他</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="267" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="277" />
         <source>轨道 %1 · %2 · %3</source>
         <translation>軌道 %1 · %2 · %3</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="268" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="278" />
         <source>默认</source>
         <translation>預設</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="269" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="279" />
         <source>强制</source>
         <translation>強制</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="276" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="286" />
         <source>%1 × %2 · 平均 %3 FPS · 标称 %4 FPS · %5 · %6-bit</source>
         <translation>%1 × %2 · 平均 %3 FPS · 標稱 %4 FPS · %5 · %6-bit</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="279" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="289" />
         <source>色彩：%1 / %2 / %3 / %4</source>
         <translation>色彩：%1 / %2 / %3 / %4</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="281" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="291" />
         <source>HDR 传递函数</source>
         <translation>HDR 傳遞函數</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="285" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="295" />
         <source>峰值亮度 %1 cd/m²</source>
         <translation>峰值亮度 %1 cd/m²</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="287" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="297" />
         <source>最低亮度 %1 cd/m²</source>
         <translation>最低亮度 %1 cd/m²</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="288" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="298" />
         <source>显示器元数据：%1</source>
         <translation>顯示器中繼資料：%1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="291" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="301" />
         <source>内容亮度 MaxCLL %1 / MaxFALL %2 cd/m²</source>
         <translation>內容亮度 MaxCLL %1 / MaxFALL %2 cd/m²</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="294" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="304" />
         <source>显示旋转 %1°</source>
         <translation>顯示旋轉 %1°</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="295" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="305" />
         <source>含显示变换矩阵</source>
         <translation>包含顯示轉換矩陣</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="297" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="307" />
         <source>%1 Hz · %2 声道 · %3 · %4</source>
         <translation>%1 Hz · %2 聲道 · %3 · %4</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="300" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="310" />
         <source>声道布局未知</source>
         <translation>聲道配置未知</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="301" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="311" />
         <source>采样格式未知</source>
         <translation>取樣格式未知</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="303" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="313" />
         <source>码率 %1 kb/s</source>
         <translation>位元率 %1 kb/s</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="306" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="316" />
         <source>语言：%1</source>
         <translation>語言：%1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="308" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="318" />
         <source>标题：%1</source>
         <translation>標題：%1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="27" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="28" />
         <source>软件 H.264</source>
         <translation>軟體 H.264</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="28" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="29" />
         <source>软件 HEVC</source>
         <translation>軟體 HEVC</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="29" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="30" />
         <source>软件 AV1</source>
         <translation>軟體 AV1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="30" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="31" />
         <source>兼容的软件编码器</source>
         <translation>相容的軟體編碼器</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="40" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="41" />
         <source>NVENC 驱动接口不兼容：当前提供 API %1，FFmpeg 需要 API %2（驱动 %3 或更新）。现在由 CPU 使用%4编码，RIFE 仍由 CUDA 插帧。</source>
         <translation>NVENC 驅動 API 不相容：目前提供 API %1，FFmpeg 需要 API %2（驅動程式 %3 或更新版本）。現在由 CPU 使用%4編碼，RIFE 仍由 CUDA 補幀。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="45" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="46" />
         <source>当前 NVIDIA 驱动无法初始化此 FFmpeg 的 NVENC 接口。现在由 CPU 使用%1编码，RIFE 仍由 CUDA 插帧。</source>
         <translation>目前 NVIDIA 驅動程式無法初始化此 FFmpeg 的 NVENC 介面。現在由 CPU 使用%1編碼，RIFE 仍由 CUDA 補幀。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="48" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="49" />
         <source>NVENC 未能启动，现在由 CPU 使用%1编码；RIFE 插帧仍由 CUDA 运行。</source>
         <translation>NVENC 無法啟動，目前由 CPU 使用%1編碼；RIFE 補幀仍由 CUDA 執行。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="104" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="106" />
         <source>请选择本机视频文件。</source>
         <translation>請選擇本機影片檔案。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="111" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="213" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="113" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="223" />
         <source>请等待当前操作结束。</source>
         <translation>請等待目前作業完成。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="116" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="118" />
         <source>请选择本机输出位置。</source>
         <translation>請選擇本機輸出位置。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="238" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="248" />
         <source>TensorRT 当前不可用，已回退到 ONNX Runtime CUDA 推理。</source>
         <translation>TensorRT 目前無法使用，已回退至 ONNX Runtime CUDA 推論。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="252" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="253" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="274" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="275" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="298" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="299" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="342" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="262" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="263" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="284" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="285" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="308" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="309" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="352" />
         <source>未知</source>
         <translation>未知</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="353" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="363" />
         <source>NVIDIA GPU 不可用</source>
         <translation>NVIDIA GPU 無法使用</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="364" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="374" />
         <source>NVENC 当前无法初始化；自动编码将使用%1，RIFE 插帧仍使用 GPU。</source>
         <translation>NVENC 目前無法初始化；自動編碼會使用%1，RIFE 補幀仍使用 GPU。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="367" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="377" />
         <source>NVENC 和兼容的软件编码器均未能初始化；请检查本机视频编码运行环境。</source>
         <translation>NVENC 與相容的軟體編碼器皆無法初始化；請檢查本機影片編碼執行環境。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="374" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="384" />
         <source>HEVC</source>
         <translation>HEVC</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="375" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="385" />
         <source>AV1</source>
         <translation>AV1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="376" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="386" />
         <source>当前视频配置无法初始化：%1。选择这些编码器时不可开始。</source>
         <translation>目前影片設定無法初始化：%1。選擇此編碼器時無法開始處理。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="380" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="390" />
         <source>当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩需要单独验证。</source>
         <translation>目前模型路徑支援明確標記的 BT.709 或 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位元深度及未標記色彩都需要獨立驗證。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="382" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="392" />
         <source>文件中没有可处理的视频轨。 </source>
         <translation>檔案中沒有可處理的影片軌。 </translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="395" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="405" />
         <source>已生成 %1 帧，其中 %2 帧由 RIFE 生成。输出已通过解码和时间轴检查。</source>
         <translation>已產生 %1 格，其中 %2 格由 RIFE 產生。輸出已通過解碼與時間軸檢查。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="406" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="416" />
         <source>TensorRT 未能启动，已使用 ONNX Runtime CUDA 完成推理。</source>
         <translation>TensorRT 無法啟動，已使用 ONNX Runtime CUDA 完成推論。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="408" />
+        <location filename="../../apps/desktop/studio_controller.cpp" line="418" />
         <source>操作已取消，未发布部分视频。</source>
         <translation>作業已取消，未發布部分影片。</translation>
     </message>

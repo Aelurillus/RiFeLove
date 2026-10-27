@@ -12,6 +12,6 @@ python tools\development\update_translations.py
 cmake --build build\windows-qt-release --target rifelove-desktop rifelove-translation-check
 ```
 
-`update_translations.py` fills the maintained translations and rejects missing strings, empty entries or changed `%N` placeholders. The catalogs currently cover 435 source messages each. The `Desktop.Translations` check loads the compiled catalogs and verifies representative Home, Studio and queue messages. `Desktop.LocalizationSmoke` launches the actual QML app once per language with isolated local settings and checks that each locale renders successfully.
+`update_translations.py` fills the maintained translations and rejects missing strings, empty entries or changed `%N` placeholders. The catalogs currently cover 457 source messages each. The `Desktop.Translations` check loads the compiled catalogs and verifies representative Home, Studio and queue messages. `Desktop.LocalizationSmoke` launches the actual QML app once per language with isolated local settings and checks that each locale renders successfully.
 
 Language coverage does not certify complete keyboard navigation or screen-reader accessibility; those remain separate release work.

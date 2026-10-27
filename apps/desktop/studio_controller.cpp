@@ -143,7 +143,7 @@ void StudioController::start(const QString& rate, const QUrl& modelDirectory, co
         job.source = utf8(source_); job.output = utf8(output_);
         job.modelDirectory = path(modelDirectory); job.runtimeDirectory = path(runtimeDirectory);
         if (!restorationModelDirectory.isEmpty()) {
-            if (!restorationModelDirectory.isLocalFile()) throw std::invalid_argument("Super-resolution model must be local");
+            if (!restorationModelDirectory.isLocalFile()) throw std::invalid_argument("Restoration model must be local");
             job.restorationModelDirectory = path(restorationModelDirectory);
             rifelove::application::pinRestorationModelDescriptor(job);
         }

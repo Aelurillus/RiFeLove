@@ -66,17 +66,20 @@ ApplicationWindow {
         selectedModelDisplayName = resolveSelectedModelDisplayName()
     }
     function restorationModelOptions() {
-        const options = [{label: qsTr("关闭超分"), directory: ""}]
+        const options = [{label: qsTr("关闭视频修复"), directory: ""}]
         for (const model of (taskQueue.models || [])) {
             const tasks = model.tasks || []
             const placements = model.placements || []
             const scale = Number(model.scaleNumerator || 0)
-            if (!model.valid || model.family !== "video-restoration" ||
-                    tasks.indexOf("super-resolution") < 0 || placements.indexOf("output-rate-after-interpolation") < 0 ||
+            const deblur = tasks.length === 1 && tasks.indexOf("deblur") >= 0 && scale === 1 && model.adapterId === "nafnet-zoo-deblur-rgb-f32-nchw-v1"
+            const superResolution = tasks.length === 1 && tasks.indexOf("super-resolution") >= 0 && scale >= 2 && scale <= 4 && model.adapterId === "image-sr-rgb-f32-nchw-v1"
+            if (!model.valid || !model.runtimeSupported || model.family !== "video-restoration" ||
+                    (!deblur && !superResolution) || placements.indexOf("output-rate-after-interpolation") < 0 ||
                     Number(model.temporalFramesBefore || 0) !== 0 || Number(model.temporalFramesAfter || 0) !== 0 ||
-                    Number(model.scaleDenominator || 0) !== 1 || scale < 2 || scale > 4) continue
-            options.push({label: (model.displayName || model.id || qsTr("本地超分模型")) + " · ×" + scale,
-                          directory: model.directory || ""})
+                    Number(model.scaleDenominator || 0) !== 1 || Number(model.adapterVersion || 0) !== 1) continue
+            const modelName = model.displayName || model.id || qsTr("本地修复模型")
+            const label = deblur ? modelName + " · " + qsTr("去模糊（实验）") : modelName + " · ×" + scale
+            options.push({label: label, directory: model.directory || "", task: deblur ? "deblur" : "super-resolution", scale: scale})
         }
         return options
     }
@@ -112,9 +115,11 @@ ApplicationWindow {
     function restorationOutputLabel() {
         const index = selectedRestorationModelIndex()
         if (index === 0) return ""
+        const choice = restorationModelOptions()[index]
         const width = Number(window.info.width || 0)
         const height = Number(window.info.height || 0)
-        const scale = Number(restorationModelOptions()[index].label.split("×").pop())
+        if (choice.task === "deblur") return qsTr("逐帧去模糊：输出保持 %1 × %2。该模型无时间上下文，可能出现闪烁，建议先测试短片。").arg(width).arg(height)
+        const scale = Number(choice.scale)
         if (!width || !height || !scale) return qsTr("输出分辨率按所选模型的倍率生成。")
         return qsTr("超分输出：%1 × %2（模型倍率 ×%3）").arg(width * scale).arg(height * scale).arg(scale)
     }
@@ -248,15 +253,15 @@ ApplicationWindow {
             if (taskQueue.verifyingModels) return qsTr("正在校验所选本地模型…")
             if (!window.selectedModelVerified) return qsTr("所选模型未通过本机校验，请在模型中心检查")
             if (!window.selectedModelSupportsInputProfile) return qsTr("所选模型不支持此输入配置")
-            if (!window.restorationModelVerified()) return qsTr("所选超分模型不支持这个色彩配置或分辨率")
+            if (!window.restorationModelVerified()) return qsTr("所选视频修复模型不支持这个色彩配置或分辨率")
             if (!window.selectedEncoderReady) return qsTr("所选编码器不可用")
             if (!window.runtimeFolder.toString()) return qsTr("请配置本地推理运行库")
             return qsTr("可以开始")
         }
         const labels = {ready: qsTr("等待导入"), inspecting: qsTr("读取视频信息"), inspected: qsTr("可以开始"),
             checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
-            loading_model: qsTr("加载本地模型"), loading_restoration_model: qsTr("加载本地超分模型"),
-            processing: qsTr("正在补帧"), restoration: qsTr("正在进行超分"), encoding: qsTr("正在编码"),
+            loading_model: qsTr("加载本地模型"), loading_restoration_model: qsTr("加载视频修复模型（TensorRT 首次构建可能需要数分钟）"),
+            processing: qsTr("正在补帧"), restoration: qsTr("正在进行视频修复"), encoding: qsTr("正在编码"),
             validating: qsTr("验证输出视频"), encoder_fallback: qsTr("切换编码器"), completed: qsTr("处理完成"),
             failed: qsTr("处理失败"), cancelling: qsTr("正在安全取消"), cancelled: qsTr("已取消"), unavailable: qsTr("处理组件未启用")}
         return labels[value] || qsTr("正在处理")
@@ -734,7 +739,7 @@ ApplicationWindow {
                                 ActionButton { text: qsTr("浏览"); enabled: !window.active; onClicked: runtimeDialog.open() }
                             }
                             RowLayout {
-                                Label { text: qsTr("超分模型"); Layout.preferredWidth: 70 }
+                                Label { text: qsTr("视频修复"); Layout.preferredWidth: 70 }
                                 ComboBox {
                                     id: restorationModelSelector
                                     objectName: "studioRestorationModel"
@@ -753,7 +758,7 @@ ApplicationWindow {
                             Label {
                                 objectName: "studioRestorationOutputSummary"
                                 visible: restorationModelSelector.currentIndex > 0
-                                text: window.restorationOutputLabel() + qsTr("。仅使用已校验的本地 SDR 模型；补帧后的每一帧都会运行超分，耗时会增加。")
+                                text: window.restorationOutputLabel() + qsTr("。只运行已校验的本地 SDR 模型；每个输出帧都会修复并增加处理时间。去模糊为实验功能。")
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
                                 color: "#697B8B"
@@ -853,7 +858,7 @@ ApplicationWindow {
                             if (!studio.busy)
                                 summary += qsTr(" · 输出验证 %1 秒").arg(seconds("outputValidationSeconds"))
                             if (window.restorationModelFolder.toString() !== "")
-                                summary += qsTr(" · 超分 %1 秒").arg(seconds("restorationSeconds"))
+                                summary += qsTr(" · 视频修复 %1 秒").arg(seconds("restorationSeconds"))
                             return summary
                         }
                         color: "#647685"

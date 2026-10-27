@@ -143,6 +143,20 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
     legacyWithRestoration["job"]["expectedRestorationDescriptorSha256"] = std::string(64,'c');
     legacyWithRestoration["framesPerSegment"] = 128;
     EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(legacyWithRestoration.dump(),current.dump()));
+
+    auto restoration = current;
+    restoration["job"]["restorationModelDirectory"] = "C:/local-model";
+    restoration["job"]["expectedRestorationDescriptorSha256"] = std::string(64,'c');
+    restoration["restorationRuntime"] = {{"modelId","nafnet-local"},{"adapterId","nafnet-zoo-deblur-rgb-f32-nchw-v1"},
+        {"adapterVersion",1},{"backend","onnxruntime_cuda"},{"signature","ort-1.22.0;tile-384"},
+        {"scaleNumerator",1},{"scaleDenominator",1}};
+    auto changedRestoration = restoration;
+    changedRestoration["restorationRuntime"]["signature"] = "ort-1.22.0;tile-512";
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(restoration.dump(),restoration.dump()));
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(restoration.dump(),changedRestoration.dump()));
+    changedRestoration = restoration;
+    changedRestoration["job"]["expectedRestorationDescriptorSha256"] = std::string(64,'d');
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(restoration.dump(),changedRestoration.dump()));
 }
 
 TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {

@@ -74,26 +74,29 @@ void writeBytes(const QString& path, const QByteArray& bytes) {
     require(output.open(QIODevice::WriteOnly | QIODevice::Truncate) && output.write(bytes) == bytes.size(),
         "Could not write local restoration-pack fixture");
 }
-void makeRestorationPack(const QString& directory, const QString& supportedProfile = QStringLiteral("bt470bg-sdr8")) {
+void makeRestorationPack(const QString& directory, const QString& supportedProfile = QStringLiteral("bt470bg-sdr8"), bool deblur = false) {
     require(QDir().mkpath(directory), "Could not create local restoration-pack fixture folder");
     const QByteArray graph("local restoration graph fixture");
     const QByteArray license("MIT restoration fixture license");
+    const QString modelId = deblur ? QStringLiteral("desktop-test-deblur") : QStringLiteral("desktop-test-restoration");
+    const QString adapterId = deblur ? QStringLiteral("nafnet-zoo-deblur-rgb-f32-nchw-v1") : QStringLiteral("image-sr-rgb-f32-nchw-v1");
     const auto manifest = jsonBytes(QJsonObject{
-        {"schemaVersion",1}, {"modelId","desktop-test-restoration"},
+        {"schemaVersion",1}, {"modelId",modelId},
         {"upstreamRepository","https://example.invalid/restoration"}, {"upstreamCommit","abcdef0123456789"},
         {"license","MIT"}, {"licenseScopeEvidence","https://example.invalid/license-scope"}
     });
     const QJsonObject capabilities{
-        {"tasks",QJsonArray{"super-resolution"}}, {"placements",QJsonArray{"output-rate-after-interpolation"}},
+        {"tasks",QJsonArray{deblur ? QStringLiteral("deblur") : QStringLiteral("super-resolution")}}, {"placements",QJsonArray{"output-rate-after-interpolation"}},
         {"supportedInputProfiles",QJsonArray{supportedProfile}},
         {"temporalFramesBefore",0}, {"temporalFramesAfter",0},
-        {"scaleNumerator",4}, {"scaleDenominator",1}, {"supportsBoundaryPadding",false}
+        {"scaleNumerator",deblur ? 1 : 4}, {"scaleDenominator",1}, {"supportsBoundaryPadding",false}
     };
-    const QJsonArray backends{"onnxruntime_cpu"};
+    const QJsonArray backends = deblur ? QJsonArray{"onnxruntime_cpu_source","onnxruntime_cpu_derived"} : QJsonArray{"onnxruntime_cpu"};
+    const QString profile = deblur ? QStringLiteral("sdr8-fp32-cpu-reference") : QStringLiteral("sdr8-reference");
     const auto validation = jsonBytes(QJsonObject{
         {"status","passed_cpu_reference"}, {"model_sha256",QString::fromStdString(hashBytes(graph))},
-        {"model_adapter",QJsonObject{{"id","fixture-denoiser-v1"},{"version",1}}},
-        {"numerical_profile","sdr8-reference"}, {"validated_backends",backends},
+        {"model_adapter",QJsonObject{{"id",adapterId},{"version",1}}},
+        {"numerical_profile",profile}, {"validated_backends",backends},
         {"capabilities",capabilities}, {"cases",QJsonArray{QJsonObject{{"case_id","paired-small"},{"passed",true}}}}
     });
     writeBytes(QDir(directory).filePath("weights.onnx"),graph);
@@ -101,15 +104,15 @@ void makeRestorationPack(const QString& directory, const QString& supportedProfi
     writeBytes(QDir(directory).filePath("source-manifest.json"),manifest);
     writeBytes(QDir(directory).filePath("validation.json"),validation);
     const auto descriptor = jsonBytes(QJsonObject{
-        {"schemaVersion",1}, {"id","desktop-test-restoration"}, {"displayName","Desktop Test Super Resolution"},
+        {"schemaVersion",1}, {"id",modelId}, {"displayName",deblur ? QStringLiteral("Desktop Test Deblur") : QStringLiteral("Desktop Test Super Resolution")},
         {"family","video-restoration"}, {"version","1.0"},
-        {"adapter",QJsonObject{{"id","fixture-denoiser-v1"},{"version",1}}},
+        {"adapter",QJsonObject{{"id",adapterId},{"version",1}}},
         {"modelFile","weights.onnx"}, {"sha256",QString::fromStdString(hashBytes(graph))},
         {"license",QJsonObject{{"id","MIT"},{"file","LICENSE.txt"},{"sha256",QString::fromStdString(hashBytes(license))}}},
         {"provenance",QJsonObject{{"manifestFile","source-manifest.json"},{"manifestSha256",QString::fromStdString(hashBytes(manifest))}}},
         {"capabilities",capabilities},
         {"validation",QJsonObject{{"reportFile","validation.json"},{"reportSha256",QString::fromStdString(hashBytes(validation))},
-            {"numericalProfile","sdr8-reference"},{"validatedBackends",backends}}}
+            {"numericalProfile",profile},{"validatedBackends",backends}}}
     });
     writeBytes(QDir(directory).filePath("model.json"),descriptor);
 }
@@ -752,10 +755,33 @@ int main(int argc, char** argv) {
             }
         }
         require(queuedRestorationModelPinned, "Queued super-resolution work did not pin its local model descriptor hash");
+        const auto deblurDirectory = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-deblur-model");
+        makeRestorationPack(deblurDirectory,studioInputProfile,true);
+        const auto deblurUrl = QUrl::fromLocalFile(deblurDirectory);
+        taskQueue.addLocalModel(deblurUrl);
+        waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 3; },
+            "Local deblur model was not verified",20000);
+        taskQueue.setDefaultRestorationModel(deblurUrl);
+        waitUntil([&] { return QFileInfo(taskQueue.defaults().value("restorationModel").toUrl().toLocalFile()).absoluteFilePath() == QFileInfo(deblurDirectory).absoluteFilePath(); },
+            "Verified local deblur model was not saved",10000);
+        root->setProperty("restorationModelFolder",deblurUrl);
+        queuePage->setProperty("restorationModelFolder",deblurUrl);
+        waitUntil([&] { return restorationSelector->property("currentIndex").toInt() > 0 && queueRestorationSelector->property("currentIndex").toInt() > 0 &&
+                restorationSelector->property("currentText").toString().contains(QStringLiteral("去模糊")) &&
+                queueRestorationSelector->property("currentText").toString().contains(QStringLiteral("去模糊")); },
+            "Studio and Queue did not show the deblur model",10000);
+        require(restorationSummary->property("text").toString().contains(QStringLiteral("逐帧去模糊")) &&
+                restorationSummary->property("text").toString().contains(QStringLiteral("闪烁")),
+            "Studio did not explain the experimental deblur behavior");
         root->setProperty("currentPage",3);
         taskQueue.setDefaultRestorationModel(QUrl());
         waitUntil([&] { return taskQueue.defaults().value("restorationModel").toUrl().isEmpty(); },
             "Studio did not clear the local super-resolution selection",10000);
+        root->setProperty("restorationModelFolder",QUrl());
+        queuePage->setProperty("restorationModelFolder",QUrl());
+        taskQueue.removeLocalModel(deblurUrl);
+        waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 2; },
+            "Removing the deblur registration did not restore the catalog",20000);
         const auto localModelCopy = QDir(QFileInfo(arguments[1]).absolutePath()).filePath("local-model-copy");
         taskQueue.addLocalModel(QUrl::fromLocalFile(localModelCopy));
         waitUntil([&] { return !taskQueue.verifyingModels() && taskQueue.models().size() == 3; }, "Local model import or integrity verification failed",20000);

@@ -14,6 +14,8 @@ namespace rifelove {
 struct PipelineResult;
 struct PipelineCheckpoint {
     std::size_t framesPerSegment = 256;
+    // Set only after the application binds and verifies restoration identity.
+    bool restorationIdentityVerified = false;
     std::vector<media::VideoSegmentInput> completedSegments;
     std::function<std::string(std::uint64_t)> segmentPath;
     std::function<void(std::uint64_t,std::uint64_t,std::uint64_t,const media::VideoSegmentInput&)> commitSegment;

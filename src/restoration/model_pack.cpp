@@ -199,6 +199,21 @@ void validateReport(const Json& report, ModelPack& model) {
 }
 }
 
+bool supportsOnnxCudaOutputRateAdapter(const Capabilities& capabilities) {
+    const auto task = outputRateImageTask(capabilities);
+    return capabilities.adapterVersion == 1 &&
+        ((task == Task::superResolution && capabilities.adapterId == "image-sr-rgb-f32-nchw-v1") ||
+         (task == Task::deblur && capabilities.adapterId == "nafnet-zoo-deblur-rgb-f32-nchw-v1"));
+}
+
+bool supportsOnnxCudaOutputRateModel(const ModelPack& model) {
+    if (!model.metadataIntegrityVerified || !supportsOnnxCudaOutputRateAdapter(model.capabilities)) return false;
+    if (outputRateImageTask(model.capabilities) != Task::deblur) return true;
+    return model.numericalProfile == "sdr8-fp32-cpu-reference" &&
+        std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"onnxruntime_cpu_source") != model.validatedBackends.end() &&
+        std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"onnxruntime_cpu_derived") != model.validatedBackends.end();
+}
+
 ModelPack loadModelPack(const std::filesystem::path& directory) {
     const auto root = std::filesystem::canonical(directory);
     const auto descriptorBytes = inference::readLocalFile(root / "model.json", 256 * 1024);

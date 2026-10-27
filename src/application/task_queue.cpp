@@ -41,7 +41,8 @@ const ConfiguredTask& find(const std::vector<ConfiguredTask>& rows, const std::s
     return *row;
 }
 bool ownsOutput(TaskState state) { return state == TaskState::queued || state == TaskState::running || state == TaskState::paused || state == TaskState::interrupted; }
-std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment) {
+std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment,
+    const std::optional<restoration::Capabilities>& restorationRuntime = std::nullopt) {
     auto identity = Json::parse(identityText);
     if (identity.value("schemaVersion",0) != 1 && identity.value("schemaVersion",0) != 2)
         throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
@@ -51,10 +52,19 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
         identity["model"]["adapter"] = {{"id",job.expectedModelAdapterId},{"version",job.expectedModelAdapterVersion}};
         identity["schemaVersion"] = 2;
     }
-    return Json{{"schemaVersion",2},{"source",job.source},{"output",job.output},
+    Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},
         {"job",Json::parse(serializeJob(job))},{"identity",identity},
         {"mediaRuntime",media::MediaEngine::runtimeVersion()},
-        {"framesPerSegment",framesPerSegment}}.dump();
+        {"framesPerSegment",framesPerSegment}};
+    if (restorationRuntime) {
+        const auto& caps = *restorationRuntime;
+        if (job.restorationModelDirectory.empty() || caps.modelId.empty() || caps.runtimeBackend.empty() || caps.runtimeSignature.empty())
+            throw std::invalid_argument("Restoration checkpoint identity is incomplete");
+        manifest["restorationRuntime"] = {{"modelId",caps.modelId},{"adapterId",caps.adapterId},
+            {"adapterVersion",caps.adapterVersion},{"backend",caps.runtimeBackend},{"signature",caps.runtimeSignature},
+            {"scaleNumerator",caps.scaleNumerator},{"scaleDenominator",caps.scaleDenominator}};
+    }
+    return manifest.dump();
 }
 void validatePublishedResult(const std::string& serialized) {
     const auto result = Json::parse(serialized);
@@ -194,7 +204,19 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     if (manifest.empty()) throw std::logic_error("This task has no verified checkpoint segments; restart it with a new output");
     auto job = parseJob(task.task.sourcePath,task.task.outputPath,task.configuration);
     applyStoredIdentity(job,task.identity);
-    if (!CheckpointArtifacts::manifestMatches(manifest,checkpointManifest(job,task.identity,checkpointFramesPerSegment_)))
+    auto expectedManifest = Json::parse(checkpointManifest(job,task.identity,checkpointFramesPerSegment_));
+    if (!job.restorationModelDirectory.empty()) {
+        const auto saved = Json::parse(manifest);
+        if (!saved.contains("restorationRuntime") || !saved.at("restorationRuntime").is_object() ||
+            saved.at("restorationRuntime").value("modelId",std::string()).empty() ||
+            saved.at("restorationRuntime").value("backend",std::string()).empty() ||
+            saved.at("restorationRuntime").value("signature",std::string()).empty())
+            throw std::logic_error("This checkpoint has no verified restoration runtime identity; restart with a new output");
+        // The selected runtime is checked again after the model is loaded by
+        // the worker, before any saved segment can be reused.
+        expectedManifest["restorationRuntime"] = saved.at("restorationRuntime");
+    }
+    if (!CheckpointArtifacts::manifestMatches(manifest,expectedManifest.dump()))
         throw std::logic_error("Task settings, model identity or local media runtime changed; restart with a new output");
     CheckpointArtifacts artifacts(store_,id,path(task.task.outputPath));
     const auto segments = artifacts.verifyCommitted();
@@ -255,7 +277,11 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
             CheckpointArtifacts artifacts(store_,current->task.id,path(current->task.outputPath));
             const auto configurePipeline = [&](const ProcessingIdentity& identity, PipelineSettings& settings) {
                 const auto identityJson = serializeIdentity(identity);
-                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_);
+                std::optional<restoration::Capabilities> restorationRuntime;
+                if (settings.restorationBackend) restorationRuntime = settings.restorationBackend->capabilities();
+                if (job.restorationModelDirectory.empty() == restorationRuntime.has_value())
+                    throw std::logic_error("Restoration model and runtime identity do not match");
+                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime);
                 const auto previousManifest = artifacts.manifest();
                 if (!previousManifest.empty() && !CheckpointArtifacts::manifestMatches(previousManifest,manifest))
                     throw std::logic_error("Checkpoint identity or runtime changed; refusing to reuse prior segments");
@@ -263,6 +289,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (previousManifest.empty()) artifacts.setManifest(manifest);
                 PipelineCheckpoint checkpoint;
                 checkpoint.framesPerSegment = checkpointFramesPerSegment_;
+                checkpoint.restorationIdentityVerified = restorationRuntime.has_value();
                 checkpoint.completedSegments = artifacts.verifyCommitted(cancellation.get_token());
                 checkpoint.segmentPath = [&artifacts](std::uint64_t index) { return utf8(artifacts.segmentPath(index)); };
                 checkpoint.commitSegment = [&artifacts,token = cancellation.get_token()](std::uint64_t index,std::uint64_t first,

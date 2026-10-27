@@ -72,7 +72,6 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     prepared.identity = processingIdentity;
     send(std::move(prepared));
     auto pipelineSettings = job.settings;
-    if (configurePipeline) configurePipeline(processingIdentity,pipelineSettings);
     std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> restorationBackend;
     if (!job.restorationModelDirectory.empty()) {
         ProcessingEvent restorationLoading; restorationLoading.stage = "loading_restoration_model";
@@ -91,6 +90,7 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         restorationBackend->loadModel(restorationPack);
         pipelineSettings.restorationBackend = restorationBackend;
     }
+    if (configurePipeline) configurePipeline(processingIdentity,pipelineSettings);
     checkpoint();
     return interpolateVideo(job.source,job.output,pipelineSettings,*device,backend,[&](const PipelineProgress& value) {
         // A completed progress event follows atomic output publication. Do

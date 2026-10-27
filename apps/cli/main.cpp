@@ -101,7 +101,7 @@ void usage(std::ostream& out) {
     out << "  rifelove-cli interpolate INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--restoration-model-dir PACK] [--backend auto|cuda|tensorrt] [--encoder auto|NAME] [--pixel-format FORMAT] [--bitrate BPS] [--gop-size N] [--report JSON] [--progress]\n";
     out << "  rifelove-cli profile-check PROFILE_JSON\n"
         << "  rifelove-cli interpolate INPUT OUTPUT --profile PROFILE_JSON [encoding overrides]\n";
-    out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--backend auto|cuda|tensorrt] [--profile PROFILE_JSON] [encoding options]\n"
+    out << "  rifelove-cli queue-add DATABASE INPUT OUTPUT --fps RATE --model-dir PACK --runtime-dir DIRECTORY [--restoration-model-dir PACK] [--backend auto|cuda|tensorrt] [--profile PROFILE_JSON] [encoding options]\n"
         << "  rifelove-cli queue-run DATABASE [--progress]\n"
         << "  rifelove-cli queue-list|queue-export DATABASE\n"
         << "  rifelove-cli queue-report DATABASE [--output JSON]\n"

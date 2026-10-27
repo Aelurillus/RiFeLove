@@ -97,17 +97,22 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         "Selected model does not declare support for input profile " + profile});
                     valid = false;
                 }
+                if (valid && restorationPack && !restoration::supportsOnnxCudaOutputRateModel(*restorationPack)) {
+                    result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                        "Selected local restoration model is not supported for output-rate deblurring or super-resolution"});
+                    valid = false;
+                }
                 if (valid && restorationPack && std::find(restorationPack->capabilities.supportedInputProfiles.begin(),
                     restorationPack->capabilities.supportedInputProfiles.end(),profile) == restorationPack->capabilities.supportedInputProfiles.end()) {
                     result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
-                        "Selected super-resolution model does not declare support for input profile " + profile});
+                        "Selected restoration model does not declare support for input profile " + profile});
                     valid = false;
                 }
                 if (valid && restorationPack) {
                     const auto scale = restorationPack->capabilities.scaleNumerator;
                     if (video->width > 8192 / scale || video->height > 8192 / scale) {
                         result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
-                            "Selected super-resolution model would exceed the 8192-pixel output limit"});
+                            "Selected restoration model would exceed the 8192-pixel output limit"});
                         valid = false;
                     }
                 }

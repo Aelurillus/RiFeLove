@@ -156,13 +156,8 @@ public:
             if (!settings_) throw std::runtime_error("Local settings are unavailable");
             if (!modelPath.isEmpty()) {
                 const auto pack = rifelove::restoration::loadModelPack(path(modelPath));
-                const auto& caps = pack.capabilities;
-                const bool supported =
-                    std::find(caps.tasks.begin(),caps.tasks.end(),rifelove::restoration::Task::superResolution) != caps.tasks.end() &&
-                    std::find(caps.placements.begin(),caps.placements.end(),rifelove::restoration::Placement::outputRateAfterInterpolation) != caps.placements.end() &&
-                    caps.temporalFramesBefore == 0 && caps.temporalFramesAfter == 0 &&
-                    caps.scaleDenominator == 1 && caps.scaleNumerator >= 2 && caps.scaleNumerator <= 4;
-                if (!supported) throw std::invalid_argument("The selected local model does not support output-rate x2/x3/x4 super-resolution");
+                if (!rifelove::restoration::supportsOnnxCudaOutputRateModel(pack))
+                    throw std::invalid_argument("The selected local model does not support output-rate deblurring or x2/x3/x4 super-resolution");
             }
             settings_->setValue("restorationModel",modelPath.isEmpty() ? QUrl() : QUrl::fromLocalFile(QFileInfo(modelPath).absoluteFilePath()));
             settings_->sync();
@@ -305,7 +300,7 @@ public:
                 if (skipped.size() >= 50) break;
                 const auto reason = rejected.reason == ImportRejection::unsupportedColor ? tr("视频色彩标签、像素格式或位深不在支持范围内。") :
                     rejected.reason == ImportRejection::unsupportedModelProfile ? tr("当前模型未声明支持这个视频输入配置。") :
-                    rejected.reason == ImportRejection::unsupportedRestorationModelProfile ? tr("所选超分模型不支持这个色彩配置或分辨率。") :
+                    rejected.reason == ImportRejection::unsupportedRestorationModelProfile ? tr("所选视频修复模型不支持这个色彩配置或分辨率。") :
                     rejected.reason == ImportRejection::unsupportedEncoder ? tr("所选视频编码器无法初始化：") + text(rejected.detail) :
                     rejected.reason == ImportRejection::noVideo ? tr("文件中没有视频轨。") : tr("无法读取媒体：") + text(rejected.detail);
                 skipped.push_back(QString::fromStdWString(rejected.path.filename().wstring()) + ": " + reason);
@@ -407,6 +402,7 @@ private:
                 entry["numericalProfile"] = text(model.numericalProfile); entry["validatedBackends"] = validatedBackends;
                 entry["supportedInputProfiles"] = supportedProfiles; entry["hdrQualified"] = false;
                 entry["metadataIntegrityVerified"] = model.metadataIntegrityVerified;
+                entry["runtimeSupported"] = restoration::supportsOnnxCudaOutputRateModel(model);
                 entry["sourceRepository"] = text(model.sourceRepository); entry["upstreamCommit"] = text(model.upstreamCommit);
                 entry["licenseScopeEvidence"] = text(model.licenseScopeEvidence);
                 entry["sourceManifestSha256"] = text(model.sourceManifestSha256); entry["validationSha256"] = text(model.validationSha256);
@@ -681,21 +677,26 @@ void QueueController::setDefaultRestorationModel(const QUrl& directory) {
     QString selectedPath;
     if (!directory.isEmpty()) {
         if (!directory.isLocalFile() || directory.toLocalFile().isEmpty()) {
-            setError(tr("超分模型必须位于本机目录。")); return;
+            setError(tr("视频修复模型必须位于本机目录。")); return;
         }
         selectedPath = QFileInfo(directory.toLocalFile()).absoluteFilePath();
         const bool verified = std::any_of(models_.begin(),models_.end(),[&](const QVariant& value) {
             const auto entry = value.toMap();
             const auto tasks = entry.value("tasks").toStringList();
             const auto placements = entry.value("placements").toStringList();
-            return entry.value("valid").toBool() && entry.value("family").toString() == QStringLiteral("video-restoration") &&
-                tasks.contains(QStringLiteral("super-resolution")) &&
+            const auto adapter = entry.value("adapterId").toString();
+            return entry.value("valid").toBool() && entry.value("runtimeSupported").toBool() && entry.value("family").toString() == QStringLiteral("video-restoration") &&
+                entry.value("adapterVersion").toInt() == 1 && tasks.size() == 1 &&
+                ((tasks.contains(QStringLiteral("deblur")) && adapter == QStringLiteral("nafnet-zoo-deblur-rgb-f32-nchw-v1")) ||
+                 (tasks.contains(QStringLiteral("super-resolution")) && adapter == QStringLiteral("image-sr-rgb-f32-nchw-v1"))) &&
                 placements.contains(QStringLiteral("output-rate-after-interpolation")) &&
                 entry.value("temporalFramesBefore").toInt() == 0 && entry.value("temporalFramesAfter").toInt() == 0 &&
-                entry.value("scaleDenominator").toInt() == 1 && entry.value("scaleNumerator").toInt() >= 2 &&
-                entry.value("scaleNumerator").toInt() <= 4 && samePath(entry.value("directory").toString(),selectedPath);
+                entry.value("scaleDenominator").toInt() == 1 &&
+                ((tasks.contains(QStringLiteral("deblur")) && entry.value("scaleNumerator").toInt() == 1) ||
+                 (tasks.contains(QStringLiteral("super-resolution")) && entry.value("scaleNumerator").toInt() >= 2 && entry.value("scaleNumerator").toInt() <= 4)) &&
+                samePath(entry.value("directory").toString(),selectedPath);
         });
-        if (!verified) { setError(tr("请先在本地模型中心校验兼容的 x2、x3 或 x4 超分模型。")); return; }
+        if (!verified) { setError(tr("请先在本地模型中心校验兼容的去模糊或 x2、x3、x4 超分模型。")); return; }
     }
     QMetaObject::invokeMethod(worker_,[w=worker_,selectedPath] { w->saveRestorationModel(selectedPath); },Qt::QueuedConnection);
 }

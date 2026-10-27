@@ -128,19 +128,16 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         restorationCapabilities = settings.restorationBackend->capabilities();
         restoration::validateCapabilities(*restorationCapabilities);
         const auto& restorationCaps = *restorationCapabilities;
-        if (restorationCaps.modelId.empty() ||
-            std::find(restorationCaps.tasks.begin(),restorationCaps.tasks.end(),restoration::Task::superResolution) == restorationCaps.tasks.end() ||
-            std::find(restorationCaps.placements.begin(),restorationCaps.placements.end(),restoration::Placement::outputRateAfterInterpolation) == restorationCaps.placements.end() ||
-            restorationCaps.temporalFramesBefore != 0 || restorationCaps.temporalFramesAfter != 0)
-            throw std::invalid_argument("The selected restoration model must support single-frame output-rate super-resolution");
-        if (restorationCaps.scaleDenominator != 1 || restorationCaps.scaleNumerator < 2 || restorationCaps.scaleNumerator > 4 ||
+        if (restorationCaps.modelId.empty() || !restoration::outputRateImageTask(restorationCaps))
+            throw std::invalid_argument("The selected model must support single-frame output-rate deblurring or x2/x3/x4 super-resolution");
+        if (restorationCaps.scaleDenominator != 1 || restorationCaps.scaleNumerator < 1 || restorationCaps.scaleNumerator > 4 ||
             video->width > 8192 / restorationCaps.scaleNumerator || video->height > 8192 / restorationCaps.scaleNumerator)
-            throw std::invalid_argument("The selected super-resolution scale exceeds the supported output dimensions");
+            throw std::invalid_argument("The selected restoration scale exceeds the supported output dimensions");
         const auto restorationProfile = media::rifeSdrInputProfile(video->color);
         if (std::find(restorationCaps.supportedInputProfiles.begin(),restorationCaps.supportedInputProfiles.end(),restorationProfile) == restorationCaps.supportedInputProfiles.end())
             throw std::invalid_argument("Selected restoration model does not declare support for input profile " + restorationProfile);
-        if (settings.checkpoint)
-            throw std::invalid_argument("Checkpoint resume does not yet record restoration model identity; disable checkpointing for this job");
+        if (settings.checkpoint && !settings.checkpoint->restorationIdentityVerified)
+            throw std::invalid_argument("Checkpoint resume requires a verified restoration model and runtime identity");
     }
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
     encoding.frameRate = settings.targetRate;
@@ -340,7 +337,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             frame.timestamp = time;
             frame.duration = Rational(1) / settings.targetRate;
             restoration::Request request;
-            request.task = restoration::Task::superResolution;
+            request.task = *restoration::outputRateImageTask(*restorationCapabilities);
             request.placement = restoration::Placement::outputRateAfterInterpolation;
             request.context.push_back(frame);
             request.centerIndex = 0;
@@ -381,17 +378,20 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         if (analysis.action != quality::PairAction::interpolate) notify("quality",right.source.timestamp,std::string(quality::toString(analysis.action)));
         while (clock->timestamp() < *right.source.timestamp) {
             checkStop(stop);
-            if (checkpointMode && clock->index() < completedOutputFrames) {
-                const auto timestamp = clock->timestamp();
-                clock->advance();
-                notify("resuming",timestamp,"Reusing a verified checkpoint segment");
-                continue;
-            }
             const auto leftDelta = absolute(clock->timestamp() - *left.source.timestamp);
             const auto rightDelta = absolute(clock->timestamp() - *right.source.timestamp);
             const media::DecodedFrame* coincident = nullptr;
             if (leftDelta <= outputTickTolerance && leftDelta <= rightDelta) coincident = &left.source;
             else if (rightDelta <= outputTickTolerance) coincident = &right.source;
+            if (checkpointMode && clock->index() < completedOutputFrames) {
+                if (coincident) ++result.originalFrames;
+                else if (analysis.action != quality::PairAction::interpolate) ++result.heldFrames;
+                else ++result.aiFrames;
+                const auto timestamp = clock->timestamp();
+                clock->advance();
+                notify("resuming",timestamp,"Reusing a verified checkpoint segment");
+                continue;
+            }
             if (coincident) { emit(*coincident); ++result.originalFrames; }
             else if (analysis.action != quality::PairAction::interpolate) { emit(left.source); ++result.heldFrames; }
             else {
@@ -452,15 +452,15 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto end = *boundary;
     while (clock->timestamp() < end) {
         checkStop(stop);
+        if (absolute(clock->timestamp() - *previous->source.timestamp) <= outputTickTolerance)
+            ++result.originalFrames;
+        else ++result.heldFrames;
         if (checkpointMode && clock->index() < completedOutputFrames) {
             const auto timestamp = clock->timestamp();
             clock->advance();
             notify("resuming",timestamp,"Reusing a verified checkpoint segment");
             continue;
         }
-        if (absolute(clock->timestamp() - *previous->source.timestamp) <= outputTickTolerance)
-            ++result.originalFrames;
-        else ++result.heldFrames;
         emit(previous->source);
     }
     if (!origin || end <= *origin) throw std::runtime_error("No valid final output frame boundary");

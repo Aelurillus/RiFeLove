@@ -24,17 +24,20 @@ Item {
     property var selectedSources: []
 
     function restorationModelOptions() {
-        const options = [{label: qsTr("关闭超分"), directory: ""}]
+        const options = [{label: qsTr("关闭视频修复"), directory: ""}]
         for (const model of (queueController.models || [])) {
             const tasks = model.tasks || []
             const placements = model.placements || []
             const scale = Number(model.scaleNumerator || 0)
-            if (!model.valid || model.family !== "video-restoration" ||
-                    tasks.indexOf("super-resolution") < 0 || placements.indexOf("output-rate-after-interpolation") < 0 ||
+            const deblur = tasks.length === 1 && tasks.indexOf("deblur") >= 0 && scale === 1 && model.adapterId === "nafnet-zoo-deblur-rgb-f32-nchw-v1"
+            const superResolution = tasks.length === 1 && tasks.indexOf("super-resolution") >= 0 && scale >= 2 && scale <= 4 && model.adapterId === "image-sr-rgb-f32-nchw-v1"
+            if (!model.valid || !model.runtimeSupported || model.family !== "video-restoration" ||
+                    (!deblur && !superResolution) || placements.indexOf("output-rate-after-interpolation") < 0 ||
                     Number(model.temporalFramesBefore || 0) !== 0 || Number(model.temporalFramesAfter || 0) !== 0 ||
-                    Number(model.scaleDenominator || 0) !== 1 || scale < 2 || scale > 4) continue
-            options.push({label: (model.displayName || model.id || qsTr("本地超分模型")) + " · ×" + scale,
-                          directory: model.directory || ""})
+                    Number(model.scaleDenominator || 0) !== 1 || Number(model.adapterVersion || 0) !== 1) continue
+            const modelName = model.displayName || model.id || qsTr("本地修复模型")
+            const label = deblur ? modelName + " · " + qsTr("去模糊（实验）") : modelName + " · ×" + scale
+            options.push({label: label, directory: model.directory || "", task: deblur ? "deblur" : "super-resolution", scale: scale})
         }
         return options
     }
@@ -113,8 +116,8 @@ Item {
     }
     function stageText(value) {
         const labels = {checking_source: qsTr("校验源文件"), waiting_for_engine: qsTr("等待处理引擎"),
-            loading_model: qsTr("加载模型"), loading_restoration_model: qsTr("加载本地超分模型"), processing: qsTr("AI 补帧"),
-            restoration: qsTr("正在进行超分"), resuming: qsTr("读取已完成片段"), encoding: qsTr("编码视频"),
+            loading_model: qsTr("加载模型"), loading_restoration_model: qsTr("加载修复模型（TensorRT 首次构建可能需要数分钟）"), processing: qsTr("AI 补帧"),
+            restoration: qsTr("正在进行视频修复"), resuming: qsTr("读取已完成片段"), encoding: qsTr("编码视频"),
             validating: qsTr("验证输出"), verifying_output: qsTr("校验发布文件"), encoder_fallback: qsTr("切换编码器"), paused: qsTr("安全暂停点")}
         return labels[value] || value
     }
@@ -303,7 +306,7 @@ Item {
                 RowLayout {
                     visible: page.advancedOpen
                     Layout.fillWidth: true
-                    Label { text: qsTr("超分模型"); Layout.preferredWidth: 75 }
+                    Label { text: qsTr("视频修复"); Layout.preferredWidth: 75 }
                     ComboBox {
                         objectName: "queueRestorationModel"
                         Layout.fillWidth: true
@@ -318,7 +321,7 @@ Item {
                         }
                     }
                     Label {
-                        text: qsTr("仅使用已校验的本地 SDR x2、x3 或 x4 模型；每个输出帧都会超分并增加处理时间。")
+                        text: qsTr("仅使用已校验的本地 SDR 模型；逐帧去模糊为实验功能，可能闪烁。每个输出帧都会修复并增加处理时间。")
                         color: "#697B8B"
                         font.pixelSize: 12
                         Layout.preferredWidth: 260

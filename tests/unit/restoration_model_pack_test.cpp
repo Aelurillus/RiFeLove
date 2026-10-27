@@ -87,11 +87,37 @@ void makeSuperResolutionPack(const std::filesystem::path& root) {
         {"scaleNumerator",4}, {"scaleDenominator",1}, {"supportsBoundaryPadding",false}
     };
     auto report = readJson(root / "validation.json");
+    report["model_adapter"] = {{"id","image-sr-rgb-f32-nchw-v1"},{"version",1}};
     report["capabilities"] = capabilities;
     writeJson(root / "validation.json",report);
     auto descriptor = readJson(root / "model.json");
     descriptor["displayName"] = "Fixture Super Resolution";
+    descriptor["adapter"] = {{"id","image-sr-rgb-f32-nchw-v1"},{"version",1}};
     descriptor["capabilities"] = capabilities;
+    descriptor["validation"]["reportSha256"] = inference::sha256File(root / "validation.json",1024 * 1024);
+    writeJson(root / "model.json",descriptor);
+}
+void makeDeblurPack(const std::filesystem::path& root) {
+    makePack(root);
+    const Json capabilities{
+        {"tasks",Json::array({"deblur"})},
+        {"placements",Json::array({"output-rate-after-interpolation"})},
+        {"supportedInputProfiles",Json::array({"bt709-sdr8"})},
+        {"temporalFramesBefore",0}, {"temporalFramesAfter",0},
+        {"scaleNumerator",1}, {"scaleDenominator",1}, {"supportsBoundaryPadding",false}
+    };
+    auto report = readJson(root / "validation.json");
+    report["model_adapter"] = {{"id","nafnet-zoo-deblur-rgb-f32-nchw-v1"},{"version",1}};
+    report["numerical_profile"] = "sdr8-fp32-cpu-reference";
+    report["validated_backends"] = Json::array({"onnxruntime_cpu_source","onnxruntime_cpu_derived"});
+    report["capabilities"] = capabilities;
+    writeJson(root / "validation.json",report);
+    auto descriptor = readJson(root / "model.json");
+    descriptor["displayName"] = "Fixture Deblur";
+    descriptor["adapter"] = {{"id","nafnet-zoo-deblur-rgb-f32-nchw-v1"},{"version",1}};
+    descriptor["capabilities"] = capabilities;
+    descriptor["validation"]["numericalProfile"] = "sdr8-fp32-cpu-reference";
+    descriptor["validation"]["validatedBackends"] = Json::array({"onnxruntime_cpu_source","onnxruntime_cpu_derived"});
     descriptor["validation"]["reportSha256"] = inference::sha256File(root / "validation.json",1024 * 1024);
     writeJson(root / "model.json",descriptor);
 }
@@ -112,6 +138,25 @@ TEST(RestorationModelPack, LoadsLocalWeightsAndHashBoundSidecars) {
     EXPECT_EQ(pack.capabilities.temporalFramesBefore, 1U);
     EXPECT_EQ(pack.validatedBackends, (std::vector<std::string>{"onnxruntime_cpu"}));
     EXPECT_TRUE(pack.metadataIntegrityVerified);
+}
+
+TEST(RestorationModelPack, LoadsSingleFrameDeblurAdapterAndScale) {
+    TemporaryDirectory temporary;
+    makeDeblurPack(temporary.value);
+    const auto pack = restoration::loadModelPack(temporary.value);
+    EXPECT_EQ(pack.capabilities.adapterId,"nafnet-zoo-deblur-rgb-f32-nchw-v1");
+    EXPECT_EQ(pack.capabilities.tasks,(std::vector<restoration::Task>{restoration::Task::deblur}));
+    EXPECT_EQ(restoration::outputRateImageTask(pack.capabilities),restoration::Task::deblur);
+    EXPECT_TRUE(restoration::supportsOnnxCudaOutputRateAdapter(pack.capabilities));
+    EXPECT_TRUE(restoration::supportsOnnxCudaOutputRateModel(pack));
+    EXPECT_EQ(pack.capabilities.scaleNumerator,1);
+    EXPECT_EQ(pack.capabilities.scaleDenominator,1);
+    auto unsupported = pack.capabilities;
+    unsupported.adapterId = "unknown-deblur-adapter";
+    EXPECT_FALSE(restoration::supportsOnnxCudaOutputRateAdapter(unsupported));
+    auto unqualified = pack;
+    unqualified.numericalProfile = "sdr8-onnx-cpu-contract-only";
+    EXPECT_FALSE(restoration::supportsOnnxCudaOutputRateModel(unqualified));
 }
 
 TEST(ProcessingConfiguration, PinsLocalSuperResolutionDescriptorForQueuedTasks) {

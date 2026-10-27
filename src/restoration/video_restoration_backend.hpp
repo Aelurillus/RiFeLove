@@ -5,6 +5,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <tuple>
@@ -33,6 +34,8 @@ struct Capabilities {
     // never trusted from a local model descriptor.
     std::string runtimeBackend;
     std::string fallbackReason;
+    // Backend version and tile-policy identity for safe checkpoint reuse.
+    std::string runtimeSignature;
 };
 
 struct Request {
@@ -72,6 +75,9 @@ private:
 };
 
 void validateCapabilities(const Capabilities& capabilities);
+// Return the task supported by the current single-frame output-rate image
+// restoration path (spatial SR or deblur), otherwise no task.
+[[nodiscard]] std::optional<Task> outputRateImageTask(const Capabilities& capabilities);
 void validateRequest(const Capabilities& capabilities, const Request& request);
 void validateResult(const Capabilities& capabilities, const Request& request, const Result& result);
 

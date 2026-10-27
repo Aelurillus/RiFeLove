@@ -131,6 +131,8 @@ with tempfile.TemporaryDirectory(prefix="rife-queue-", dir=cli.parent) as folder
         run(native, "recover", crash, source, pack, runtime, marker)
         recovered = rows(crash_db)
         assert [r["state"] for r in recovered] == ["completed"]
+        recovered_result = recovered[0]["result"]
+        assert recovered_result["aiFrames"] + recovered_result["originalFrames"] + recovered_result["heldFrames"] == recovered_result["outputFrames"]
         assert recovered[0]["identity"]["source"]["sha256"] == crash_source_hash
         assert all(not p.exists() for p in stale), "Checkpoint resume retained stale task-owned partial writers"
         assert not orphan.exists(), "Checkpoint resume retained an unjournaled final segment"

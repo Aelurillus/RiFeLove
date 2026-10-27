@@ -12,6 +12,7 @@ namespace rifelove::restoration {
 struct OnnxCudaRestorationConfig {
     std::filesystem::path runtimeDirectory;
     std::filesystem::path engineCacheDirectory;
+    std::filesystem::path profilePrefix; // Empty disables developer profiling.
     std::size_t arenaBudgetBytes = 1024ULL * 1024 * 1024;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     std::size_t maxQueuedRequests = 1;
@@ -33,6 +34,7 @@ public:
     [[nodiscard]] Capabilities capabilities() const override;
     void loadModel(const ModelPack& model);
     [[nodiscard]] std::future<Result> restore(Request request) override;
+    [[nodiscard]] std::filesystem::path finishProfiling();
 
 private:
     class Impl;

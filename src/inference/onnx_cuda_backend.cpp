@@ -331,7 +331,10 @@ public:
                 const char* fp16Enabled = config.enableTensorRtFp16 ? "1" : "0";
                 const char* tensorRtKeys[] = {"device_id","trt_engine_cache_enable","trt_engine_cache_path","trt_engine_cache_prefix",
                     "trt_fp16_enable","trt_max_workspace_size","trt_profile_min_shapes","trt_profile_opt_shapes","trt_profile_max_shapes"};
-                const char* tensorRtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),prefix.c_str(),fp16Enabled,tensorRtWorkspace.c_str(),
+                // The directory already binds the full cache identity. Reusing
+                // its long hash as the filename prefix can exceed Windows'
+                // path limit once ORT appends its subgraph and GPU suffixes.
+                const char* tensorRtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),"trt",fp16Enabled,tensorRtWorkspace.c_str(),
                     profileMin,profileOpt,profileMax};
                 check(api,api.UpdateTensorRTProviderOptions(tensorRt.value,tensorRtKeys,tensorRtValues,std::size(tensorRtKeys)));
                 check(api,api.SessionOptionsAppendExecutionProvider_TensorRT_V2(options.value,tensorRt.value));
@@ -552,7 +555,7 @@ std::pair<std::string,std::array<std::int64_t,4>> inspectTensor(const OrtApi& ap
         throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must use one rank-four FP32 tensor");
     inference::check(api, api.GetDimensions(tensor,dimensions.data(),dimensions.size()));
     const auto dynamic = [](std::int64_t dimension) { return dimension == 0 || dimension == -1; };
-    if (dimensions[0] != 1 || (dimensions[1] != 3 && !(output && dynamic(dimensions[1]))))
+    if ((dimensions[0] != 1 && !dynamic(dimensions[0])) || (dimensions[1] != 3 && !(output && dynamic(dimensions[1]))))
         throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must accept RGB NCHW batch-one tensors");
     return {std::move(copiedName),dimensions};
 }
@@ -590,14 +593,10 @@ public:
         std::lock_guard lock(mutex);
         if (active || !jobs.empty()) throw inference::InferenceError(inference::InferenceErrorKind::busy,"Cannot replace a restoration model while requests are active");
         validateCapabilities(pack.capabilities);
-        if (!pack.metadataIntegrityVerified || pack.capabilities.adapterId != "image-sr-rgb-f32-nchw-v1" ||
-            pack.capabilities.adapterVersion != 1 || pack.capabilities.temporalFramesBefore != 0 ||
-            pack.capabilities.temporalFramesAfter != 0 ||
-            std::find(pack.capabilities.tasks.begin(),pack.capabilities.tasks.end(),Task::superResolution) == pack.capabilities.tasks.end() ||
-            std::find(pack.capabilities.placements.begin(),pack.capabilities.placements.end(),Placement::outputRateAfterInterpolation) == pack.capabilities.placements.end())
-            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Model does not match the verified single-frame SDR super-resolution adapter");
-        if (pack.capabilities.scaleDenominator != 1 || pack.capabilities.scaleNumerator < 2 || pack.capabilities.scaleNumerator > 4)
-            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"This adapter currently supports integer 2x or 4x super-resolution models");
+        const auto task = outputRateImageTask(pack.capabilities);
+        const bool deblurAdapter = task == Task::deblur;
+        if (!supportsOnnxCudaOutputRateModel(pack))
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Model does not match a supported single-frame SDR restoration adapter");
 
         const auto graph = inference::readVerifiedFile(pack.graphPath,pack.graphSha256,2ULL * 1024 * 1024 * 1024);
         auto context = device->activate();
@@ -618,6 +617,7 @@ public:
         const auto [nextOutputName,nextOutputShape] = inspectTensor(api,inspectSession.value,true);
         if (nextInputShape[2] > 0 || nextInputShape[3] > 0 || nextOutputShape[2] > 0 || nextOutputShape[3] > 0)
             throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Tiled restoration requires dynamic height and width axes");
+        api.ReleaseSession(inspectSession.value);
         inspectSession.value = nullptr;
 
         const auto buildSession = [&](bool useTensorRt) {
@@ -627,16 +627,24 @@ public:
             inference::check(api,api.SetIntraOpNumThreads(options.value,2));
             inference::check(api,api.SetInterOpNumThreads(options.value,1));
             inference::check(api,api.SetSessionGraphOptimizationLevel(options.value,ORT_ENABLE_EXTENDED));
+            if (!config.profilePrefix.empty()) inference::check(api,api.EnableProfiling(options.value,config.profilePrefix.c_str()));
             if (useTensorRt) {
                 runtime->ensureTensorRtProvider();
                 const auto trtVersion = runtime->tensorRtVersion();
                 runtime->preloadTensorRtProviderDependencies();
                 const auto deviceInfo = device->info();
                 const auto cudaVersion = runtime->cudaRuntimeVersion();
-                const int minProfile = 64;
-                const int maxProfile = config.tileSize + 2 * config.tileOverlap;
-                const int optProfile = std::min(config.tileSize,maxProfile);
-                const std::string profileIdentity = "sr-rgb-fp32-min64-opt" + std::to_string(optProfile) + "-max" + std::to_string(maxProfile);
+                // The Zoo NAFNet graph's traced local-pooling window requires
+                // at least 384 pixels on each axis; smaller tiles are padded.
+                const int minProfile = deblurAdapter ? 384 : 64;
+                const int coreSize = std::max(config.tileSize,minProfile);
+                // NAFNet's local attention needs substantially more context
+                // than the image-SR models when an image spans multiple tiles.
+                const int overlap = deblurAdapter ? std::max(config.tileOverlap,192) : config.tileOverlap;
+                const int maxProfile = coreSize + 2 * overlap;
+                const int optProfile = coreSize;
+                const std::string profileIdentity = (deblurAdapter ? "nafnet-rgb-fp32-min384-opt" : "sr-rgb-fp32-min64-opt") +
+                    std::to_string(optProfile) + "-max" + std::to_string(maxProfile);
                 const inference::TensorRtCacheIdentity identity{"1.22.0",trtVersion,cudaVersion,"fp32",profileIdentity,512ULL * 1024 * 1024};
                 const auto prefix = inference::tensorRtEngineCachePrefix("restoration",pack.id,pack.version,pack.graphSha256,deviceInfo,identity);
                 auto cacheRoot = config.engineCacheDirectory.empty() ? restorationEngineCacheDirectory() : config.engineCacheDirectory;
@@ -655,7 +663,7 @@ public:
                 const std::string maxShapes = nextInputName + ":1x3x" + std::to_string(maxProfile) + "x" + std::to_string(maxProfile);
                 const char* trtKeys[] = {"device_id","trt_engine_cache_enable","trt_engine_cache_path","trt_engine_cache_prefix",
                     "trt_fp16_enable","trt_max_workspace_size","trt_profile_min_shapes","trt_profile_opt_shapes","trt_profile_max_shapes"};
-                const char* trtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),prefix.c_str(),"0",workspace.c_str(),
+                const char* trtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),"trt","0",workspace.c_str(),
                     minShapes.c_str(),optShapes.c_str(),maxShapes.c_str()};
                 inference::check(api,api.UpdateTensorRTProviderOptions(tensorRt.value,trtKeys,trtValues,std::size(trtKeys)));
                 inference::check(api,api.SessionOptionsAppendExecutionProvider_TensorRT_V2(options.value,tensorRt.value));
@@ -698,6 +706,13 @@ public:
             }
         }
         if (!next.value) next = buildSession(false);
+        const int minTile = deblurAdapter ? 384 : 64;
+        const int coreSize = std::max(config.tileSize,minTile);
+        const int overlap = deblurAdapter ? std::max(config.tileOverlap,192) : config.tileOverlap;
+        const std::string selectedSignature = "ort-1.22.0;cuda-" + runtime->cudaRuntimeVersion() +
+            ";trt-" + (selectedBackend == "onnxruntime_tensorrt_cuda" ? runtime->tensorRtVersion() : std::string("none")) +
+            ";fp32;tile-" + std::to_string(coreSize) + ";overlap-" + std::to_string(overlap) +
+            (deblurAdapter ? ";nafnet-balanced-tiles-v1" : ";sr-tiles-v1");
         session = std::move(next);
         inputName = nextInputName;
         outputName = nextOutputName;
@@ -706,6 +721,8 @@ public:
         modelCapabilities = pack.capabilities;
         modelCapabilities.runtimeBackend = std::move(selectedBackend);
         modelCapabilities.fallbackReason = std::move(selectedFallbackReason);
+        modelCapabilities.runtimeSignature = selectedSignature;
+        profiled = !config.profilePrefix.empty();
         modelId = pack.id;
         inputBuffer.reset();
         outputBuffer.reset();
@@ -727,6 +744,21 @@ public:
         jobs.push_back(std::move(job));
         ready.notify_one();
         return future;
+    }
+
+    std::filesystem::path finishProfile() {
+        std::lock_guard lock(mutex);
+        if (active || !jobs.empty()) throw inference::InferenceError(inference::InferenceErrorKind::busy,"Cannot finish profiling while restoration is active");
+        if (!session.value || !profiled) throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"No active restoration profile");
+        OrtAllocator* allocator = nullptr;
+        inference::check(api,api.GetAllocatorWithDefaultOptions(&allocator));
+        char* name = nullptr;
+        inference::check(api,api.SessionEndProfiling(session.value,allocator,&name));
+        const std::string utf8 = name ? name : "";
+        const auto path = std::filesystem::path(std::u8string(utf8.begin(),utf8.end()));
+        allocator->Free(allocator,name);
+        profiled = false;
+        return path;
     }
 
 private:
@@ -758,42 +790,69 @@ private:
             std::vector<float>(outBytes / sizeof(float))};
         const auto fullInputPlane = static_cast<std::size_t>(prepared.paddedWidth) * static_cast<std::size_t>(prepared.paddedHeight);
         const auto fullOutputPlane = static_cast<std::size_t>(paddedOutputWidth) * static_cast<std::size_t>(paddedOutputHeight);
-        const int maxTileWidth = std::min(prepared.paddedWidth,config.tileSize + 2 * config.tileOverlap);
-        const int maxTileHeight = std::min(prepared.paddedHeight,config.tileSize + 2 * config.tileOverlap);
+        const int minimumTile = modelCapabilities.adapterId == "nafnet-zoo-deblur-rgb-f32-nchw-v1" ? 384 : 64;
+        const int coreSize = std::max(config.tileSize,minimumTile);
+        const int overlap = minimumTile == 384 ? std::max(config.tileOverlap,192) : config.tileOverlap;
+        const auto coreStep = [&](int dimension) {
+            if (minimumTile != 384) return coreSize;
+            // Use the whole axis when it fits the tested profile. For longer
+            // axes distribute cores evenly to avoid a tiny, context-poor tail.
+            if (dimension <= coreSize + 2 * overlap) return dimension;
+            const int segments = (dimension + coreSize - 1) / coreSize;
+            return ((dimension + segments * 64 - 1) / (segments * 64)) * 64;
+        };
+        const int coreWidthStep = coreStep(prepared.paddedWidth);
+        const int coreHeightStep = coreStep(prepared.paddedHeight);
+        const int maxTileWidth = std::max(minimumTile,std::min(prepared.paddedWidth,coreSize + 2 * overlap));
+        const int maxTileHeight = std::max(minimumTile,std::min(prepared.paddedHeight,coreSize + 2 * overlap));
         const auto maxInputBytes = tensorBytes(maxTileWidth,maxTileHeight,config.hostFloatBufferLimit,"Restoration tile input");
         const auto maxOutputBytes = tensorBytes(maxTileWidth * scale,maxTileHeight * scale,config.hostFloatBufferLimit,"Restoration tile output");
         if (!inputBuffer || inputBytes < maxInputBytes) { inputBuffer = device->allocate(maxInputBytes,request.stop); inputBytes = maxInputBytes; }
         if (!outputBuffer || outputBytes < maxOutputBytes) { outputBuffer = device->allocate(maxOutputBytes,request.stop); outputBytes = maxOutputBytes; }
 
-        for (int coreY = 0; coreY < prepared.paddedHeight; coreY += config.tileSize) {
-            const int coreHeight = std::min(config.tileSize,prepared.paddedHeight - coreY);
-            const int tileY = std::max(0,coreY - config.tileOverlap);
-            const int tileBottom = std::min(prepared.paddedHeight,coreY + coreHeight + config.tileOverlap);
+        for (int coreY = 0; coreY < prepared.paddedHeight; coreY += coreHeightStep) {
+            const int coreHeight = std::min(coreHeightStep,prepared.paddedHeight - coreY);
+            int tileY = std::max(0,coreY - overlap);
+            int tileBottom = std::min(prepared.paddedHeight,coreY + coreHeight + overlap);
+            if (tileBottom - tileY < minimumTile) {
+                const int extendBefore = std::min(tileY,minimumTile - (tileBottom - tileY));
+                tileY -= extendBefore;
+                tileBottom = std::min(prepared.paddedHeight,tileY + minimumTile);
+            }
             const int tileHeight = tileBottom - tileY;
             const int localCoreY = coreY - tileY;
-            for (int coreX = 0; coreX < prepared.paddedWidth; coreX += config.tileSize) {
+            for (int coreX = 0; coreX < prepared.paddedWidth; coreX += coreWidthStep) {
                 cancel();
-                const int coreWidth = std::min(config.tileSize,prepared.paddedWidth - coreX);
-                const int tileX = std::max(0,coreX - config.tileOverlap);
-                const int tileRight = std::min(prepared.paddedWidth,coreX + coreWidth + config.tileOverlap);
+                const int coreWidth = std::min(coreWidthStep,prepared.paddedWidth - coreX);
+                int tileX = std::max(0,coreX - overlap);
+                int tileRight = std::min(prepared.paddedWidth,coreX + coreWidth + overlap);
+                if (tileRight - tileX < minimumTile) {
+                    const int extendBefore = std::min(tileX,minimumTile - (tileRight - tileX));
+                    tileX -= extendBefore;
+                    tileRight = std::min(prepared.paddedWidth,tileX + minimumTile);
+                }
                 const int tileWidth = tileRight - tileX;
                 const int localCoreX = coreX - tileX;
-                const auto tilePlane = static_cast<std::size_t>(tileWidth) * static_cast<std::size_t>(tileHeight);
+                const int runTileWidth = std::max(minimumTile,tileWidth);
+                const int runTileHeight = std::max(minimumTile,tileHeight);
+                const auto tilePlane = static_cast<std::size_t>(runTileWidth) * static_cast<std::size_t>(runTileHeight);
                 const auto tileInputBytes = tilePlane * 3 * sizeof(float);
-                const int outputTileWidth = tileWidth * scale;
-                const int outputTileHeight = tileHeight * scale;
+                const int outputTileWidth = runTileWidth * scale;
+                const int outputTileHeight = runTileHeight * scale;
                 const auto outputTilePlane = static_cast<std::size_t>(outputTileWidth) * static_cast<std::size_t>(outputTileHeight);
                 const auto tileOutputBytes = outputTilePlane * 3 * sizeof(float);
                 std::vector<float> tileInput(tilePlane * 3);
                 for (std::size_t channel = 0; channel < 3; ++channel) {
-                    for (int row = 0; row < tileHeight; ++row) {
-                        const auto src = channel * fullInputPlane + static_cast<std::size_t>(tileY + row) * static_cast<std::size_t>(prepared.paddedWidth) + static_cast<std::size_t>(tileX);
-                        const auto dst = channel * tilePlane + static_cast<std::size_t>(row) * static_cast<std::size_t>(tileWidth);
+                    for (int row = 0; row < runTileHeight; ++row) {
+                        const auto src = channel * fullInputPlane + static_cast<std::size_t>(tileY + std::min(row,tileHeight - 1)) * static_cast<std::size_t>(prepared.paddedWidth) + static_cast<std::size_t>(tileX);
+                        const auto dst = channel * tilePlane + static_cast<std::size_t>(row) * static_cast<std::size_t>(runTileWidth);
                         std::copy_n(prepared.pixels.begin() + static_cast<std::ptrdiff_t>(src),tileWidth,tileInput.begin() + static_cast<std::ptrdiff_t>(dst));
+                        std::fill_n(tileInput.begin() + static_cast<std::ptrdiff_t>(dst + static_cast<std::size_t>(tileWidth)),runTileWidth - tileWidth,
+                            prepared.pixels[src + static_cast<std::size_t>(tileWidth - 1)]);
                     }
                 }
                 inputBuffer->upload(std::as_bytes(std::span(tileInput)),0,request.stop);
-                const std::int64_t inputDimensions[] = {1,3,tileHeight,tileWidth};
+                const std::int64_t inputDimensions[] = {1,3,runTileHeight,runTileWidth};
                 const std::int64_t outputDimensions[] = {1,3,outputTileHeight,outputTileWidth};
                 inference::Handle<OrtValue> input(api.ReleaseValue), output(api.ReleaseValue);
                 inference::check(api,api.CreateTensorWithDataAsOrtValue(cudaMemory.value,reinterpret_cast<void*>(inputBuffer->address()),tileInputBytes,inputDimensions,4,ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,&input.value));
@@ -896,6 +955,7 @@ private:
     std::condition_variable_any ready;
     std::deque<Job> jobs;
     bool active = false;
+    bool profiled = false;
     std::jthread worker;
 };
 
@@ -905,6 +965,7 @@ OnnxCudaVideoRestorationBackend::~OnnxCudaVideoRestorationBackend() = default;
 Capabilities OnnxCudaVideoRestorationBackend::capabilities() const { return impl_->getCapabilities(); }
 void OnnxCudaVideoRestorationBackend::loadModel(const ModelPack& model) { impl_->load(model); }
 std::future<Result> OnnxCudaVideoRestorationBackend::restore(Request request) { return impl_->submit(std::move(request)); }
+std::filesystem::path OnnxCudaVideoRestorationBackend::finishProfiling() { return impl_->finishProfile(); }
 
 } // namespace rifelove::restoration
 #endif

@@ -36,10 +36,12 @@ int wmain(int argc, wchar_t** wide) {
     for (const auto& value : values) pointers.push_back(value.c_str());
     const auto argv = pointers.data();
     try {
-        require(argc == 7,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER");
+        require(argc >= 3,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK]");
         const std::string mode = argv[1]; const auto root = path(argv[2]);
+        require(mode == "restoration-hold" ? argc == 8 : argc == 7,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK]");
         const auto database = root / "native-queue.sqlite";
-        TaskQueue queue(database,(mode == "hold" || mode == "hold-complete" || mode == "hold-published" ||
+        const bool restorationRecovery = mode == "restoration-hold" || mode == "restoration-recover";
+        TaskQueue queue(database,restorationRecovery ? 2 : (mode == "hold" || mode == "hold-complete" || mode == "hold-published" ||
             mode == "reject-published" || mode == "reject-proof" || mode == "recover") ? 16 : 256);
         if (mode == "owner") { std::cout << "ownership acquired\n"; return 0; }
         if (mode == "stress") {
@@ -78,7 +80,7 @@ int wmain(int argc, wchar_t** wide) {
                 "Invalid publication result did not produce a recovery diagnostic");
             return 0;
         }
-        if (mode == "recover") {
+        if (mode == "recover" || mode == "restoration-recover") {
             require(queue.recoveredCount() <= 1,"Recovery changed an unexpected number of queue tasks");
             const auto rows = queue.list(); require(rows.size() == 1,"Crash task is missing");
             if (rows[0].task.state == TaskState::completed) {
@@ -99,16 +101,22 @@ int wmain(int argc, wchar_t** wide) {
             require(std::filesystem::is_regular_file(path(after[0].task.outputPath)),"Checkpoint resume did not publish the requested output");
             return 0;
         }
-        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published") {
+        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published" || mode == "restoration-hold") {
             auto task = job(argv[3],root / "crash-output.mkv",argv[4],argv[5]);
-            task.settings.targetRate = mode == "hold-complete" || mode == "hold-published" ? Rational(64,11) : Rational(6);
+            task.settings.targetRate = mode == "restoration-hold" ? Rational(60) :
+                (mode == "hold-complete" || mode == "hold-published" ? Rational(64,11) : Rational(6));
+            if (mode == "restoration-hold") {
+                task.restorationModelDirectory = path(argv[7]);
+                task.settings.inferenceBackend = "cuda";
+            }
             const auto id = queue.enqueue({task}).front();
             Events events;
             require(queue.start([&](QueueEvent event) {
                 if (event.processing.stage == "processing") {
                     std::ofstream status(root / "hold-progress.txt"); status << event.processing.outputFrames;
                 }
-                if (mode == "hold" && event.processing.stage == "processing" && event.processing.outputFrames >= 18) {
+                if ((mode == "hold" || mode == "restoration-hold") && event.processing.stage == "processing" &&
+                    event.processing.outputFrames >= (mode == "restoration-hold" ? 4U : 18U)) {
                     // Frame 17 is reported only after the first 16-frame
                     // checkpoint is committed; frame 18 has opened the next
                     // live segment writer, so the crash tests both artifacts.

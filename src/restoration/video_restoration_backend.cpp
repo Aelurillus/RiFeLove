@@ -79,6 +79,17 @@ void validateCapabilities(const Capabilities& capabilities) {
         throw std::invalid_argument("A super-resolution model must declare an upscale ratio");
 }
 
+std::optional<Task> outputRateImageTask(const Capabilities& capabilities) {
+    if (capabilities.tasks.size() != 1 || capabilities.temporalFramesBefore != 0 || capabilities.temporalFramesAfter != 0 ||
+        std::find(capabilities.placements.begin(),capabilities.placements.end(),Placement::outputRateAfterInterpolation) == capabilities.placements.end() ||
+        capabilities.scaleDenominator != 1)
+        return std::nullopt;
+    const auto task = capabilities.tasks.front();
+    if (task == Task::superResolution && capabilities.scaleNumerator >= 2 && capabilities.scaleNumerator <= 4) return task;
+    if (task == Task::deblur && capabilities.scaleNumerator == 1) return task;
+    return std::nullopt;
+}
+
 void validateRequest(const Capabilities& capabilities, const Request& request) {
     validateCapabilities(capabilities);
     if (request.stop.stop_requested()) throw std::runtime_error("Video restoration request was cancelled");

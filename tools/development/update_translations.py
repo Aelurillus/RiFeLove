@@ -334,6 +334,21 @@ RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO
 尚未登记本地模型\n添加包含 model.json 的 RIFE 或画质修复模型包|No local models registered yet\nAdd a RIFE or video restoration model pack containing model.json|尚未登記本機模型\n新增包含 model.json 的 RIFE 或畫質修復模型套件|ローカルモデルがまだ登録されていません\nmodel.json を含む RIFE または映像修復モデルパックを追加してください
 目录校验会检查模型权重、许可、来源、能力和本地验证记录的文件哈希。哈希一致不代表作者身份或画质排名；未完成独立色彩与模型测试的路径不会标记为 HDR。移除只会从目录列表中取消登记，不会删除本机模型文件。|Catalog verification checks hashes for model weights, license, provenance, capabilities, and local validation records. Matching hashes do not authenticate the author or rank image quality. HDR is not shown unless the color and model paths pass separate tests. Removing a model only unregisters it; it does not delete local files.|目錄驗證會檢查模型權重、授權、來源、能力與本機驗證記錄的檔案雜湊。雜湊一致不代表作者身分或畫質排名；未通過獨立色彩與模型測試的路徑不會標示為 HDR。移除只會取消目錄登記，不會刪除本機模型檔案。|カタログ検証ではモデルの重み、ライセンス、出所、機能、ローカル検証記録のハッシュを確認します。ハッシュ一致は作者の認証や画質順位を保証しません。HDR は色とモデルの経路が個別テストに合格するまで表示しません。削除操作は登録解除のみで、ローカルファイルは削除しません。
 镜头切换阈值必须介于 0 和 1 之间，默认设置未保存。|Scene-cut threshold must be between 0 and 1; defaults were not saved.|鏡頭切換閾值必須介於 0 和 1 之間，預設設定未儲存。|シーン切り替えのしきい値は 0 から 1 の範囲で指定してください。既定値は保存されませんでした。
+关闭视频修复|Disable video restoration|停用影片修復|映像修復を無効にする
+本地修复模型|Local restoration model|本機修復模型|ローカル修復モデル
+去模糊（实验）|Deblur (experimental)|去模糊（實驗）|ぼかし除去（実験）
+逐帧去模糊：输出保持 %1 × %2。该模型无时间上下文，可能出现闪烁，建议先测试短片。|Frame-by-frame deblurring keeps the output at %1 × %2. This model has no temporal context and may flicker; test a short clip first.|逐格去模糊：輸出維持 %1 × %2。此模型沒有時間上下文，可能會閃爍，建議先測試短片。|フレーム単位のぼかし除去では出力解像度は %1 × %2 のままです。このモデルは時間方向の情報を使わず、ちらつくことがあります。まず短い動画でお試しください。
+所选视频修复模型不支持这个色彩配置或分辨率|The selected restoration model does not support this color profile or resolution|所選影片修復模型不支援此色彩設定或解析度|選択した映像修復モデルは、この色設定または解像度をサポートしていません
+所选视频修复模型不支持这个色彩配置或分辨率。|The selected restoration model does not support this color profile or resolution.|所選影片修復模型不支援此色彩設定或解析度。|選択した映像修復モデルは、この色設定または解像度をサポートしていません。
+加载视频修复模型（TensorRT 首次构建可能需要数分钟）|Loading video restoration model (the first TensorRT build may take several minutes)|正在載入影片修復模型（首次建置 TensorRT 引擎可能需要數分鐘）|映像修復モデルを読み込み中（TensorRT の初回ビルドには数分かかる場合があります）
+加载修复模型（TensorRT 首次构建可能需要数分钟）|Loading restoration model (the first TensorRT build may take several minutes)|正在載入修復模型（首次建置 TensorRT 引擎可能需要數分鐘）|修復モデルを読み込み中（TensorRT の初回ビルドには数分かかる場合があります）
+正在进行视频修复|Restoring video|正在進行影片修復|映像を修復中
+视频修复|Video restoration|影片修復|映像修復
+。只运行已校验的本地 SDR 模型；每个输出帧都会修复并增加处理时间。去模糊为实验功能。|. Only verified local SDR models are used. Every output frame is restored, which adds processing time. Deblurring is experimental.|。只使用已驗證的本機 SDR 模型；每個輸出影格都會修復，因此需要更多處理時間。去模糊功能仍屬實驗性。|。検証済みのローカル SDR モデルのみを使用します。出力フレームごとに修復処理を行うため、時間がかかります。ぼかし除去は実験機能です。
+ · 视频修复 %1 秒| · Video restoration %1 s| · 影片修復 %1 秒| · 映像修復 %1 秒
+视频修复模型必须位于本机目录。|The restoration model must be in a local folder.|影片修復模型必須位於本機資料夾。|修復モデルはローカルフォルダーに置く必要があります。
+请先在本地模型中心校验兼容的去模糊或 x2、x3、x4 超分模型。|Verify a compatible deblurring or x2, x3, or x4 super-resolution model in the local Model Center first.|請先在本機模型中心驗證相容的去模糊或 x2、x3、x4 超解析度模型。|まずローカルのモデルセンターで、ぼかし除去または x2、x3、x4 超解像モデルの互換性を確認してください。
+仅使用已校验的本地 SDR 模型；逐帧去模糊为实验功能，可能闪烁。每个输出帧都会修复并增加处理时间。|Only verified local SDR models are used. Frame-by-frame deblurring is experimental and may flicker. Each output frame is restored, which adds processing time.|只使用已驗證的本機 SDR 模型；逐格去模糊為實驗功能，可能會閃爍。每個輸出影格都會修復，因此需要更多處理時間。|検証済みのローカル SDR モデルのみを使用します。フレーム単位のぼかし除去は実験機能で、ちらつくことがあります。出力フレームごとに修復処理を行うため、時間がかかります。
 """
 
 

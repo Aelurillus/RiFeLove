@@ -186,12 +186,8 @@ void pinRestorationModelDescriptor(ProcessingJob& job) {
         return;
     }
     const auto model = restoration::loadModelPack(job.restorationModelDirectory);
-    const auto hasSuperResolution = std::find(model.capabilities.tasks.begin(),model.capabilities.tasks.end(),restoration::Task::superResolution) != model.capabilities.tasks.end();
-    const auto hasOutputPlacement = std::find(model.capabilities.placements.begin(),model.capabilities.placements.end(),restoration::Placement::outputRateAfterInterpolation) != model.capabilities.placements.end();
-    if (!hasSuperResolution || !hasOutputPlacement || model.capabilities.temporalFramesBefore != 0 ||
-        model.capabilities.temporalFramesAfter != 0 || model.capabilities.scaleDenominator != 1 ||
-        model.capabilities.scaleNumerator < 2 || model.capabilities.scaleNumerator > 4)
-        throw std::invalid_argument("The selected local restoration pack is not a supported output-rate x2, x3 or x4 super-resolution model");
+    if (!restoration::supportsOnnxCudaOutputRateModel(model))
+        throw std::invalid_argument("The selected local restoration pack is not a supported output-rate deblur or x2/x3/x4 super-resolution model");
     const auto descriptorHash = inference::sha256File(model.directory / "model.json",256 * 1024);
     if (!job.expectedRestorationDescriptorSha256.empty() && job.expectedRestorationDescriptorSha256 != descriptorHash)
         throw std::invalid_argument("Selected restoration model differs from its pinned local descriptor");

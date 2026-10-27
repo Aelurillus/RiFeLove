@@ -60,6 +60,34 @@ TEST(VideoRestorationContract, ValidTemporalWindowPreservesPresentationColorAndS
     EXPECT_NO_THROW(restoration::validateResult(caps,input,output));
 }
 
+TEST(VideoRestorationContract, RecognizesOnlySupportedSingleFrameOutputRateTasks) {
+    auto deblur = capabilities();
+    deblur.modelId = "nafnet-gopro-deblur-sdr8";
+    deblur.adapterId = "nafnet-zoo-deblur-rgb-f32-nchw-v1";
+    deblur.tasks = {restoration::Task::deblur};
+    deblur.placements = {restoration::Placement::outputRateAfterInterpolation};
+    deblur.temporalFramesBefore = 0;
+    deblur.temporalFramesAfter = 0;
+    deblur.scaleNumerator = 1;
+    deblur.scaleDenominator = 1;
+    EXPECT_EQ(restoration::outputRateImageTask(deblur),restoration::Task::deblur);
+
+    auto superResolution = deblur;
+    superResolution.tasks = {restoration::Task::superResolution};
+    superResolution.adapterId = "image-sr-rgb-f32-nchw-v1";
+    superResolution.scaleNumerator = 4;
+    EXPECT_EQ(restoration::outputRateImageTask(superResolution),restoration::Task::superResolution);
+
+    deblur.tasks.push_back(restoration::Task::superResolution);
+    EXPECT_FALSE(restoration::outputRateImageTask(deblur));
+    deblur.tasks = {restoration::Task::deblur};
+    deblur.placements = {restoration::Placement::sourceRateBeforeInterpolation};
+    EXPECT_FALSE(restoration::outputRateImageTask(deblur));
+    deblur.placements = {restoration::Placement::outputRateAfterInterpolation};
+    deblur.temporalFramesAfter = 1;
+    EXPECT_FALSE(restoration::outputRateImageTask(deblur));
+}
+
 TEST(VideoRestorationContract, RejectsUnsupportedTaskPlacementAndColorProfile) {
     const auto caps = capabilities();
     auto input = request();
