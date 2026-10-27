@@ -5,6 +5,7 @@ param(
     [string]$RuntimeDirectory = "",
     [string]$RifeModelDirectory = "",
     [string]$DeblurModelDirectory = "",
+    [string]$SuperResolutionModelDirectory = "",
     [string]$OutputDirectory = ""
 )
 
@@ -16,6 +17,7 @@ if (-not $DependencyBundle) { $DependencyBundle = Join-Path $outRoot "RifeLove-o
 if (-not $RuntimeDirectory) { $RuntimeDirectory = "C:/itzming/dependences/rifelove-tensorrt-10.9.0.34/onnxruntime-win-x64-gpu-1.22.0/lib" }
 if (-not $RifeModelDirectory) { $RifeModelDirectory = Join-Path $repoRoot "models/cache/rife-4.25-fp32-sdr8-v3" }
 if (-not $DeblurModelDirectory) { $DeblurModelDirectory = Join-Path $repoRoot "models/cache/nafnet-gopro-deblur-sdr8-fp32-eval" }
+if (-not $SuperResolutionModelDirectory) { $SuperResolutionModelDirectory = Join-Path $repoRoot "models/cache/realesrgan-x2plus-sdr8-candidate-v2" }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $outRoot "RifeLove-local-preview-2026-10-27" }
 
 $target = [IO.Path]::GetFullPath($OutputDirectory)
@@ -28,12 +30,13 @@ $bundle = (Resolve-Path -LiteralPath $DependencyBundle).Path
 $runtime = (Resolve-Path -LiteralPath $RuntimeDirectory).Path
 $rife = (Resolve-Path -LiteralPath $RifeModelDirectory).Path
 $deblur = (Resolve-Path -LiteralPath $DeblurModelDirectory).Path
+$superResolution = (Resolve-Path -LiteralPath $SuperResolutionModelDirectory).Path
 foreach ($file in @((Join-Path $build "RifeLove.exe"),(Join-Path $build "rifelove-cli.exe"),
                     (Join-Path $runtime "onnxruntime.dll"),(Join-Path $runtime "onnxruntime_providers_cuda.dll"))) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Required preview file is missing: $file" }
 }
 $packs = @()
-foreach ($directory in @($rife,$deblur)) {
+foreach ($directory in @($rife,$deblur,$superResolution)) {
     $descriptorPath = Join-Path $directory "model.json"
     $descriptor = Get-Content -LiteralPath $descriptorPath -Raw | ConvertFrom-Json
     if ($descriptor.id -notmatch '^[A-Za-z0-9._-]{1,128}$' -or $descriptor.modelFile -cne "model.onnx") {
@@ -45,8 +48,10 @@ foreach ($directory in @($rife,$deblur)) {
     }
     $packs += [pscustomobject]@{directory=$directory;descriptor=$descriptor}
 }
-if ($packs[0].descriptor.family -ne "rife" -or $packs[1].descriptor.family -ne "video-restoration") {
-    throw "Expected one RIFE pack and one local restoration pack."
+if ($packs[0].descriptor.family -ne "rife" -or $packs[1].descriptor.family -ne "video-restoration" -or
+    $packs[2].descriptor.family -ne "video-restoration" -or
+    $packs[2].descriptor.capabilities.tasks -notcontains "super-resolution") {
+    throw "Expected a RIFE pack, a local deblur pack, and a local super-resolution pack."
 }
 $pluginDirectories = @("generic","iconengines","imageformats","licenses","multimedia","networkinformation",
                        "platforms","qml","qmltooling","tls","translations")
@@ -81,12 +86,13 @@ $readme = @"
 RifeLove 本机开发预览
 
 双击 RifeLove.exe 启动。此预览只在这台电脑使用，runtime 和 models 目录链接到本机依赖及模型缓存；移动或删除那些目录后需要重新生成预览。
-默认补帧模型为 RIFE 4.25。高级模型设置可选 NAFNet 去模糊（实验），仅供已标记 BT.709 SDR 8-bit 视频试用；它逐帧处理，可能闪烁，速度也较慢。首次使用 TensorRT 可能需要数分钟构建引擎。
-当前预览没有附带已完成画质和许可验收的超分模型，去模糊与超分尚不能串联。300 FPS 以上是输出视频帧率选项，不是本机每秒处理速度的保证。
+默认补帧模型为 RIFE 4.25。高级模型设置可选 NAFNet 去模糊或 Real-ESRGAN x2 超分；两者都只供已标记 BT.709 SDR 8-bit 视频试用。NAFNet 逐帧处理，可能闪烁，速度也较慢；Real-ESRGAN 权重的再分发授权尚未确认，而且本机 CUDA 实际画质验收尚未完成。首次使用 TensorRT 可能需要数分钟构建引擎。
+300 FPS 以上是输出视频帧率选项，不是本机每秒处理速度的保证。去模糊与超分暂不能串联。
 视频、任务和设置保存在本机。此目录是开发预览，不是正式发行版。
 "@
 [IO.File]::WriteAllText((Join-Path $target "使用说明.txt"),$readme,[Text.UTF8Encoding]::new($false))
 $metadata = [ordered]@{kind="local-linked-preview"; executableSha256=(Get-FileHash -LiteralPath (Join-Path $target "RifeLove.exe") -Algorithm SHA256).Hash.ToLowerInvariant();
-    runtime=$runtime; rifeModel=$rife; deblurModel=$deblur; redistributable=$false}
+    runtime=$runtime; rifeModel=$rife; deblurModel=$deblur; superResolutionModel=$superResolution; redistributable=$false;
+    superResolutionWeightRedistributionCleared=$false; superResolutionCudaVisualQualification="not completed"}
 $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $target "preview-info.json") -Encoding utf8NoBOM
 Write-Output "Created local linked preview: $target"

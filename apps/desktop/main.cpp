@@ -16,6 +16,9 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -35,6 +38,21 @@ std::filesystem::path nativePath(const QString& value) {
     const auto utf8 = value.toUtf8();
     return std::filesystem::u8path(utf8.constData(),utf8.constData() + utf8.size());
 #endif
+}
+
+QString modelFamilyAt(const QString& directory) {
+    QFile descriptor(QDir(directory).filePath(QStringLiteral("model.json")));
+    if (!descriptor.open(QIODevice::ReadOnly)) return {};
+    constexpr qint64 descriptorLimit = 256 * 1024;
+    const auto bytes = descriptor.read(descriptorLimit + 1);
+    if (bytes.size() > descriptorLimit) return {};
+    const auto document = QJsonDocument::fromJson(bytes);
+    return document.isObject() ? document.object().value(QStringLiteral("family")).toString() : QString();
+}
+
+void appendUniquePath(QStringList& paths, const QString& value) {
+    const auto normalized = QDir::toNativeSeparators(QFileInfo(value).absoluteFilePath());
+    if (!paths.contains(normalized,Qt::CaseInsensitive)) paths.push_back(normalized);
 }
 
 void qtMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message) {
@@ -101,11 +119,15 @@ int main(int argc, char* argv[]) {
     StudioController studio;
     const QDir bundledModels(applicationDirectory.filePath("models"));
     QStringList bundledModelPaths;
+    QStringList bundledRestorationPaths;
     const auto modelDirectories = bundledModels.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const auto& modelDirectory : modelDirectories) {
         if (!QFileInfo(QDir(modelDirectory.absoluteFilePath()).filePath("model.json")).isFile() ||
             !QFileInfo(QDir(modelDirectory.absoluteFilePath()).filePath("model.onnx")).isFile()) continue;
-        bundledModelPaths.push_back(modelDirectory.absoluteFilePath());
+        if (modelFamilyAt(modelDirectory.absoluteFilePath()) == QStringLiteral("video-restoration"))
+            bundledRestorationPaths.push_back(modelDirectory.absoluteFilePath());
+        else
+            bundledModelPaths.push_back(modelDirectory.absoluteFilePath());
     }
     QString bundledModel;
     QFile defaultModelMarker(applicationDirectory.filePath("models/default-model.txt"));
@@ -131,19 +153,30 @@ int main(int argc, char* argv[]) {
         const auto modelSetting = preferences.value("model").toUrl();
         const auto selectedModel = modelSetting.isLocalFile() ? modelSetting.toLocalFile() : QString();
         const bool selectedModelAvailable = !selectedModel.isEmpty() && QFileInfo(QDir(selectedModel).filePath("model.json")).isFile() &&
-            QFileInfo(QDir(selectedModel).filePath("model.onnx")).isFile();
+            QFileInfo(QDir(selectedModel).filePath("model.onnx")).isFile() && modelFamilyAt(selectedModel) == QStringLiteral("rife");
         const bool bundledModelAvailable = !bundledModel.isEmpty() && QFileInfo(QDir(bundledModel).filePath("model.json")).isFile() &&
             QFileInfo(QDir(bundledModel).filePath("model.onnx")).isFile();
         if (!selectedModelAvailable && bundledModelAvailable) {
             const auto bundledModelUrl = QUrl::fromLocalFile(bundledModel);
             preferences.setValue("model",bundledModelUrl);
         }
-        auto models = preferences.value("modelCatalog/paths").toStringList();
-        for (const auto& path : bundledModelPaths) {
-            const auto normalized = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-            if (!models.contains(normalized,Qt::CaseInsensitive)) models.push_back(normalized);
-        }
-        if (!models.isEmpty()) preferences.setValue("modelCatalog/paths",models);
+        QStringList models;
+        QStringList restorationModels;
+        const auto mergeCatalogPaths = [&](const QStringList& paths, bool restorationFallback) {
+            for (const auto& path : paths) {
+                const auto family = modelFamilyAt(path);
+                if (family == QStringLiteral("video-restoration") || (family.isEmpty() && restorationFallback))
+                    appendUniquePath(restorationModels,path);
+                else
+                    appendUniquePath(models,path);
+            }
+        };
+        mergeCatalogPaths(preferences.value("modelCatalog/paths").toStringList(),false);
+        mergeCatalogPaths(preferences.value("restorationCatalog/paths").toStringList(),true);
+        for (const auto& path : bundledModelPaths) appendUniquePath(models,path);
+        for (const auto& path : bundledRestorationPaths) appendUniquePath(restorationModels,path);
+        preferences.setValue("modelCatalog/paths",models);
+        preferences.setValue("restorationCatalog/paths",restorationModels);
         const auto runtimeSetting = preferences.value("runtime").toUrl();
         const auto selectedRuntime = runtimeSetting.isLocalFile() ? runtimeSetting.toLocalFile() : QString();
         const bool selectedRuntimeAvailable = !selectedRuntime.isEmpty() && QFileInfo(QDir(selectedRuntime).filePath("onnxruntime.dll")).isFile() &&
