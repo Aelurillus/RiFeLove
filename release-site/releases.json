@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "product": "RifeLove",
+  "updatedAt": "2026-10-26T05:14:28.000Z",
+  "releases": [
+    {
+      "version": "0.1.3",
+      "date": "2026-10-26",
+      "channel": "开发预览",
+      "releaseReady": false,
+      "downloadAvailable": false,
+      "storjBackup": false,
+      "title": "可独立运行的本地推理包与四套 RIFE 模型",
+      "summary": "0.1.3 Windows x64 本机预览包包含桌面程序、CLI、四套已校验的 RIFE 模型，以及复制到包内的 ONNX Runtime CUDA、TensorRT、CUDA 与 cuDNN 运行库，不依赖开发机 SDK 路径。已在 GTX 1660 SUPER 上完成本机 TensorRT 数值资格检查，并用包内 CLI 生成 12 帧测试视频。离线候选 ZIP 已本地校验，不含任务库、日志、个人设置或用户视频；公开下载仍关闭。干净系统验证、完整许可证/再分发审查、超分质量验收及全产品范围仍未完成。",
+      "highlights": [
+        "本机包默认选择 RIFE 4.25，并附带 4.25 Lite、4.26 与实验候选 4.22 Lite；候选模型未按真实素材质量排名。",
+        "包内包含 21 个推理运行库文件；运行时路径无开发机 junction。ZIP 通过 CRC 完整性检查，并带文件 SHA-256 清单。",
+        "包内 CLI 在旧版运行库排在 PATH 前方时仍使用指定的 TensorRT 后端，生成 12 帧测试输出。",
+        "日常视频、模型运行、设置、任务和日志仍在本机；离线 ZIP 不含个人任务数据或视频。",
+        "版本号 0.1.3，记录日期 2026-10-26；公开下载保持关闭，待干净系统、许可证与再分发审查以及完整产品验收通过后再开放。"
+      ],
+      "artifact": null
+    },
+    {
+      "version": "0.1.2",
+      "date": "2026-10-26",
+      "channel": "开发预览",
+      "releaseReady": false,
+      "downloadAvailable": false,
+      "storjBackup": false,
+      "title": "四套本地 RIFE 模型与稳定性修复",
+      "summary": "2026-10-26 构建的 Windows x64 本机预览版，新增 RIFE 4.22 Lite 候选模型，修复模型目录迁移后的旧路径残留，并加固 TensorRT DLL 隔离与打包后检查。视频、模型运行、任务和设置仍留在本机；恢复推理、跨电脑安装验证和第三方再分发审核仍未完成，公开下载保持关闭。",
+      "highlights": [
+        "本地模型中心附带 RIFE 4.25（默认）、4.25 Lite、4.26 和 4.22 Lite 四套模型；4.22 Lite 是实验候选，不代表真实素材画质更好。",
+        "TensorRT 运行库从指定目录加载，不再依赖修改 PATH；打包后的模型目录在迁移后重新检查。",
+        "自动编码会按当前设备能力检查 NVENC，不兼容时继续用兼容的软件编码器，RIFE 插帧仍使用 NVIDIA GPU。",
+        "设置、任务队列、日志、视频和模型推理都保存在本机；本版本仅为开发预览，不是已通过跨电脑与再分发审查的安装包。",
+        "版本号 0.1.2，记录日期 2026-10-26；公开下载待完成产品范围、干净系统验证和依赖/模型许可审查后开放。"
+      ],
+      "artifact": null
+    },
+    {
+      "version": "0.1.1",
+      "date": "2026-10-26",
+      "channel": "开发预览",
+      "releaseReady": false,
+      "downloadAvailable": false,
+      "storjBackup": false,
+      "title": "本地模型中心与恢复模型目录",
+      "summary": "2026-10-26 构建的 Windows x64 离线预览包，内含 RifeLove 0.1.1、命令行工具及三套 RIFE 模型；视频、设置、队列、历史和日志都留在本机。模型中心现可离线登记并校验视频恢复模型包，但尚无已验证的恢复推理后端。跨电脑兼容性和第三方再分发审核仍待完成，公开下载保持关闭。",
+      "highlights": [
+        "更新本地模型中心，可导入、重新校验、查看和移除视频恢复模型包登记；移除登记不会删除本地模型文件。",
+        "离线包包含版本戳一致的 RifeLove.exe 0.1.1、CLI、RIFE 4.25（默认）、4.25 Lite 和 4.26 模型及完整推理运行库；不含用户设置、队列数据库、日志或视频。",
+        "桌面端处理不联网；RIFE 补帧、任务记录、输出视频和设置保存在用户本机。",
+        "NVENC 与显卡驱动不兼容时会自动改用兼容的软件编码器；RIFE 插帧仍在 CUDA 上运行。",
+        "版本号 0.1.1，记录日期 2026-10-26；公开下载待跨电脑验证与依赖、模型再分发审查完成后开放。"
+      ],
+      "artifact": null
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-10-26",
+      "channel": "开发预览",
+      "releaseReady": false,
+      "downloadAvailable": false,
+      "storjBackup": false,
+      "title": "工作室界面更新与三模型离线包",
+      "summary": "2026-10-26 构建的 Windows x64 本地预览版，更新了工作室界面和应用图标，并提供包含完整推理运行库的离线包。视频、设置和任务记录仍留在本机。公开下载暂未开放：目前只在 GTX 1660 SUPER 上完成验证，跨电脑兼容性和第三方再分发审查仍待完成。",
+      "highlights": [
+        "工作室页完成浅色主题与导航层级调整；Windows EXE 已嵌入 RifeLove 应用图标。",
+        "包含 RIFE 4.25（默认）、4.25 Lite 和 4.26 三个模型包；作者目前推荐 4.25 作为多数场景默认模型。",
+        "完整离线 ZIP 包含应用、CLI、FFmpeg、CUDA/ONNX Runtime/TensorRT 文件和三套模型，不包含用户设置、队列、日志或视频。",
+        "NVENC API 与显卡驱动不兼容时显示明确原因并回退到软件编码；本机 GTX 1660 SUPER/560.94 组合不能使用随包 FFmpeg 的新 NVENC API。",
+        "版本号 0.1.0，记录日期 2026-10-26；公开下载在跨设备验证与依赖再分发审查完成前保持关闭。"
+      ],
+      "artifact": null
+    }
+  ]
+}

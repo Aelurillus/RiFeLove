@@ -25,13 +25,27 @@ TEST(BatchImportDimensions, ValidatesEachSourceAgainstTargetAndModelScale) {
 
 TEST(BatchPlatformBitrate, UsesEachSourceHeightAndTargetRate) {
     using namespace rifelove::application;
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 720, 30), 5000);
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 720, 60), 7500);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 1080, 30), 8000);
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 1080, 60), 12000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 1440, 30), 16000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 2160, 30), 45000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 4320, 30), 160000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 4320, 60), 240000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 1080, 300), 12000);
+    EXPECT_EQ(platformGopSizeFrames(PlatformBitrate::youtube, 60), 30);
+    EXPECT_EQ(platformGopSizeFrames(PlatformBitrate::youtube, 30), 15);
+    EXPECT_EQ(platformGopSizeFrames(PlatformBitrate::localQuality, 60), 120);
+    EXPECT_THROW(platformGopSizeFrames(PlatformBitrate::unchanged, 60), std::invalid_argument);
+    EXPECT_THROW(platformGopSizeFrames(PlatformBitrate::youtube, 0), std::invalid_argument);
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::localQuality, 1080, 60), 20000);
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::localQuality, 1080, 120), 40000);
     EXPECT_EQ(platformOutputHeight(1080, 0, 2, 1), 2160);
     EXPECT_EQ(platformOutputHeight(1080, 1440, 2, 1), 1440);
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, platformOutputHeight(1080, 0, 2, 1), 60), 68000);
+    EXPECT_THROW(platformBitrateKbps(PlatformBitrate::youtube, 0, 60), std::invalid_argument);
+    EXPECT_THROW(platformBitrateKbps(PlatformBitrate::youtube, 1080, 0), std::invalid_argument);
     EXPECT_THROW(platformOutputHeight(1080, 0, 2, 0), std::invalid_argument);
 }
 

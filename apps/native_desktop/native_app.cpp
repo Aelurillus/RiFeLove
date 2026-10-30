@@ -33,6 +33,7 @@ constexpr wchar_t kWindowClass[] = L"RifeLoveNativeDesktopWindow";
 constexpr wchar_t kWindowTitle[] = L"RifeLove";
 constexpr wchar_t kPathEditOwnerProperty[] = L"RifeLovePathEditOwner";
 constexpr wchar_t kPathEditOriginalProcProperty[] = L"RifeLovePathEditOriginalProc";
+constexpr std::array<int, 9> kTargetRates{30, 60, 120, 144, 240, 300, 360, 480, 600};
 constexpr UINT kPathMenuView = 1;
 constexpr UINT kPathMenuCopy = 2;
 constexpr UINT kPathMenuCopySelection = 3;
@@ -41,6 +42,21 @@ constexpr UINT kPathMenuPaste = 5;
 constexpr UINT kPathMenuSelectAll = 6;
 
 int scaled(int value, float scale) { return static_cast<int>(static_cast<float>(value) * scale); }
+
+// Owner-drawn controls share caller-owned DCs during printing and WM_DRAWITEM.
+// Restore the selected font as well as colors so DPI font changes can release
+// the old font and one control cannot alter the next control's rendering.
+class ScopedDcState final {
+public:
+    explicit ScopedDcState(HDC dc) : dc_(dc), saved_(SaveDC(dc)) {}
+    ~ScopedDcState() { restore(); }
+    void restore() { if (saved_ != 0) { RestoreDC(dc_, saved_); saved_ = 0; } }
+    ScopedDcState(const ScopedDcState&) = delete;
+    ScopedDcState& operator=(const ScopedDcState&) = delete;
+private:
+    HDC dc_;
+    int saved_;
+};
 
 RECT monitorWorkArea(HMONITOR monitor) {
     MONITORINFO info{};
@@ -537,7 +553,7 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
         if (!std::filesystem::is_directory(output, outputError)) add(L"输出目录");
     } else if (std::filesystem::exists(output, outputError)) add(L"输出文件已存在");
 
-    const std::array<int, 7> rates{30, 60, 120, 144, 240, 360, 480};
+    const auto& rates = kTargetRates;
     const int rateIndex = rateCombo_ ? static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0)) : -1;
     try {
         Rational rate(60);
@@ -702,7 +718,7 @@ void NativeApp::createControls() {
     SetPropW(motionBlurCheck_, L"RifeLoveCheckboxProc", reinterpret_cast<HANDLE>(checkboxProc));
     SetPropW(motionBlurCheck_, L"RifeLoveCheckboxOwner", reinterpret_cast<HANDLE>(this));
 
-    for (const wchar_t* value : {L"30 FPS", L"60 FPS", L"120 FPS", L"144 FPS", L"240 FPS", L"360 FPS", L"480 FPS", L"自定义有理数"}) SendMessageW(rateCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
+    for (const wchar_t* value : {L"30 FPS", L"60 FPS", L"120 FPS", L"144 FPS", L"240 FPS", L"300 FPS", L"360 FPS", L"480 FPS", L"600 FPS", L"自定义有理数"}) SendMessageW(rateCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
     SendMessageW(rateCombo_, CB_SETCURSEL, 1, 0);
     ShowWindow(rateCustomEdit_, SW_HIDE);
     for (const wchar_t* value : {L"自动（NVENC 优先）", L"H.264 NVENC", L"软件 H.264"}) SendMessageW(encoderCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
@@ -799,6 +815,28 @@ void NativeApp::layoutControls() {
         // the closed field height leaves the user with an empty/tiny list.
         const float expanded = height + static_cast<float>(std::clamp(count, 1, 8)) * 32.0F + 8.0F;
         move(control, x, y, width, height, true, false, expanded);
+        // Keep the closed field aligned with its column, but let the popup
+        // show complete model/preset names in narrow or high-DPI windows.
+        int popupWidth = scaled(static_cast<int>(width), s);
+        if (HDC dc = GetDC(control)) {
+            {
+                const ScopedDcState saved(dc);
+                if (font_) SelectObject(dc, font_);
+                for (int index = 0; index < count; ++index) {
+                    const LRESULT length = SendMessageW(control, CB_GETLBTEXTLEN, index, 0);
+                    if (length <= 0) continue;
+                    std::wstring label(static_cast<std::size_t>(length) + 1, L'\0');
+                    SendMessageW(control, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label.data()));
+                    SIZE extent{};
+                    if (GetTextExtentPoint32W(dc, label.data(), static_cast<int>(length), &extent))
+                        popupWidth = std::max(popupWidth, static_cast<int>(extent.cx) + scaled(48, s));
+                }
+            }
+            ReleaseDC(control, dc);
+        }
+        const RECT work = monitorWorkArea(MonitorFromWindow(control, MONITOR_DEFAULTTONEAREST));
+        const int available = std::max(1, static_cast<int>(work.right - work.left) - scaled(16, s));
+        SendMessageW(control, CB_SETDROPPEDWIDTH, std::min(popupWidth, available), 0);
     };
     // Labels are painted together with the card, so all text shares the same
     // type scale and none inherits a mismatching STATIC background.
@@ -822,7 +860,7 @@ void NativeApp::layoutControls() {
     EnableWindow(shutterEdit_, blurEnabled);
     EnableWindow(samplesEdit_, blurEnabled);
     moveCombo(platformCombo_, second, 162, rightWidth, 36);
-    const bool customRate = SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0) == 7;
+    const bool customRate = SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0) == static_cast<int>(kTargetRates.size());
     moveCombo(rateCombo_, second, 240, customRate ? rightWidth * 0.55F : rightWidth, 38);
     move(rateCustomEdit_, second + rightWidth * 0.57F + 8, 246, rightWidth * 0.43F - 16, 26, customRate);
     moveCombo(encoderCombo_, second, 318, rightWidth, 36);
@@ -1139,6 +1177,7 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
         if (!item || item->CtlID != kHistoryRefresh) break;
+        const ScopedDcState saved(item->hDC);
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const COLORREF fill = disabled ? RGB(38, 49, 63) : pressed ? RGB(42, 72, 91) : RGB(34, 56, 82);
@@ -1328,7 +1367,7 @@ void NativeApp::startProcessing() {
     }
     const auto source = currentSource();
     const auto output = currentOutput();
-    const std::array<int, 7> rates{30, 60, 120, 144, 240, 360, 480};
+    const auto& rates = kTargetRates;
     Rational selectedRate(60);
     const int rateIndex = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
     try {
@@ -1388,7 +1427,7 @@ void NativeApp::startProcessing() {
             caps.scaleNumerator, caps.scaleDenominator);
         const int bitrateKbps = application::platformBitrateKbps(profile, outputHeight, integerRate);
         job.settings.encoding.bitRate = static_cast<std::int64_t>(bitrateKbps) * 1000;
-        job.settings.encoding.gopSize = integerRate * 2;
+        job.settings.encoding.gopSize = application::platformGopSizeFrames(profile, integerRate);
     }
     try {
         job.settings.motionBlur.enabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -1954,6 +1993,7 @@ LRESULT CALLBACK NativeApp::comboProcedure(HWND window, UINT message, WPARAM wPa
         PAINTSTRUCT paint{};
         HDC dc = message == WM_PAINT ? BeginPaint(window, &paint) : reinterpret_cast<HDC>(wParam);
         if (!dc) return 0;
+        ScopedDcState saved(dc);
         RECT rect{};
         GetClientRect(window, &rect);
         const bool enabled = IsWindowEnabled(window) != FALSE;
@@ -1967,10 +2007,11 @@ LRESULT CALLBACK NativeApp::comboProcedure(HWND window, UINT message, WPARAM wPa
         FillRect(dc, &rect, background);
         DeleteObject(background);
         HBRUSH brush = CreateSolidBrush(fill);
-        HPEN pen = CreatePen(PS_SOLID, 1, border);
+        const float scale = app ? app->dpiScale() : 1.0F;
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, scaled(1, scale)), border);
         const auto oldBrush = SelectObject(dc, brush);
         const auto oldPen = SelectObject(dc, pen);
-        RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, 8, 8);
+        RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, scaled(8, scale), scaled(8, scale));
         SelectObject(dc, oldPen);
         SelectObject(dc, oldBrush);
         DeleteObject(pen);
@@ -1985,7 +2026,6 @@ LRESULT CALLBACK NativeApp::comboProcedure(HWND window, UINT message, WPARAM wPa
             }
         }
         RECT textRect = rect;
-        const float scale = app ? app->dpiScale() : 1.0F;
         textRect.left += scaled(12, scale);
         textRect.right -= scaled(30, scale);
         SetBkMode(dc, TRANSPARENT);
@@ -2005,9 +2045,10 @@ LRESULT CALLBACK NativeApp::comboProcedure(HWND window, UINT message, WPARAM wPa
         DeleteObject(arrowBrush);
         if (focused) {
             RECT focus = rect;
-            InflateRect(&focus, -3, -3);
+            InflateRect(&focus, -scaled(3, scale), -scaled(3, scale));
             DrawFocusRect(dc, &focus);
         }
+        saved.restore();
         if (message == WM_PAINT) EndPaint(window, &paint);
         return 0;
     }
@@ -2039,6 +2080,7 @@ LRESULT CALLBACK NativeApp::checkboxProcedure(HWND window, UINT message, WPARAM 
         PAINTSTRUCT paint{};
         HDC dc = message == WM_PAINT ? BeginPaint(window, &paint) : reinterpret_cast<HDC>(wParam);
         if (!dc) return 0;
+        ScopedDcState saved(dc);
         RECT rect{}; GetClientRect(window, &rect);
         FillRect(dc, &rect, app->staticBrush_);
         const float s = app->dpiScale();
@@ -2061,6 +2103,7 @@ LRESULT CALLBACK NativeApp::checkboxProcedure(HWND window, UINT message, WPARAM 
         SelectObject(dc, app->font_);
         DrawTextW(dc, app->controlText(window).c_str(), -1, &rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         if (GetFocus() == window) DrawFocusRect(dc, &rect);
+        saved.restore();
         if (message == WM_PAINT) EndPaint(window, &paint);
         return 0;
     }
@@ -2308,6 +2351,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
         if (!item || !item->hwndItem) return 0;
+        const ScopedDcState saved(item->hDC);
         if (item->CtlID == kMotionBlurCheck) {
             const bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
             const bool checked = SendMessageW(item->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -2364,7 +2408,8 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             RECT textRect = item->rcItem;
             textRect.left += scaled(12, dpiScale());
-            textRect.right -= scaled(30, dpiScale());
+            // Popup rows have no arrow: keep their full text width available.
+            textRect.right -= scaled(12, dpiScale());
             SetBkMode(item->hDC, TRANSPARENT);
             SetTextColor(item->hDC, textColor);
             if (font_) SelectObject(item->hDC, font_);
@@ -2378,9 +2423,12 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             return TRUE;
         }
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
-        const bool pressed = (item->itemState & ODS_SELECTED) != 0;
+        const bool pressed = !disabled && (item->itemState & ODS_SELECTED) != 0;
+        const bool focused = (item->itemState & ODS_FOCUS) != 0;
         const bool accentButton = item->CtlID == kStart || item->CtlID == kSelectSource || item->CtlID == kSelectOutput;
-        const COLORREF color = disabled ? RGB(38, 49, 63) : accentButton ? RGB(145, 224, 192) : RGB(34, 56, 82);
+        const COLORREF color = disabled ? RGB(38, 49, 63) : accentButton ?
+            (pressed ? RGB(118, 202, 170) : RGB(145, 224, 192)) :
+            (pressed ? RGB(43, 74, 101) : RGB(34, 56, 82));
         const COLORREF textColor = disabled ? RGB(125, 140, 157) : accentButton ? RGB(16, 36, 44) : RGB(242, 247, 255);
         const bool sidebarButton = item->CtlID == kSelectModel || item->CtlID == kSelectRuntime;
         const bool dockButton = item->CtlID == kStart || item->CtlID == kPauseResume || item->CtlID == kCancel;
@@ -2389,7 +2437,8 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         DeleteObject(surface);
         const int inset = pressed ? scaled(1, dpiScale()) : 0;
         HBRUSH brush = CreateSolidBrush(color);
-        HPEN pen = CreatePen(PS_SOLID, scaled(1, dpiScale()), disabled ? RGB(48, 61, 76) : RGB(67, 91, 111));
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, scaled(1, dpiScale())), disabled ? RGB(48, 61, 76) :
+            focused ? RGB(162, 231, 203) : RGB(67, 91, 111));
         const auto oldBrush = SelectObject(item->hDC, brush);
         const auto oldPen = SelectObject(item->hDC, pen);
         RECT rect = item->rcItem;
@@ -2403,6 +2452,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         SetTextColor(item->hDC, textColor);
         if (font_) SelectObject(item->hDC, font_);
         const auto label = controlText(item->hwndItem);
+        InflateRect(&rect, -scaled(8, dpiScale()), 0);
         DrawTextW(item->hDC, label.c_str(), static_cast<int>(label.size()), &rect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         if ((item->itemState & ODS_FOCUS) != 0) {

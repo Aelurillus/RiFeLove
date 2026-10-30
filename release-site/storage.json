@@ -1,0 +1,10 @@
+{
+  "mode": "local-only",
+  "primary": null,
+  "backup": {
+    "provider": "storj",
+    "enabled": false,
+    "endpoint": "",
+    "storjBucket": ""
+  }
+}

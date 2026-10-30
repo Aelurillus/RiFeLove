@@ -2,7 +2,7 @@
 param(
     [string]$OutputRoot = "",
     [switch]$Apply,
-    # Explicitly list versions whose canonical private OSS archive was already verified.
+    # Explicitly list versions whose canonical release archive was already verified.
     # Only the exact root-level generated ZIP for that version is eligible.
     [string[]]$RemoveArchivedVersionZip = @(),
     [string[]]$KeepPackage = @(
@@ -211,7 +211,7 @@ if (-not $plannedBytes) { $plannedBytes = 0 }
 Write-Output ("Found {0} inactive generated item(s); {1:N2} GiB of file contents can be removed while preserving local data." -f $plan.Count, ($plannedBytes / 1GB))
 foreach ($item in $plan) {
     $action = if ($item.Kind -eq "archive") { "remove temporary dated archive; keep versioned archives" }
-        elseif ($item.Kind -eq "archived-version-zip") { "remove exact local copy after private OSS archive verification" }
+        elseif ($item.Kind -eq "archived-version-zip") { "remove exact local copy after release archive verification" }
         elseif ($item.PreserveData) { "remove generated files; keep data/" }
         else { "remove generated folder" }
     Write-Output ("{0} — {1:N2} GiB — {2}" -f $item.Name, ($item.Bytes / 1GB), $action)

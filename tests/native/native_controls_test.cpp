@@ -13,6 +13,7 @@
 #include <functional>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 using rifelove::native_desktop::NativeApp;
 using rifelove::native_desktop::NativeLayout;
@@ -74,7 +75,7 @@ bool writeBitmap(const std::filesystem::path& path, const BITMAPINFOHEADER& info
 
 void checkControlRendering(HWND parent, HWND combo, HWND sourceButton, HWND startButton,
                            const std::filesystem::path& output) {
-    constexpr int width = 420, height = 190;
+    constexpr int width = 420, height = 234;
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth = width;
@@ -97,9 +98,17 @@ void checkControlRendering(HWND parent, HWND combo, HWND sourceButton, HWND star
     HBRUSH canvas = CreateSolidBrush(RGB(19, 24, 32));
     FillRect(dc, &whole, canvas);
     DeleteObject(canvas);
+    SetTextColor(dc, RGB(244, 12, 222));
+    SetBkMode(dc, OPAQUE);
+    const HGDIOBJ expectedFont = GetCurrentObject(dc, OBJ_FONT);
+    const auto checkDcState = [&] {
+        check(GetCurrentObject(dc, OBJ_FONT) == expectedFont && GetTextColor(dc) == RGB(244, 12, 222) &&
+              GetBkMode(dc) == OPAQUE, "control drawing preserves caller font and text DC state");
+    };
 
     SetViewportOrgEx(dc, 16, 12, nullptr);
     SendMessageW(combo, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+    checkDcState();
     SetViewportOrgEx(dc, 16, 56, nullptr);
     DRAWITEMSTRUCT button{};
     button.CtlType = ODT_BUTTON;
@@ -108,11 +117,13 @@ void checkControlRendering(HWND parent, HWND combo, HWND sourceButton, HWND star
     button.hDC = dc;
     button.rcItem = RECT{0, 0, 300, 34};
     SendMessageW(parent, WM_DRAWITEM, button.CtlID, reinterpret_cast<LPARAM>(&button));
+    checkDcState();
     SetViewportOrgEx(dc, 16, 100, nullptr);
     button.CtlID = 1009;
     button.hwndItem = startButton;
     button.itemState = ODS_DISABLED;
     SendMessageW(parent, WM_DRAWITEM, button.CtlID, reinterpret_cast<LPARAM>(&button));
+    checkDcState();
     SetViewportOrgEx(dc, 16, 144, nullptr);
     DRAWITEMSTRUCT option{};
     option.CtlType = ODT_COMBOBOX;
@@ -123,11 +134,19 @@ void checkControlRendering(HWND parent, HWND combo, HWND sourceButton, HWND star
     option.hDC = dc;
     option.rcItem = RECT{0, 0, 300, 32};
     SendMessageW(parent, WM_DRAWITEM, option.CtlID, reinterpret_cast<LPARAM>(&option));
+    checkDcState();
+    SetViewportOrgEx(dc, 16, 188, nullptr);
+    button.CtlID = 1002;
+    button.hwndItem = sourceButton;
+    button.itemState = ODS_SELECTED;
+    SendMessageW(parent, WM_DRAWITEM, button.CtlID, reinterpret_cast<LPARAM>(&button));
+    checkDcState();
     SetViewportOrgEx(dc, 0, 0, nullptr);
 
     check(GetPixel(dc, 30, 66) == RGB(145, 224, 192), "enabled button uses accent fill");
     check(GetPixel(dc, 30, 110) == RGB(38, 49, 63), "disabled button uses disabled fill");
     check(GetPixel(dc, 30, 154) == RGB(36, 66, 82), "selected drop-down item uses selected fill");
+    check(GetPixel(dc, 30, 198) == RGB(118, 202, 170), "pressed button has distinct visual feedback");
     if (!output.empty()) check(writeBitmap(output, info.bmiHeader, pixels), "write off-screen visual evidence");
     SelectObject(dc, oldBitmap);
     DeleteObject(bitmap);
@@ -271,6 +290,8 @@ void checkTaskHistory(NativeApp& app, HWND window) {
     (void)app;
 }
 
+#endif
+
 std::wstring comboItem(HWND combo, int index) {
     if (!combo || index < 0) return {};
     const LRESULT length = SendMessageW(combo, CB_GETLBTEXTLEN, index, 0);
@@ -280,6 +301,60 @@ std::wstring comboItem(HWND combo, int index) {
     return value;
 }
 
+void checkFrameRateOptions(HWND window) {
+    const HWND rate = GetDlgItem(window, 1005);
+    check(rate != nullptr, "find target frame rate selector");
+    if (!rate) return;
+    const std::array<std::wstring_view, 10> expected{
+        L"30 FPS", L"60 FPS", L"120 FPS", L"144 FPS", L"240 FPS",
+        L"300 FPS", L"360 FPS", L"480 FPS", L"600 FPS", L"自定义有理数"};
+    check(SendMessageW(rate, CB_GETCOUNT, 0, 0) == static_cast<LRESULT>(expected.size()),
+        "frame rate selector exposes standard, 300+ FPS and custom rational modes");
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        check(comboItem(rate, static_cast<int>(index)) == expected[index],
+            "frame rate option label matches the supported target rate");
+    check(SendMessageW(rate, CB_SETCURSEL, static_cast<WPARAM>(expected.size() - 1), 0) != CB_ERR,
+        "custom rational frame rate remains selectable after high-rate presets");
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(1005, CBN_SELCHANGE), reinterpret_cast<LPARAM>(rate));
+    const HWND custom = GetDlgItem(window, 1007);
+    check(custom && IsWindowVisible(custom), "custom rational input appears for the final selector item");
+    SendMessageW(rate, CB_SETCURSEL, 1, 0);
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(1005, CBN_SELCHANGE), reinterpret_cast<LPARAM>(rate));
+}
+
+void checkLongComboPopup(HWND window) {
+    const HWND combo = GetDlgItem(window, 1012);
+    if (!combo) { check(false, "find platform selector for long popup labels"); return; }
+    const wchar_t label[] = L"YouTube · 60 FPS 上传副本 / 保留完整设置名称与质量配置";
+    const LRESULT inserted = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+    check(inserted >= 0, "add a long selector label for popup width regression");
+    if (inserted < 0) return;
+    // Resize notification recomputes actual native control geometry without
+    // moving focus or touching the user's desktop.
+    SendMessageW(window, WM_SIZE, SIZE_RESTORED, 0);
+    HDC dc = GetDC(combo);
+    if (dc) {
+        const HGDIOBJ old = SelectObject(dc, reinterpret_cast<HFONT>(SendMessageW(combo, WM_GETFONT, 0, 0)));
+        SIZE extent{};
+        GetTextExtentPoint32W(dc, label, static_cast<int>(std::size(label) - 1), &extent);
+        SelectObject(dc, old);
+        ReleaseDC(combo, dc);
+        const UINT dpi = GetDpiForWindow(window);
+        const float scale = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+        MONITORINFO monitor{};
+        monitor.cbSize = sizeof(monitor);
+        check(GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) != FALSE,
+              "read monitor bounds for popup width constraint");
+        const int available = std::max(1, static_cast<int>(monitor.rcWork.right - monitor.rcWork.left) - static_cast<int>(16 * scale));
+        const int required = std::min(static_cast<int>(extent.cx) + static_cast<int>(48 * scale), available);
+        check(SendMessageW(combo, CB_GETDROPPEDWIDTH, 0, 0) >= required,
+              "popup expands to fit long names with DPI-scaled padding");
+    } else check(false, "measure selector label using the control's actual font");
+    SendMessageW(combo, CB_DELETESTRING, static_cast<WPARAM>(inserted), 0);
+    SendMessageW(window, WM_SIZE, SIZE_RESTORED, 0);
+}
+
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 void checkRestorationControls(NativeApp& app, HWND window, bool requireDenoise) {
     const HWND temporal = GetDlgItem(window, 1024);
     const HWND restoration = GetDlgItem(window, 1017);
@@ -662,6 +737,8 @@ int wmain(int argc, wchar_t** argv) {
         EnumThreadWindows(GetCurrentThreadId(), findWindow, reinterpret_cast<LPARAM>(&window));
         check(window != nullptr, "find native window on isolated desktop");
         if (window) {
+            checkFrameRateOptions(window);
+            checkLongComboPopup(window);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             const bool denoiseRun = (argc == 4 || argc == 5) &&
                 (std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" ||

@@ -11,8 +11,9 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
+        "RIFELOVE_BUILD_CLI": "OFF",
         "RIFELOVE_BUILD_TESTS": "ON",
-        "RIFELOVE_BUILD_DESKTOP": "ON"
+        "RIFELOVE_BUILD_DESKTOP": "OFF"
       }
     },
     {
@@ -24,8 +25,9 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
+        "RIFELOVE_BUILD_CLI": "OFF",
         "RIFELOVE_BUILD_TESTS": "ON",
-        "RIFELOVE_BUILD_DESKTOP": "ON"
+        "RIFELOVE_BUILD_DESKTOP": "OFF"
       }
     }
   ],

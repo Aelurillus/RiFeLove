@@ -119,7 +119,7 @@ bool selectComboItemByLabel(HWND parent, int id, const wchar_t* label) {
 // that is never switched to, so no user input or foreground window is touched.
 int wmain(int argc, wchar_t** argv) {
     if (argc != 4 && argc != 5) {
-        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --360, --480, --denoise, --dual or --dual-blur.\n";
+        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --dual or --dual-blur.\n";
         return 2;
     }
     const std::filesystem::path executable = std::filesystem::absolute(argv[1]);
@@ -161,6 +161,10 @@ int wmain(int argc, wchar_t** argv) {
         return context.result != nullptr || WaitForSingleObject(process.hProcess, 0) == WAIT_OBJECT_0;
     }, std::chrono::seconds(30));
     if (found && context.result) {
+        const std::wstring testOption = argc == 5 ? std::wstring(argv[4]) : std::wstring{};
+        if (!testOption.empty() && !testOption.starts_with(L"--") &&
+            !captureTarget(context.result, std::filesystem::absolute(argv[4])))
+            std::cerr << "Could not capture the target window before checking readiness.\n";
         waitUntil([&] {
             return GetDlgItem(context.result, 1001) && GetDlgItem(context.result, 1003) &&
                    GetDlgItem(context.result, 1006) && GetDlgItem(context.result, 1009) &&
@@ -183,7 +187,7 @@ int wmain(int argc, wchar_t** argv) {
                 const bool blur = option == L"--blur" || option == L"--dual-blur";
                 const bool dual = option == L"--dual" || option == L"--dual-blur";
                 const bool denoise = argc == 5 && (std::wstring(argv[4]) == L"--denoise" || dual);
-                const bool highRate = argc == 5 && (std::wstring(argv[4]) == L"--360" || std::wstring(argv[4]) == L"--480");
+                const bool highRate = argc == 5 && (std::wstring(argv[4]) == L"--300" || std::wstring(argv[4]) == L"--360" || std::wstring(argv[4]) == L"--480" || std::wstring(argv[4]) == L"--600");
                 if (denoise) {
                     const HWND temporal = GetDlgItem(context.result, 1024);
                     if (!temporal || !selectComboItemByLabel(context.result, 1024, L"FastDVDnet")) {
@@ -224,8 +228,10 @@ int wmain(int argc, wchar_t** argv) {
                 }
                 if (highRate) {
                     const HWND rate = GetDlgItem(context.result, 1005);
-                    const int selection = std::wstring(argv[4]) == L"--480" ? 6 : 5;
-                    if (!rate || SendMessageW(rate, CB_SETCURSEL, selection, 0) == CB_ERR) {
+                    const std::wstring rateLabel = std::wstring(argv[4]) == L"--300" ? L"300 FPS" :
+                        std::wstring(argv[4]) == L"--360" ? L"360 FPS" :
+                        std::wstring(argv[4]) == L"--480" ? L"480 FPS" : L"600 FPS";
+                    if (!rate || !selectComboItemByLabel(context.result, 1005, rateLabel.c_str())) {
                         std::cerr << "Requested high FPS option is unavailable.\n";
                         PostMessageW(context.result, WM_CLOSE, 0, 0);
                         WaitForSingleObject(process.hProcess, 10000);
@@ -271,7 +277,11 @@ int wmain(int argc, wchar_t** argv) {
                     std::cout << "Actual native EXE published the test video through its start button.\n";
                     result = 0;
                 } else std::cerr << "Target did not publish a completed test video.\n";
-            } else std::cerr << "Target did not enable its start button after inspection.\n";
+            } else {
+                if (!testOption.empty() && !testOption.starts_with(L"--"))
+                    captureTarget(context.result, std::filesystem::absolute(argv[4]));
+                std::cerr << "Target did not enable its start button after inspection.\n";
+            }
         } else std::cerr << "Target processing controls are missing.\n";
         PostMessageW(context.result, WM_CLOSE, 0, 0);
     } else std::cerr << "Target window did not start on the isolated desktop.\n";
