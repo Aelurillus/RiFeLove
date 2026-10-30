@@ -123,6 +123,15 @@ TEST(MediaEngine, NvencApiMismatchReportsDriverAndFfmpegRequirements) {
     EXPECT_NE(reason.find("minimum required Nvidia driver for nvenc is 570.0 or newer"),std::string::npos);
 }
 
+TEST(MediaEngine, NvencApiMismatchOmitsUnknownMinimumDriverVersion) {
+    const auto mismatch = rifelove::media::findNvencApiMismatch(
+        rifelove::media::NvencApiVersion{12,2},{13,0},"");
+    ASSERT_TRUE(mismatch);
+    const auto reason = rifelove::media::nvencApiMismatchReason(*mismatch);
+    EXPECT_NE(reason.find("Required: 13.0 Found: 12.2"),std::string::npos);
+    EXPECT_EQ(reason.find("minimum required Nvidia driver"),std::string::npos);
+}
+
 TEST(MediaEngine, NvencApiMismatchIsNotReportedWhenTheDriverIsCompatible) {
     EXPECT_FALSE(rifelove::media::findNvencApiMismatch(
         rifelove::media::NvencApiVersion{13,0},{13,0},"570.0"));

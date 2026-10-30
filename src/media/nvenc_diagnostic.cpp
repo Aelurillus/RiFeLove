@@ -58,10 +58,13 @@ std::optional<NvencApiMismatch> findNvencApiMismatch(
 }
 
 std::string nvencApiMismatchReason(const NvencApiMismatch& mismatch) {
-    return "Driver does not support required nvenc API version. Required: " +
+    std::string reason = "Driver does not support required nvenc API version. Required: " +
         std::to_string(mismatch.required.major) + "." + std::to_string(mismatch.required.minor) +
         " Found: " + std::to_string(mismatch.available.major) + "." + std::to_string(mismatch.available.minor) +
-        "\nThe minimum required Nvidia driver for nvenc is " + mismatch.minimumDriver + " or newer.";
+        ".";
+    if (!mismatch.minimumDriver.empty())
+        reason += "\nThe minimum required Nvidia driver for nvenc is " + mismatch.minimumDriver + " or newer.";
+    return reason;
 }
 
 std::string diagnoseNvencFailure(const std::string& encoder, const std::string& reason) {

@@ -2,12 +2,14 @@
 #include "native_renderer.hpp"
 
 #include <windows.h>
+#include <commctrl.h>
 #include <shellapi.h>
 #include <shlobj.h>
 
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -153,7 +155,26 @@ void checkControlRendering(HWND parent, HWND combo, HWND sourceButton, HWND star
     DeleteDC(dc);
 }
 
-void checkPathFields(HWND window, bool clearAfter = true) {
+void checkPathTooltip(HWND edit, const std::wstring& expected) {
+    const auto tooltip = reinterpret_cast<HWND>(GetPropW(edit, L"RifeLovePathTooltip"));
+    check(tooltip && IsWindow(tooltip), "path field owns a native hover tooltip");
+    if (!tooltip) return;
+    TOOLINFOW tool{};
+    tool.cbSize = TTTOOLINFOW_V2_SIZE;
+    tool.hwnd = GetParent(edit);
+    tool.uId = reinterpret_cast<UINT_PTR>(edit);
+    check(SendMessageW(tooltip, TTM_GETTOOLINFOW, 0, reinterpret_cast<LPARAM>(&tool)) != FALSE &&
+        (tool.uFlags & (TTF_IDISHWND | TTF_SUBCLASS)) == (TTF_IDISHWND | TTF_SUBCLASS),
+        "tooltip tracks the full edit hit target");
+    NMTTDISPINFOW info{};
+    info.hdr.hwndFrom = tooltip;
+    info.hdr.code = TTN_GETDISPINFOW;
+    SendMessageW(GetParent(edit), WM_NOTIFY, 0, reinterpret_cast<LPARAM>(&info));
+    check(info.lpszText && std::wstring(info.lpszText) == expected,
+        "hover tooltip exposes the complete current path without shortening");
+}
+
+void checkPathFields(NativeApp& app, HWND window, bool clearAfter = true) {
     const HWND source = GetDlgItem(window, 1001);
     const HWND output = GetDlgItem(window, 1003);
     check(source && output, "find full-path edit controls");
@@ -166,6 +187,12 @@ void checkPathFields(HWND window, bool clearAfter = true) {
           "source path edit keeps the complete long path");
     check(GetWindowTextLengthW(output) == static_cast<int>(outputPath.size()),
           "output path edit keeps the complete long path");
+    checkPathTooltip(source, sourcePath);
+    checkPathTooltip(output, outputPath);
+    check(app.testViewState().sourcePath.find(std::filesystem::path(sourcePath).filename().wstring()) == 0,
+        "source summary starts with the selected filename");
+    check(app.testViewState().outputPath.find(std::filesystem::path(outputPath).filename().wstring()) == 0,
+        "output summary starts with the output filename");
     const auto sourceStyle = GetWindowLongPtrW(source, GWL_STYLE);
     const auto outputStyle = GetWindowLongPtrW(output, GWL_STYLE);
     check((sourceStyle & ES_AUTOHSCROLL) != 0 && (sourceStyle & ES_MULTILINE) == 0,
@@ -316,10 +343,14 @@ void checkFrameRateOptions(HWND window) {
     check(SendMessageW(rate, CB_SETCURSEL, static_cast<WPARAM>(expected.size() - 1), 0) != CB_ERR,
         "custom rational frame rate remains selectable after high-rate presets");
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1005, CBN_SELCHANGE), reinterpret_cast<LPARAM>(rate));
-    const HWND custom = GetDlgItem(window, 1007);
-    check(custom && IsWindowVisible(custom), "custom rational input appears for the final selector item");
+    const HWND custom = GetDlgItem(window, 1011);
+    wchar_t className[32]{};
+    if (custom) GetClassNameW(custom, className, static_cast<int>(std::size(className)));
+    check(custom && std::wstring(className) == L"Edit" && IsWindowVisible(custom),
+          "custom rational edit appears for the final selector item");
     SendMessageW(rate, CB_SETCURSEL, 1, 0);
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1005, CBN_SELCHANGE), reinterpret_cast<LPARAM>(rate));
+    check(custom && !IsWindowVisible(custom), "custom rational edit hides again for standard frame rates");
 }
 
 void checkLongComboPopup(HWND window) {
@@ -352,6 +383,70 @@ void checkLongComboPopup(HWND window) {
     } else check(false, "measure selector label using the control's actual font");
     SendMessageW(combo, CB_DELETESTRING, static_cast<WPARAM>(inserted), 0);
     SendMessageW(window, WM_SIZE, SIZE_RESTORED, 0);
+}
+
+void checkOutputFieldAlignment(HWND window);
+
+void checkNarrowImportLayout(HWND window, const std::filesystem::path& screenshot = {}) {
+    RECT original{};
+    GetWindowRect(window, &original);
+    const UINT dpi = GetDpiForWindow(window);
+    const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
+    SetWindowPos(window, nullptr, original.left, original.top, px(850), px(600), SWP_NOZORDER | SWP_NOACTIVATE);
+    const HWND sourceButton = GetDlgItem(window, 1002);
+    const HWND sourceEdit = GetDlgItem(window, 1001);
+    RECT button{}, input{};
+    GetWindowRect(sourceButton, &button);
+    GetWindowRect(sourceEdit, &input);
+    MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&button), 2);
+    MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&input), 2);
+    check(button.top >= px(144), "narrow import actions leave the card title unobstructed");
+    check(input.top >= button.bottom + px(8), "narrow import field has spacing below its actions");
+    const HWND folder = GetDlgItem(window, 1022);
+    if (folder && IsWindowVisible(folder)) {
+        RECT folderRect{};
+        GetWindowRect(folder, &folderRect);
+        MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&folderRect), 2);
+        check(folderRect.left >= button.right + px(6) && folderRect.top == button.top,
+              "file and folder buttons retain separate hit targets in narrow windows");
+    }
+    checkOutputFieldAlignment(window);
+    if (!screenshot.empty()) check(captureClient(window, screenshot), "capture narrow import layout");
+    SetWindowPos(window, nullptr, original.left, original.top, original.right - original.left,
+                 original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void checkOutputFieldAlignment(HWND window) {
+    const HWND output = GetDlgItem(window, 1003);
+    RECT field{};
+    const UINT dpi = GetDpiForWindow(window);
+    const float scale = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+    RECT client{};
+    GetClientRect(window, &client);
+    const auto layout = NativeLayout::from(static_cast<float>(client.right) / scale,
+        static_cast<float>(client.bottom) / scale);
+    const auto px = [&](float value) { return static_cast<int>(static_cast<float>(static_cast<int>(value)) * scale); };
+    const auto approximatelyEqual = [](LONG actual, int expected) { return std::abs(actual - expected) <= 2; };
+    GetWindowRect(output, &field);
+    MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&field), 2);
+    check(field.top == static_cast<int>(394 * scale) && field.bottom <= static_cast<int>(436 * scale),
+          "output edit remains inside its painted rounded field");
+    check(approximatelyEqual(field.left, px(layout.exportContentLeft() + 10)) &&
+        approximatelyEqual(field.right, px(layout.right - 30)),
+        "output edit keeps equal insets inside the shared export field");
+    for (const int id : {1012, 1005, 1006}) {
+        RECT selector{};
+        GetWindowRect(GetDlgItem(window, id), &selector);
+        MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&selector), 2);
+        check(approximatelyEqual(selector.left, px(layout.exportContentLeft())) && approximatelyEqual(selector.right, px(layout.right - 20)),
+            "export selectors align to the card's shared content margins");
+    }
+    RECT browse{};
+    GetWindowRect(GetDlgItem(window, 1004), &browse);
+    MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&browse), 2);
+    check(approximatelyEqual(browse.right, px(layout.right - 20)) && browse.right - browse.left <= px(120) + 1,
+        "output location button is compact and right aligned");
+    check(browse.top >= field.bottom + px(20), "path summary has space above the output location button");
 }
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
@@ -739,6 +834,8 @@ int wmain(int argc, wchar_t** argv) {
         if (window) {
             checkFrameRateOptions(window);
             checkLongComboPopup(window);
+            checkNarrowImportLayout(window);
+            checkOutputFieldAlignment(window);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             const bool denoiseRun = (argc == 4 || argc == 5) &&
                 (std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" ||
@@ -821,12 +918,17 @@ int wmain(int argc, wchar_t** argv) {
             if (combo && source && start)
                 checkControlRendering(window, combo, source, start, argc > 1 && !processingRun && !batchRun && !switchRun ? std::filesystem::path(argv[1]) : std::filesystem::path{});
 #ifndef RIFELOVE_NATIVE_HAS_PROCESSING
-            if (!processingRun && !batchRun && !switchRun) checkPathFields(window, argc != 3);
+            if (!processingRun && !batchRun && !switchRun) checkPathFields(app, window, argc != 3);
 #endif
             if (argc == 3 && !processingRun && !batchRun && !switchRun)
                 check(captureClient(window, std::filesystem::path(argv[2])), "capture complete client on isolated desktop");
+            if (argc == 3 && !processingRun && !batchRun && !switchRun) {
+                auto narrow = std::filesystem::path(argv[2]);
+                narrow.replace_filename(narrow.stem().wstring() + L"-narrow" + narrow.extension().wstring());
+                checkNarrowImportLayout(window, narrow);
+            }
 #ifndef RIFELOVE_NATIVE_HAS_PROCESSING
-            if (argc == 3 && !processingRun && !batchRun && !switchRun) checkPathFields(window);
+            if (argc == 3 && !processingRun && !batchRun && !switchRun) checkPathFields(app, window);
 #endif
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             if (!processingRun && !batchRun && !switchRun) checkTaskHistory(app, window);
@@ -854,7 +956,7 @@ int wmain(int argc, wchar_t** argv) {
 
     // These checks simulate layout dimensions; actual per-monitor DPI changes
     // still require an interactive Windows display acceptance pass.
-    for (const float scale : {1.0F, 1.25F, 1.5F}) {
+    for (const float scale : {1.0F, 1.25F, 1.5F, 1.75F, 2.0F}) {
         const float height = 680.0F / scale;
         const auto layout = NativeLayout::from(1366.0F / scale, height);
         check(layout.resourceButtonsTop + 72.0F <= height, "resource buttons fit a short scaled window");
@@ -862,6 +964,9 @@ int wmain(int argc, wchar_t** argv) {
         check(layout.right > layout.split && layout.split > layout.left, "scaled columns retain positive width");
         check(layout.right - 330.0F > layout.left && layout.right - 254.0F <= layout.right && layout.right - layout.left - 360.0F > 0,
             "pause button and status text retain room at high DPI");
+        if (layout.compactImport)
+            check(layout.sourceActionsTop >= 144 && layout.sourceInputTop >= layout.sourceActionsTop + 42,
+                  "scaled narrow import geometry keeps the title, actions and input separate");
     }
 
     SetThreadDesktop(original);

@@ -108,6 +108,101 @@ function Resolve-ManifestPath([string]$relative) {
     return $full
 }
 
+function Resolve-ExistingFile([string]$Path, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label 文件不存在：$Path" }
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "$Label 文件不能是链接：$Path" }
+    return $item.FullName
+}
+
+function Read-Json([string]$Path) {
+    try { return (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json) }
+    catch { throw "无法读取 JSON：$Path；$($_.Exception.Message)" }
+}
+
+function Read-CMakeCacheValue([string]$CachePath, [string]$Key) {
+    $prefix = "${Key}:"
+    $line = @(Get-Content -LiteralPath $CachePath | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) }) | Select-Object -First 1
+    if ($null -eq $line) { throw "CMakeCache.txt 缺少 $Key：$CachePath" }
+    $separator = $line.IndexOf('=')
+    if ($separator -lt 0) { throw "CMakeCache.txt 中的 $Key 格式无效：$CachePath" }
+    return $line.Substring($separator + 1)
+}
+
+function Normalize-ComparablePath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    if ($full.Length -gt $root.Length) { $full = $full.TrimEnd('\', '/') }
+    return $full
+}
+
+function Resolve-RepositoryPath([string]$Path) {
+    if ([IO.Path]::IsPathRooted($Path)) { return (Normalize-ComparablePath $Path) }
+    return (Normalize-ComparablePath (Join-Path $repositoryRoot $Path))
+}
+
+function Get-RepositoryRelativePath([string]$Path) {
+    $full = Normalize-ComparablePath $Path
+    return [IO.Path]::GetRelativePath($repositoryRoot, $full).Replace('\', '/')
+}
+
+function Read-FfmpegSdkIdentity([string]$BuildPath, [string]$FfmpegPath) {
+    $cachePath = Resolve-ExistingFile (Join-Path $BuildPath "CMakeCache.txt") "CMake 缓存"
+    $cacheRootValue = Read-CMakeCacheValue $cachePath "RIFELOVE_FFMPEG_ROOT"
+    if ([string]::IsNullOrWhiteSpace($cacheRootValue)) { throw "CMakeCache.txt 的 RIFELOVE_FFMPEG_ROOT 为空：$cachePath" }
+    $cacheRoot = Resolve-RepositoryPath $cacheRootValue
+    $selectedRoot = Resolve-RepositoryPath $FfmpegPath
+    if (-not [string]::Equals($cacheRoot, $selectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "打包拒绝：CMakeCache 的 RIFELOVE_FFMPEG_ROOT 与复用包 FFmpeg 根目录不一致。CMake=$cacheRoot；复用包=$selectedRoot"
+    }
+
+    $manifestValue = Read-CMakeCacheValue $cachePath "RIFELOVE_FFMPEG_SDK_MANIFEST"
+    if ([string]::IsNullOrWhiteSpace($manifestValue)) {
+        $normalizedRoot = $cacheRoot.Replace('\', '/').ToLowerInvariant()
+        if ($normalizedRoot -match '(^|/)work/(codec-ffmpeg-build(-x86asm)?|nvenc-ffmpeg-8\.1\.3-n12\.2\.72\.0)/ffmpeg-install/?$') {
+            $manifestPath = Join-Path $repositoryRoot "tools/development/ffmpeg-source-sdk.lock.json"
+        } else {
+            $manifestPath = Join-Path $repositoryRoot "tools/development/ffmpeg-sdk.lock.json"
+        }
+    } else {
+        $manifestPath = Resolve-RepositoryPath $manifestValue
+    }
+    $manifestPath = Resolve-ExistingFile $manifestPath "FFmpeg SDK manifest"
+    $manifestRelativePath = Get-RepositoryRelativePath $manifestPath
+    $lock = Read-Json $manifestPath
+    foreach ($property in @("nvencApiMajor", "nvencApiMinor", "nvencMinimumWindowsDriver")) {
+        if ($null -eq $lock.PSObject.Properties[$property]) { throw "FFmpeg SDK manifest 缺少字段 $property：$manifestPath" }
+    }
+    if ($lock.nvencMinimumWindowsDriver -isnot [string]) { throw "FFmpeg SDK manifest 的最低驱动字段必须是字符串：$manifestPath" }
+    $majorText = [string]$lock.nvencApiMajor
+    $minorText = [string]$lock.nvencApiMinor
+    if ($majorText -notmatch '^\d+$' -or $minorText -notmatch '^\d+$') { throw "FFmpeg SDK manifest 的 NVENC API 版本无效：$manifestPath" }
+    $major = [int]$majorText
+    $minor = [int]$minorText
+    $minimumDriver = [string]$lock.nvencMinimumWindowsDriver
+
+    $generatedConfigPath = Resolve-ExistingFile (Join-Path $BuildPath "generated/nvenc_build_config.hpp") "生成的 NVENC 配置"
+    $generated = Get-Content -Raw -LiteralPath $generatedConfigPath
+    $generatedMajor = [regex]::Match($generated, '(?m)^\s*#define\s+RIFELOVE_NVENC_API_MAJOR\s+(\d+)\s*$')
+    $generatedMinor = [regex]::Match($generated, '(?m)^\s*#define\s+RIFELOVE_NVENC_API_MINOR\s+(\d+)\s*$')
+    $generatedDriver = [regex]::Match($generated, '(?m)^\s*#define\s+RIFELOVE_NVENC_MINIMUM_WINDOWS_DRIVER\s+"([^"]*)"\s*$')
+    if (-not $generatedMajor.Success -or -not $generatedMinor.Success -or -not $generatedDriver.Success) {
+        throw "生成的 NVENC 配置缺少可核对的 API/最低驱动字段：$generatedConfigPath"
+    }
+    if ([int]$generatedMajor.Groups[1].Value -ne $major -or [int]$generatedMinor.Groups[1].Value -ne $minor -or
+        $generatedDriver.Groups[1].Value -cne $minimumDriver) {
+        throw "打包拒绝：生成的 NVENC 配置与 FFmpeg SDK manifest 不一致：$manifestPath"
+    }
+    [pscustomobject]@{
+        manifestRelativePath = $manifestRelativePath
+        manifestSha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        nvencApiMajor = $major
+        nvencApiMinor = $minor
+        nvencMinimumWindowsDriver = $minimumDriver
+        root = $selectedRoot
+    }
+}
+
 $manifestFile = Join-Path $source "PACKAGE-MANIFEST.json"
 $sumFile = Join-Path $source "SHA256SUMS.txt"
 if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf) -or -not (Test-Path -LiteralPath $sumFile -PathType Leaf)) {
@@ -116,6 +211,22 @@ if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf) -or -not (Test-Pa
 $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json -AsHashtable
 if ($manifest.packageKind -ne "local-native-windows-x64" -or $manifest.qtIncluded -or $manifest.cliIncluded -or $manifest.ossEnabled) {
     throw "Source package is not the expected local, non-Qt desktop bundle."
+}
+if ([string]::IsNullOrWhiteSpace([string]$manifest.ffmpeg.root)) { throw "Source package has no FFmpeg SDK root; rebuild a full package first." }
+$ffmpegSdk = Read-FfmpegSdkIdentity $build ([string]$manifest.ffmpeg.root)
+if ($manifest.ffmpeg.ContainsKey("sdkManifest")) {
+    $recordedSdk = $manifest.ffmpeg.sdkManifest
+    if ($recordedSdk -isnot [System.Collections.IDictionary]) { throw "Source package FFmpeg SDK manifest is invalid; rebuild a full package first." }
+    foreach ($property in @("path", "sha256", "nvencApiMajor", "nvencApiMinor", "nvencMinimumWindowsDriver")) {
+        if (-not $recordedSdk.Contains($property)) { throw "Source package FFmpeg SDK manifest is missing $property; rebuild a full package first." }
+    }
+    if ([string]$recordedSdk.path -cne $ffmpegSdk.manifestRelativePath -or
+        [string]$recordedSdk.sha256 -cne $ffmpegSdk.manifestSha256 -or
+        [string]$recordedSdk.nvencApiMajor -cne [string]$ffmpegSdk.nvencApiMajor -or
+        [string]$recordedSdk.nvencApiMinor -cne [string]$ffmpegSdk.nvencApiMinor -or
+        [string]$recordedSdk.nvencMinimumWindowsDriver -cne $ffmpegSdk.nvencMinimumWindowsDriver) {
+        throw "Source package FFmpeg SDK manifest differs from the selected build; rebuild a full package instead."
+    }
 }
 $requiredModelDirectories = @(
     "models/rife-4.25-fp32-sdr8-v3",
@@ -286,6 +397,7 @@ try {
     $manifest.packageName = Split-Path -Leaf $target
     $manifest.generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $manifest.executableSha256 = (Get-FileHash -LiteralPath (Join-Path $stage "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifest.ffmpeg.sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver }
     $manifest.updatePolicy = "local preview; immutable dependencies share NTFS hard links with the source package; FastDVDnet is linked from the local model cache when absent"
     $manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $stage "PACKAGE-MANIFEST.json") -Encoding utf8NoBOM
     @"

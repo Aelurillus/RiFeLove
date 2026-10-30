@@ -161,12 +161,18 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     text(L"▸   插帧工作室", 27, 147, l.side - 45, 22, 11, accent, true);
     // The task-history button occupies the queue row in processing builds.
     // Keep explanatory text below it rather than painting under the control.
-    text(state.processingAvailable ? L"查看本地任务记录" : L"任务记录 · 暂不可用",
-         28, state.processingAvailable ? 234 : 200, l.side - 45, 20, 11, D2D1::ColorF(0x9AAAC0));
-    text(L"模型中心", 28, 261, l.side - 50, 20, 11, D2D1::ColorF(0x667286));
-    text(L"迁移中 · 暂不可用", 28, 284, l.side - 45, 18, 10, D2D1::ColorF(0x8290A4));
-    line(20, 327, l.side - 40);
-    text(L"本地资源", 22, 347, l.side - 44, 20, 10, muted);
+    if (l.resourceButtonsTop >= 280)
+        text(state.processingAvailable ? L"查看本地任务记录" : L"任务记录 · 暂不可用",
+             28, state.processingAvailable ? 234 : 200, l.side - 45, 20, 11, D2D1::ColorF(0x9AAAC0));
+    if (l.resourceButtonsTop >= 340) {
+        // Informational disabled entry: no HWND, focus target or click action.
+        text(L"模型中心 · 未开放", 28, 261, l.side - 50, 20, 10, D2D1::ColorF(0x667286));
+        text(L"暂不可点击", 28, 284, l.side - 45, 18, 10, D2D1::ColorF(0x667286));
+    }
+    if (l.resourceButtonsTop >= 380) {
+        line(20, 327, l.side - 40);
+        text(L"本地资源", 22, 347, l.side - 44, 20, 10, muted);
+    }
     if (l.resourceButtonsTop >= 400)
         text(state.modelReady ? L"●  RIFE 模型已校验" : L"○  RIFE 模型未就绪", 22, 375, l.side - 40, 21, 11, state.modelReady ? accent : warning);
     // Runtime discovery is shown near the actual folder selectors.
@@ -184,18 +190,23 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     renderTarget_->PushAxisAlignedClip(D2D1::RectF(px(l.left - 1), px(l.contentTop), px(l.right + 1), px(l.contentBottom)), D2D1_ANTIALIAS_MODE_ALIASED);
     const float y = -l.scroll;
     const float lw = l.split - l.left;
-    const float second = l.split + 20;
-    const float rw = l.right - second;
+    const float second = l.exportCardLeft();
+    const float rw = l.exportCardWidth();
+    const float exportLeft = l.exportContentLeft();
+    const float exportWidth = l.exportContentWidth();
     cardAt(l.left, y + 104, lw, 176);
     text(L"01", l.left + 20, y + 118, 28, 22, 10, accent, true);
-    text(L"源视频", l.left + 53, y + 116, lw - 190, 26, 14, white, true);
-    text(state.sourceReady ? L"视频已解析 · 原片不会被修改" : L"拖入视频，或从本机选择文件",
-        l.left + 20, y + 157, lw > 480 ? lw - 240 : lw - 40, 23, 12, state.sourceReady ? white : muted);
+    text(L"源视频", l.left + 53, y + 116, lw - (l.compactImport ? 84 : 190), 26, 14, white, true);
+    if (!l.compactImport)
+        text(state.sourceReady ? L"视频已解析 · 原片不会被修改" : L"拖入视频，或从本机选择文件",
+            l.left + 20, y + 157, lw > 480 ? lw - 240 : lw - 40, 23, 12, state.sourceReady ? white : muted);
     if (lw > 480)
-        text(L"右键 / Shift+F10 查看完整路径", l.left + lw - 220, y + 159, 200, 20, 10, accent, false, false);
-    cardAt(l.left + 20, y + 182, lw - 40, 42, D2D1::ColorF(0x141922), 7);
+        text(L"悬停或右键查看完整路径", l.left + lw - 220, y + 159, 200, 20, 10, accent, false, false);
+    cardAt(l.left + 20, y + l.sourceInputTop, lw - 40, 42, D2D1::ColorF(0x141922), 7);
+    text(state.sourcePath.empty() ? L"尚未选择视频" : state.sourcePath,
+        l.left + 20, y + l.sourceInputTop + 46, lw - 40, 18, 10, white);
     text(state.mediaSummary.empty() ? L"MP4 / MKV / MOV  ·  精确时间轴" : state.mediaSummary,
-        l.left + 20, y + 239, lw - 40, 34, 11, muted, false, true);
+        l.left + 20, y + l.sourceInputTop + 66, lw - 40, 18, 10, muted);
 
     cardAt(l.left, y + 296, lw, 330);
     text(L"02", l.left + 20, y + 311, 28, 22, 10, blue, true);
@@ -218,20 +229,22 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     line(l.left + 20, y + 624, lw - 40);
 
     cardAt(second, y + 104, rw, 522);
-    text(L"03", second + 20, y + 118, 28, 22, 10, accent, true);
+    text(L"03", exportLeft, y + 118, 28, 22, 10, accent, true);
     text(L"导出设置", second + 53, y + 116, rw - 78, 26, 14, white, true);
-    text(L"导出预设", second + 20, y + 141, rw - 40, 18, 10, muted);
-    text(L"目标帧率", second + 20, y + 217, rw - 40, 20, 11, muted);
-    text(L"编码器", second + 20, y + 295, rw - 40, 20, 11, muted);
-    text(L"输出文件", second + 20, y + 374, rw - 40, 20, 11, muted);
+    text(L"导出预设", exportLeft, y + 141, exportWidth, 18, 10, muted);
+    text(L"目标帧率", exportLeft, y + 217, exportWidth, 20, 11, muted);
+    text(L"编码器", exportLeft, y + 295, exportWidth, 20, 11, muted);
+    text(L"输出文件", exportLeft, y + 374, exportWidth, 20, 11, muted);
     if (rw > 360)
-        text(L"右键 / Shift+F10 查看完整路径", second + rw - 220, y + 375, 200, 20, 10, accent, false, false);
-    cardAt(second + 20, y + 394, rw - 40, 42, D2D1::ColorF(0x141922), 7);
-    line(second + 20, y + 498, rw - 40);
-    text(L"RIFE · CUDA", second + 20, y + 517, rw - 40, 20, 11, white, true);
+        text(L"悬停或右键查看完整路径", second + rw - 220, y + 375, 200, 20, 10, accent, false, false);
+    cardAt(exportLeft, y + 394, exportWidth, 42, D2D1::ColorF(0x141922), 7);
+    text(state.outputPath.empty() ? L"尚未设置输出文件" : state.outputPath,
+        exportLeft, y + 440, exportWidth, 18, 10, white);
+    line(exportLeft, y + 498, exportWidth);
+    text(L"RIFE · CUDA", exportLeft, y + 517, exportWidth, 20, 11, white, true);
     text(state.runtimeReady ? L"运行库已发现，模型将于处理前再次验证" : L"请选择随包的 ONNX CUDA 运行库",
-        second + 20, y + 547, rw - 40, 40, 11, state.runtimeReady ? muted : warning, false, true);
-    text(L"平台可能再次编码，输出帧率不等于处理速度", second + 20, y + 594, rw - 40, 23, 10, muted);
+        exportLeft, y + 547, exportWidth, 40, 11, state.runtimeReady ? muted : warning, false, true);
+    text(L"平台可能再次编码，输出帧率不等于处理速度", exportLeft, y + 594, exportWidth, 23, 10, muted);
     renderTarget_->PopAxisAlignedClip();
 
     // The primary action dock is never scrolled off-screen.

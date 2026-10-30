@@ -76,7 +76,7 @@ public static class RifeLoveBuildFileLinks
 }
 
 $activePackageRoots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($process in (Get-CimInstance Win32_Process -Filter "Name='RifeLove.exe'" -ErrorAction SilentlyContinue)) {
+foreach ($process in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @('RifeLove.exe', 'RifeLoveNative.exe') })) {
     if ([string]::IsNullOrWhiteSpace($process.ExecutablePath)) { continue }
     $exe = [IO.Path]::GetFullPath([string]$process.ExecutablePath)
     if (-not $exe.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -86,7 +86,7 @@ foreach ($process in (Get-CimInstance Win32_Process -Filter "Name='RifeLove.exe'
 }
 
 $packages = @(Get-ChildItem -LiteralPath $root -Directory -Force | Where-Object {
-    $_.Name -match '^RifeLove-(local|offline|portable)(-|$)' -and -not $activePackageRoots.Contains($_.FullName)
+    $_.Name -match '^RifeLove(?:Native)?-(local|offline|portable)(-|$)' -and -not $activePackageRoots.Contains($_.FullName)
 })
 if ($activePackageRoots.Count) {
     Write-Output ("Protected running package(s): " + (($activePackageRoots | ForEach-Object { Split-Path -Leaf $_ }) -join ", "))

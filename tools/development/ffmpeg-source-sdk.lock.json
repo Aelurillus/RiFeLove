@@ -1,6 +1,9 @@
 {
   "schemaVersion": 1,
   "purpose": "Reproducible isolated FFmpeg SDK for native Windows validation; no binaries, model weights or credentials are stored here.",
+  "nvencApiMajor": 12,
+  "nvencApiMinor": 2,
+  "nvencMinimumWindowsDriver": "",
   "target": {
     "platform": "windows-x64",
     "shell": "MSYS2 UCRT64 (isolated under work/)",

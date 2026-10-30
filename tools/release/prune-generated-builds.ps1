@@ -43,6 +43,10 @@ function Test-TreeHasReparsePoint([string]$Directory, [switch]$PreserveData) {
                 [IO.Path]::GetFileName($entry).Equals("data", [StringComparison]::OrdinalIgnoreCase)) { continue }
             $attributes = [IO.File]::GetAttributes($entry)
             if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                # Package DLL/model aliases are file symlinks. They are safe to
+                # unlink during pruning because Remove-GeneratedEntry deletes
+                # the link itself and never traverses its target.
+                if (-not ($attributes -band [IO.FileAttributes]::Directory)) { continue }
                 $isPackageRuntimeJunction = $current.Equals($Directory, [StringComparison]::OrdinalIgnoreCase) -and
                     [IO.Path]::GetFileName($entry).Equals("runtime", [StringComparison]::OrdinalIgnoreCase)
                 if ($isPackageRuntimeJunction) {
@@ -104,7 +108,7 @@ function Get-GeneratedBytes([string]$Directory, [switch]$PreserveData) {
 }
 
 $activePackageRoots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($process in (Get-CimInstance Win32_Process -Filter "Name='RifeLove.exe'" -ErrorAction SilentlyContinue)) {
+foreach ($process in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @('RifeLove.exe', 'RifeLoveNative.exe') })) {
     if ([string]::IsNullOrWhiteSpace($process.ExecutablePath)) { continue }
     $exe = [IO.Path]::GetFullPath([string]$process.ExecutablePath)
     if (-not (Test-ContainedPath $root $exe)) { continue }
@@ -118,7 +122,7 @@ $plan = [System.Collections.Generic.List[object]]::new()
 $skipped = [System.Collections.Generic.List[string]]::new()
 $keep = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($name in $KeepPackage) { [void]$keep.Add($name) }
-foreach ($package in (Get-ChildItem -LiteralPath $root -Directory -Force | Where-Object { $_.Name -match '^RifeLove-(local|offline|portable)(-|$)' })) {
+foreach ($package in (Get-ChildItem -LiteralPath $root -Directory -Force | Where-Object { $_.Name -match '^RifeLove(?:Native)?-(local|offline|portable)(-|$)' })) {
     $absolute = [IO.Path]::GetFullPath($package.FullName)
     if (-not (Test-ContainedPath $root $absolute) -or -not (Split-Path -Parent $absolute).Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Unsafe generated package path: $absolute"

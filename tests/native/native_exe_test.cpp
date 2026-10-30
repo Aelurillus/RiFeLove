@@ -182,6 +182,14 @@ int wmain(int argc, wchar_t** argv) {
             const LRESULT sourceSet = SendMessageW(sourceEdit, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(source.c_str()));
             const LRESULT outputSet = SendMessageW(outputEdit, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(output.c_str()));
             if (!sourceSet || !outputSet) std::cerr << "Could not set source/output in target controls.\n";
+            // WM_SETTEXT is marshalled across processes, but an externally
+            // sent edit update does not reliably deliver the child EN_CHANGE
+            // notification to its owning window. Reproduce the notification
+            // that normal user typing emits so the application inspects the
+            // source and adopts the requested output path before readiness is
+            // checked.
+            SendMessageW(context.result, WM_COMMAND, MAKEWPARAM(1001, EN_CHANGE), 0);
+            SendMessageW(context.result, WM_COMMAND, MAKEWPARAM(1003, EN_CHANGE), 0);
             if (waitUntil([&] { return IsWindowEnabled(start) != FALSE; }, std::chrono::seconds(30))) {
                 const std::wstring option = argc == 5 ? std::wstring(argv[4]) : std::wstring{};
                 const bool blur = option == L"--blur" || option == L"--dual-blur";

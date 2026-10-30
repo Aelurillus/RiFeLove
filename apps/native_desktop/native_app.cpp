@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <commctrl.h>
 #include <commdlg.h>
 #include <cmath>
 #include <cwchar>
@@ -33,6 +34,8 @@ constexpr wchar_t kWindowClass[] = L"RifeLoveNativeDesktopWindow";
 constexpr wchar_t kWindowTitle[] = L"RifeLove";
 constexpr wchar_t kPathEditOwnerProperty[] = L"RifeLovePathEditOwner";
 constexpr wchar_t kPathEditOriginalProcProperty[] = L"RifeLovePathEditOriginalProc";
+constexpr wchar_t kPathTooltipProperty[] = L"RifeLovePathTooltip";
+constexpr wchar_t kPathTooltipTextProperty[] = L"RifeLovePathTooltipText";
 constexpr std::array<int, 9> kTargetRates{30, 60, 120, 144, 240, 300, 360, 480, 600};
 constexpr UINT kPathMenuView = 1;
 constexpr UINT kPathMenuCopy = 2;
@@ -42,6 +45,22 @@ constexpr UINT kPathMenuPaste = 5;
 constexpr UINT kPathMenuSelectAll = 6;
 
 int scaled(int value, float scale) { return static_cast<int>(static_cast<float>(value) * scale); }
+
+bool ensureTooltipControls() {
+    static const bool ready = [] {
+        // Keep the system common-controls module loaded for the tooltip HWNDs'
+        // lifetime without adding a framework or changing the executable link.
+        const HMODULE module = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!module) return false;
+        using Initialize = BOOL(WINAPI*)(const INITCOMMONCONTROLSEX*);
+        const auto initialize = reinterpret_cast<Initialize>(GetProcAddress(module, "InitCommonControlsEx"));
+        INITCOMMONCONTROLSEX controls{sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES};
+        if (initialize && initialize(&controls)) return true;
+        FreeLibrary(module);
+        return false;
+    }();
+    return ready;
+}
 
 // Owner-drawn controls share caller-owned DCs during printing and WM_DRAWITEM.
 // Restore the selected font as well as colors so DPI font changes can release
@@ -426,6 +445,38 @@ void NativeApp::subclassPathEdit(HWND edit) {
         reinterpret_cast<LONG_PTR>(&NativeApp::pathEditProcedure));
     SetPropW(edit, kPathEditOwnerProperty, reinterpret_cast<HANDLE>(this));
     SetPropW(edit, kPathEditOriginalProcProperty, reinterpret_cast<HANDLE>(original));
+    if (!ensureTooltipControls()) return;
+    const HWND tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
+        CW_USEDEFAULT, CW_USEDEFAULT, window_, nullptr, instance_, nullptr);
+    if (!tooltip) return;
+    auto text = std::make_unique<std::wstring>();
+    if (!SetPropW(edit, kPathTooltipProperty, tooltip) ||
+        !SetPropW(edit, kPathTooltipTextProperty, text.get())) {
+        RemovePropW(edit, kPathTooltipProperty);
+        RemovePropW(edit, kPathTooltipTextProperty);
+        DestroyWindow(tooltip);
+        return;
+    }
+    TOOLINFOW tool{};
+    // The executable does not require a v6 common-controls manifest. Use the
+    // v2 ABI so the system v5 tooltip accepts the tool instead of rejecting it
+    // (and destroying its HWND below) for the v6-only lpReserved field.
+    tool.cbSize = TTTOOLINFOW_V2_SIZE;
+    tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    tool.hwnd = window_;
+    tool.uId = reinterpret_cast<UINT_PTR>(edit);
+    tool.lpszText = LPSTR_TEXTCALLBACKW;
+    if (!SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool))) {
+        RemovePropW(edit, kPathTooltipProperty);
+        RemovePropW(edit, kPathTooltipTextProperty);
+        DestroyWindow(tooltip);
+        return;
+    }
+    text.release();
+    SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, scaled(520, dpiScale()));
+    SendMessageW(tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 450);
+    SendMessageW(tooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 30000);
 }
 
 LRESULT CALLBACK NativeApp::pathEditProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -454,6 +505,9 @@ LRESULT CALLBACK NativeApp::pathEditProcedure(HWND window, UINT message, WPARAM 
         return result;
     }
     if (message == WM_NCDESTROY) {
+        const auto tooltip = reinterpret_cast<HWND>(RemovePropW(window, kPathTooltipProperty));
+        if (tooltip && IsWindow(tooltip)) DestroyWindow(tooltip);
+        delete reinterpret_cast<std::wstring*>(RemovePropW(window, kPathTooltipTextProperty));
         RemovePropW(window, kPathEditOwnerProperty);
         RemovePropW(window, kPathEditOriginalProcProperty);
     }
@@ -634,14 +688,18 @@ std::string NativeApp::utf8(const std::filesystem::path& path) {
 }
 
 std::wstring NativeApp::pathText(const std::filesystem::path& path) {
-    return shorten(path.wstring());
+    if (path.empty()) return {};
+    const auto name = path.filename().wstring();
+    if (name.empty()) return shorten(path.wstring(), 80);
+    const auto parent = path.parent_path().wstring();
+    return shorten(name, 64) + (parent.empty() ? L"" : L"  ·  " + shorten(parent, 48));
 }
 
 void NativeApp::setOutputPath(const std::filesystem::path& output) {
     outputPath_ = output;
-    // Keep the complete value in the editable control.  The field wraps and
-    // scrolls on narrow windows, while the Direct2D summary can still use a
-    // compact first/last segment.  This keeps keyboard copy and path editing
+    // Keep the complete value in the single-line editable control. The field
+    // scrolls on narrow windows, while its summary starts with the filename
+    // and its hover tooltip shows the full path. This keeps copy and editing
     // lossless instead of making the ellipsis the stored value.
     const auto value = output.wstring();
     SetWindowTextW(outputEdit_, value.c_str());
@@ -660,14 +718,14 @@ void NativeApp::createControls() {
     sourceEdit_ = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         ES_AUTOHSCROLL,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSourceEdit)), instance_, nullptr);
-    SendMessageW(sourceEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"右键或 Shift+F10 查看完整路径"));
+    SendMessageW(sourceEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"悬停、右键或 Shift+F10 查看完整路径"));
     sourceButton_ = createButton(L"＋ 导入视频", kSelectSource);
     sourceFolderButton_ = createButton(L"导入文件夹", kSelectSourceFolder);
     outputLabel_ = createStatic(L"输出文件", 1102);
     outputEdit_ = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         ES_AUTOHSCROLL,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOutputEdit)), instance_, nullptr);
-    SendMessageW(outputEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"右键或 Shift+F10 查看完整路径"));
+    SendMessageW(outputEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"悬停、右键或 Shift+F10 查看完整路径"));
     subclassPathEdit(sourceEdit_);
     subclassPathEdit(outputEdit_);
     outputButton_ = createButton(L"选择位置", kSelectOutput);
@@ -798,8 +856,8 @@ void NativeApp::layoutControls() {
     const float left = layout.left + 20;
     const float leftWidth = layout.split - layout.left - 40;
     const float right = layout.right;
-    const float second = layout.split + 40;
-    const float rightWidth = right - second - 20;
+    const float second = layout.exportContentLeft();
+    const float rightWidth = layout.exportContentWidth();
     const auto move = [&](HWND control, float x, float y, float width, float height, bool visible = true, bool fixed = false, float expandedHeight = 0) {
         if (!control) return;
         if (!fixed) y -= layout.scroll;
@@ -843,12 +901,14 @@ void NativeApp::layoutControls() {
     for (const auto label : {sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_,
         platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_}) ShowWindow(label, SW_HIDE);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
-    move(sourceFolderButton_, layout.split - 244, 116, 110, 34);
+    SetWindowTextW(sourceFolderButton_, layout.compactImport ? L"文件夹" : L"导入文件夹");
+    move(sourceFolderButton_, layout.compactImport ? left + 114 : layout.split - 244,
+        layout.sourceActionsTop, layout.compactImport ? std::min(110.0F, leftWidth - 114) : 110, 34);
 #else
     ShowWindow(sourceFolderButton_, SW_HIDE);
 #endif
-    move(sourceButton_, layout.split - 126, 116, 106, 34);
-    move(sourceEdit_, left + 10, 182, leftWidth - 20, 42);
+    move(sourceButton_, layout.compactImport ? left : layout.split - 126, layout.sourceActionsTop, 106, 34);
+    move(sourceEdit_, left + 10, layout.sourceInputTop, leftWidth - 20, 42);
     moveCombo(temporalRestorationCombo_, left, 342, leftWidth, 36);
     moveCombo(restorationCombo_, left, 408, leftWidth, 36);
     moveCombo(outputSizeCombo_, left, 474, leftWidth, 36);
@@ -864,8 +924,8 @@ void NativeApp::layoutControls() {
     moveCombo(rateCombo_, second, 240, customRate ? rightWidth * 0.55F : rightWidth, 38);
     move(rateCustomEdit_, second + rightWidth * 0.57F + 8, 246, rightWidth * 0.43F - 16, 26, customRate);
     moveCombo(encoderCombo_, second, 318, rightWidth, 36);
-    move(outputEdit_, second + 10, 403, rightWidth - 20, 42);
-    move(outputButton_, second, 446, rightWidth, 34);
+    move(outputEdit_, second + 10, 394, rightWidth - 20, 42);
+    move(outputButton_, layout.outputBrowseLeft(), 460, layout.outputBrowseWidth(), 34);
     move(modelButton_, 18, layout.resourceButtonsTop, layout.side - 36, 32, true, true);
     move(runtimeButton_, 18, layout.resourceButtonsTop + 40, layout.side - 36, 32, true, true);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
@@ -2135,6 +2195,22 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_CREATE:
         createControls();
         return 0;
+    case WM_NOTIFY: {
+        auto* info = reinterpret_cast<NMTTDISPINFOW*>(lParam);
+        if (info && info->hdr.code == TTN_GETDISPINFOW) {
+            for (const auto edit : {sourceEdit_, outputEdit_}) {
+                if (!edit || info->hdr.hwndFrom != GetPropW(edit, kPathTooltipProperty)) continue;
+                auto* text = reinterpret_cast<std::wstring*>(GetPropW(edit, kPathTooltipTextProperty));
+                if (text) {
+                    *text = pathForEdit(edit).wstring();
+                    if (text->empty()) *text = L"尚未设置路径";
+                    info->lpszText = text->data();
+                }
+                return 0;
+            }
+        }
+        return DefWindowProcW(window_, message, wParam, lParam);
+    }
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     case WM_TIMER:
         if (wParam == kInspectionRetryTimer) {

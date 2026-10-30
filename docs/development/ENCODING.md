@@ -2,7 +2,9 @@
 
 `VideoMuxWriter` is a native C++20, model-independent writer. It takes owned pixel planes, a rational presentation timestamp and a positive rational duration for each generated frame. It replaces one selected video stream and copies all other compatible reference-input streams. The [RIFE pipeline](PIPELINE.md) now submits generated frames through this same writer.
 
-## CLI
+> Product scope: the command-line examples below are internal development and integration-test tools. RifeLove is delivered as a desktop application; the CLI is not a user-facing product or part of its package.
+
+## Internal developer CLI (not shipped)
 
 ```powershell
 .\build\windows-dev\rifelove-cli.exe transcode source.mp4 output.mp4 --encoder libopenh264 --bitrate 8000000 --progress
@@ -28,11 +30,11 @@ The local suite covers software H.264 (`libopenh264`), HEVC (`libkvazaar`), AV1 
 
 Output uses the same exclusive temporary reservation and no-replace publication as remux. Failure/cancellation closes resources and removes partial files. Pre-publication checks verify stream presence, requested depth and known color tags; publication is refused if they changed. A writer closed by failure cannot later publish a partial output.
 
-## Actual local NVENC incompatibility
+## NVENC SDK and driver compatibility
 
-On this workstation, a real `h264_nvenc` open with the pinned FFmpeg SDK fails before producing packets: the SDK build requires NVENC API `13.0` while the installed driver exposes `12.2`; FFmpeg reports driver `570.0` as its minimum for this build. The source-profile preflight reports the failure and confirms source-compatible software encoders. Studio's auto mode chooses the first compatible encoder before starting; the CLI auto mode attempts NVENC and then falls back. The 8-bit SDR path validates software H.264 output; the synthetic 10-bit path validates AV1 fallback and bit-depth preservation. These are not successful NVENC results. AV1 hardware support cannot be inferred from an `av1_nvenc` name in the registered-encoder list.
+This workstation has two pinned FFmpeg SDK profiles. The default BtbN SDK (`tools/development/ffmpeg-sdk.lock.json`) uses NVENC API `13.0`; driver `560.94` exposes API `12.2`, so that SDK reports `Function not implemented` and requires driver `570.0` or newer. The isolated source-built SDK (`tools/development/ffmpeg-source-sdk.lock.json`) uses API `12.2` and is the one used by the current native local package. The actual RifeLove r7 executable opened H.264 NVENC on the GTX 1660 SUPER and processed a tagged BT.709 SDR fixture from 30 to 60 FPS: 12 frames, 0.2 seconds, and 51,306 bytes. The output was independently probed as H.264, 60 FPS, BT.709 with the expected duration. This qualifies that local SDK/package/device path; it does not qualify other drivers, GPUs, codecs, pixel formats or long videos.
 
-The pipeline implements an explicit `auto` policy for callers without preflight: try NVENC, then report the first compatible software fallback if NVENC initialization or source-pixel-format validation fails. Studio first reports source-profile capabilities on import, then opens the selected encoder again with the requested output frame rate, time base, pixel format, bitrate, GOP and encoder options before model loading. Automatic mode checks a compatible software encoder with those same output settings and explains that video encoding is on the CPU while RIFE interpolation remains on CUDA. Explicit encoder choices stay strict. The app still needs a compatible FFmpeg/NVENC build/driver matrix and runtime device capabilities. The driver has not been changed.
+The pipeline keeps an explicit `auto` fallback for SDK/device combinations where NVENC initialization or source-pixel-format validation fails. Studio reports source-profile capabilities on import, then opens the selected encoder with the requested output frame rate, time base, pixel format, bitrate, GOP and encoder options before model loading. Automatic mode checks a compatible software encoder with those same output settings and explains that video encoding is on the CPU while RIFE interpolation remains on CUDA. Explicit encoder choices stay strict. The current package uses the API 12.2 SDK; broader FFmpeg/NVENC build, GPU and driver qualification remains open. The driver was not changed.
 
 ## Desktop advanced encoding settings
 
@@ -40,7 +42,7 @@ Studio and Queue expose a target bitrate in kbit/s and a maximum GOP length. The
 
 HEVC software encoding adds a constant-QP mode (0–51) through FFmpeg's `libkvazaar` `kvazaar-params` option. AV1 software encoding adds libaom CRF mode (0–63). Explicit H.264 NVENC adds VBR + CQ mode (0–51) using FFmpeg's `rc=vbr` and `cq` options. In these quality modes the target bitrate is set to zero so the codec uses its quality-based rate control. H.264 OpenH264 remains target-bitrate only. Encoder-specific choices are checked before a Studio task starts or a queue task is added. These quality numbers are encoder controls, not a promise of equal perceptual quality across codecs.
 
-For a machine with a working NVENC driver, the equivalent CLI transcode options are `--encoder h264_nvenc --bitrate 0 --option rc=vbr --option cq=20`. The current workstation fails the source-profile NVENC preflight, so Studio blocks that explicit selection and recommends automatic/software encoding; queue import reports the per-file incompatibility instead of creating a doomed task. The options mapping is unit-tested, but successful hardware CQ output still needs a supported driver/GPU test.
+For development transcode checks, the equivalent options are `--encoder h264_nvenc --bitrate 0 --option rc=vbr --option cq=20`. The current native package opens H.264 NVENC with the API 12.2 SDK on the installed driver. The VBR/CQ option mapping is unit-tested, but a quality-mode hardware encode and its rate-control behavior still need an independent output-quality check.
 
 The RIFE path accepts model-declared tagged 8/10-bit SDR source profiles and keeps the source pixel format for output. Automatic mode first attempts NVENC, then probes software H.264, HEVC and AV1 compatibility and selects the first encoder that accepts the source format. NVENC pixel-format rejection is treated as a recoverable compatibility result, just like a driver/API initialization failure. A synthetic tagged 10-bit RIFE integration case confirms that this machine falls back to libaom AV1 and preserves `yuv420p10le` plus color tags. If no encoder can preserve the source depth, the pipeline fails before interpolation instead of silently converting to 8-bit. HDR, user-selected precision conversion, real-content 10-bit quality and the broader encoder/GPU matrix remain unqualified.
 
