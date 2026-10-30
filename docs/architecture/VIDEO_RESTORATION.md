@@ -2,6 +2,8 @@
 
 Status: the versioned contract, local pack verifier, offline Model Center catalog, and Studio/Queue integration support local spatial super-resolution and experimental single-frame NAFNet deblurring. The FP32 SDR backend supports ONNX Runtime TensorRT EP with an explicit dynamic tile profile and automatic CUDA fallback; the selected session and fallback are recorded in reports. Native GTX 1660 SUPER runs passed structural/timing checks. No restoration model has passed product quality, temporal/performance or weight-redistribution qualification.
 
+Current local SR execution baseline: **Real-ESRGAN x2plus**, using `models/cache/realesrgan-x2plus-sdr8-candidate-v2`. This is a runnable local baseline, not a qualified shipping default. `realesr-general-x4v3` and STDF-R3 below are research candidates only; this decision does not install, export, register or enable either model. Local selection, graph identities and historical measurements are recorded in [local model selection](../development/LOCAL_MODEL_SELECTION.md).
+
 RifeLove treats frame interpolation and video restoration as separate AI stages. RIFE predicts frames at new presentation times. Restoration models may denoise, deblur, reduce compression artifacts, or increase spatial resolution across one or more existing frames. A two-frame interpolation request is not an adequate contract for those jobs.
 
 The initial C++ boundary is in `src/restoration/video_restoration_backend.hpp` and `.cpp`. Its versioned registry and validators cover model identity, task, stage placement, canonical SDR profile tags, ordered temporal context, scene/clip-edge context, preserved center PTS/duration/color metadata and spatial scale. Seven focused tests exercise this contract.
@@ -58,10 +60,89 @@ Every candidate needs all of the following before a preset is offered:
 
 No universal quality ranking is claimed. Fast/Balanced/Quality presets must be selected from measured task-specific evidence and remain clearly labeled by their tested content and hardware envelope.
 
+## Local candidate decision — 2026-10-31
+
+The target for this decision is Windows with a GTX 1660 SUPER-class NVIDIA GPU and fully local processing. Keep the working x2plus baseline while qualifying **one new general-content SR candidate**, rather than treating several untested weights as interchangeable presets. Here, “2K” means the requested 2560x1440 QHD output; 4K means 3840x2160. No real-time, representative-resolution throughput or quality result is claimed for the new candidates.
+
+| Model | Decision | Execution and rights boundary |
+| --- | --- | --- |
+| Real-ESRGAN x2plus | Keep as the current optional local SR baseline. | Local PyTorch/ONNX reference and GTX 1660 SUPER TensorRT/timing evidence exists above. Image-oriented, not temporally qualified; separate weight-redistribution review remains open. |
+| `realesr-general-x4v3` / SRVGGNetCompact | Recommended next local SR experiment only. | Not installed or supported by this decision. ONNX/TensorRT export, bounded memory, real-video flicker, performance and checkpoint rights still need verification. |
+| STDF-R3 | Optional temporal compression-repair research only. | Seven-frame, luminance-domain model with custom deformable convolution. No validated Windows ONNX/TensorRT path or independently established weight redistribution rights. Exclude from default packages. |
+| VRT | Excluded from the current product/default-package selection. | The author's license is CC BY-NC 4.0, including a noncommercial restriction [VRT1]. Do not import it into this path under a permissive-code assumption. Reconsider only with separately documented compatible rights. |
+
+### Single new SR experiment: realesr-general-x4v3
+
+The author's model zoo describes this as a small general-image model using less GPU memory/time, with limited deblur/denoise capability [SR1]. That is a reason to test it, not a RifeLove benchmark. The inference configuration selects `SRVGGNetCompact` with 64 features, 32 body convolutions and native x4 scale [SR3]. The source uses Conv/PReLU, PixelShuffle and a nearest-neighbor residual [SR2]; this suggests a more manageable export experiment than a temporal network, but does not prove compatibility with our ONNX Runtime CUDA or TensorRT versions. The provided ONNX exporter constructs RRDBNet, so it is not a ready SRVGG exporter [SR4]. A dedicated developer-only exporter, hash-bound pack and reference checks are required before runtime integration. Python remains outside the shipped runtime.
+
+This is a **native x4 model**, not an arbitrary-scale neural network. The author's helper implements smaller requested output scales by resizing its generated output [SR5]. A 1920x1080 input therefore corresponds to a 7680x4320 neural output before a 1440p or 2160p final resize. The upstream tile helper still allocates the full high-resolution output tensor [SR5]. Merely copying its tile-size setting is not a bounded-output design. The C++ implementation must account for input, tile halos, activations, output regions, resize buffers and concurrently retained RIFE/encoder frames. Use measured halo/edge rules and bounded output assembly or resampling; qualify seams and tile/full-frame parity. Do not claim this candidate solves 6 GB OOM until those measurements pass.
+
+The official inference default uses denoise strength 0.5 by interpolating the `general` and `general-wdn` checkpoint parameters (DNI), not by passing a strength input to one ONNX graph [SR3], [SR5]. For an initial single-pack experiment, specify the unmixed `general` checkpoint, equivalent to that script's strength 1. A future fixed mixture needs both source identities, its mixing coefficient, a new graph hash and new numerical/visual qualification; it must not silently borrow the upstream default's name. This image model has no temporal context [SR2], so shimmer, unstable HUD/text, hallucinated texture and loss of natural grain require explicit video review.
+
+Code and weight rights are separate records. The official code license is BSD-3-Clause [SR6]; the model zoo links the author's `v0.2.5.0` checkpoint asset [SR1], [SR7]. The reviewed pages did not establish a separate, explicit checkpoint-redistribution grant. This is an unresolved evidence gap, not a determination that redistribution is forbidden or authorized. Keep the candidate out of distributable installers, portable packages and model mirrors until that scope is documented. Pin source revisions and exact weight/sidecar hashes if a later authorized local experiment proceeds.
+
+Expected implementation cost: **medium**, pending export feasibility. Work includes the SRVGG exporter and numerical reference, explicit scale/DNI capability metadata, bounded tile/output handling, target-size integration, cancellation/OOM behavior, backend qualification and real-video acceptance. Existing spatial SR interfaces can be reused only after their declared capabilities match the exported graph; this document does not assert that a compatible candidate pack already exists.
+
+### Optional temporal compression repair: STDF-R3
+
+STDF is specifically a compressed-video quality-enhancement research model, distinct from FastDVDnet Gaussian denoising and single-image NAFNet deblurring [ST1]. Its R3 configuration has radius 3, hence seven ordered frames, one Y input/output channel, and MFQEv2 training/testing paths for HEVC HM16.5 low-delay P at QP37 [ST2]. That domain does not establish effectiveness on ordinary H.264/AV1 recordings, every HEVC encoder or other quality levels. Do not describe it as a general dynamic-detail recovery model or combine its quality claim with the existing denoise control.
+
+The source depends on `ModulatedDeformConv`; the README builds a modified DCNv2 extension using an older PyTorch/CUDA environment [ST1], [ST3]. No current Windows ONNX Runtime CUDA/TensorRT execution result has been established here. Cost is **high**: first prove export/custom-op or plugin feasibility, then implement a bounded seven-frame PTS window, clip/scene-edge rules, a precise Y/UV/color-range contract and cancellation/checkpoint identity. Restoration must preserve center-frame timing and must never borrow context across a cut. No operator implementation is copied or enabled by this research decision.
+
+The STDF repository code is Apache-2.0 [ST4]. The linked upstream DCNv2 repository is MIT [ST5], but STDF documents modifications, so the actual vendored sources and notices require their own review [ST1]. The author links pretrained checkpoints separately; their independent redistribution scope was not established by this review [ST1]. Keep STDF-R3 experimental, uninstalled and out of default/distributable packages until rights, native inference and visual/hardware gates pass.
+
+### Acceptance matrix before changing the baseline
+
+These are pending requirements for the new candidates, not completed tests. Historical x2plus measurements above remain limited to their recorded synthetic inputs. Use authorized local clips and preserve inputs, exact PTS, graph/weight hashes, source revision, backend/precision, tile/resize settings and driver/runtime versions with every result. Set and record numerical tolerances and product performance budgets before evaluating results; do not invent a threshold from a favorable sample.
+
+| Dimension | Controlled comparison / workload | Required evidence |
+| --- | --- | --- |
+| Reference and output size | Authorized 4K reference clips with reproducibly degraded 1080p inputs; 1080p to 2560x1440 and 3840x2160. | Same input/cadence/resize policy for Lanczos, current x2plus and candidate; PSNR/SSIM and optional LPIPS only with aligned reference, plus blind full-speed and 100% crop review. No claim to recover unknowable detail. |
+| Content and motion | Live action, anime lines, game HUD/small text, fine patterns, grain, low light, fast pan, occlusion, repeated frames and hard cuts. | Inspect ringing, hallucination, edge damage, shimmer, crawling texture, text instability and grain pumping over time. Single-frame sharpness cannot substitute for temporal acceptance. |
+| Compression domain | For STDF, reproduce HEVC LDP/QP37 first, then independently test H.264/HEVC/AV1 and multiple severities. | Compare degraded input, spatial baseline and temporal candidate against the same reference. Domain-specific results are labeled; no unsupported codec-wide claim. |
+| Export and precision | PyTorch reference versus ONNX Runtime CUDA versus TensorRT; FP32 first, FP16 separately. | Fixed numerical tolerances, provider assignment/fallback report and actual graph identity. No new candidate is called supported before native execution is proven. |
+| Tiling and borders | Whole-frame reference where it fits, several tile/halo sizes, odd dimensions and image edges; internal x4 output with smaller final targets. | Tile/full parity, no visible seams, explicit peak memory for output/resize as well as inference, no hidden full 8K allocation in the bounded path. |
+| Hardware and duration | Actual GTX 1660 SUPER, cold/warm engines, representative 1080p clips and a long-run workload. | End-to-end output FPS, initialization time, peak VRAM/RAM and reproducible configuration. Cancel, OOM and backend failures publish no partial result as success; no unmeasured real-time promise. |
+| Pipeline interaction | SR alone, then current RIFE plus SR; STDF independently before selecting its stage placement. | Repeat visual review on generated frames, preserve frame count/PTS/duration, audio/subtitles and SDR color/range. HDR/10-bit require separate qualification. |
+| Temporal state and recovery | Seven-frame boundaries/cuts/VFR for STDF; interrupted and uninterrupted jobs for each enabled configuration. | No cross-cut contamination or timing shift; documented edge padding, deterministic identity checks and equivalent valid output after recovery. |
+| Rights and packaging | Exact source, checkpoint, derived graph, runtime dependencies and notices. | Separate code/weight review, redistribution evidence, source/graph SHA-256 and pack validation. Until approved, no installer, default package or update mirror contains candidate weights. |
+
+### Primary sources
+
+Reviewed on 2026-10-31. These URLs are author-maintained sources; branch URLs can change. A future model pack must additionally pin the reviewed commit and exact asset hashes. Research source links are not permission to download or redistribute weights.
+
+- [SR1: official Real-ESRGAN model zoo][SR1]
+- [SR2: SRVGGNetCompact implementation][SR2]
+- [SR3: official inference model selection and DNI settings][SR3]
+- [SR4: provided RRDBNet ONNX exporter][SR4]
+- [SR5: official tile, output allocation, DNI and final-resize helper][SR5]
+- [SR6: Real-ESRGAN source-code license][SR6]
+- [SR7: author release v0.2.5.0][SR7]
+- [ST1: STDF author README, dependency setup and checkpoint links][ST1]
+- [ST2: STDF R3 MFQEv2 configuration][ST2]
+- [ST3: STDF deformable-convolution implementation][ST3]
+- [ST4: STDF repository license][ST4]
+- [ST5: linked upstream DCNv2 license][ST5]
+- [VRT1: VRT author license, CC BY-NC 4.0][VRT1]
+
+[SR1]: https://github.com/xinntao/Real-ESRGAN/blob/master/docs/model_zoo.md
+[SR2]: https://github.com/xinntao/Real-ESRGAN/blob/master/realesrgan/archs/srvgg_arch.py
+[SR3]: https://github.com/xinntao/Real-ESRGAN/blob/master/inference_realesrgan.py
+[SR4]: https://github.com/xinntao/Real-ESRGAN/blob/master/scripts/pytorch2onnx.py
+[SR5]: https://github.com/xinntao/Real-ESRGAN/blob/master/realesrgan/utils.py
+[SR6]: https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
+[SR7]: https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0
+[ST1]: https://github.com/ryanxingql/stdf-pytorch/blob/master/README.md
+[ST2]: https://github.com/ryanxingql/stdf-pytorch/blob/master/option_R3_mfqev2_1G.yml
+[ST3]: https://github.com/ryanxingql/stdf-pytorch/blob/master/net_stdf.py
+[ST4]: https://github.com/ryanxingql/stdf-pytorch/blob/master/LICENSE
+[ST5]: https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/blob/master/LICENSE
+[VRT1]: https://github.com/JingyunLiang/VRT/blob/main/LICENSE
+
 ## Candidate notes
 
 - [RVRT](https://github.com/JingyunLiang/RVRT) is a temporal video-restoration research candidate for super-resolution, deblurring and denoising. Its official repository states that the project is released under CC-BY-NC. It is excluded from a redistributable default package unless the project obtains compatible rights.
-- [VRT](https://github.com/JingyunLiang/VRT) is another temporal restoration research candidate. Its official repository also states CC-BY-NC terms, so it has the same distribution gate.
+- [VRT](https://github.com/JingyunLiang/VRT) is excluded from the current product/default-package selection because its official license is CC BY-NC 4.0 [VRT1]. It is not a selected implementation candidate under the current rights policy.
 - [BasicVSR++](https://github.com/ckkelvinchan/BasicVSR_PlusPlus) is a temporal video super-resolution/restoration candidate, and its official source repository is Apache-2.0. Pretrained weights are linked as separate downloads without an explicit weight-redistribution statement in the repository README; therefore the weights stay out of RifeLove packages until their rights and training-data terms are resolved.
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) labels the repository BSD-3-Clause and its model zoo links x4plus weights as a release asset ([license](https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE), [model zoo](https://github.com/xinntao/Real-ESRGAN/blob/master/docs/model_zoo.md), [release](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0)). RifeLove has not established whether that repository license clearly covers redistribution of the checkpoint asset. Its restoration network is image-oriented, so framewise use also needs temporal, color and end-to-end qualification.
 - The Real-ESRGAN x4plus local experiment above uses a framewise image model and is particularly expensive on the development GPU. Keep this candidate out of distributable packages and OSS releases until RifeLove has documented weight rights and completed quality/performance qualification. Upstream issues [1015](https://github.com/xinntao/Real-ESRGAN/issues/1015) and [1016](https://github.com/xinntao/Real-ESRGAN/issues/1016) discuss the separate `realesr-general-x4v3` checkpoint; they do not resolve the x4plus license scope.
@@ -69,7 +150,7 @@ No universal quality ranking is claimed. Fast/Balanced/Quality presets must be s
 - [NAFNet](https://github.com/megvii-research/NAFNet) is an image-restoration candidate with a GoPro motion-deblurring checkpoint and an official repository-reported 33.69 dB GoPro result. The [OpenCV Zoo NAFNet entry](https://github.com/opencv/opencv_zoo/tree/main/models/deblurring_nafnet) links an ONNX model and supplies Python and C++ examples; its README says files in that directory are MIT-licensed. The upstream quality result is for still-image benchmark data, not video temporal stability. Evaluate the exact ONNX graph, preprocessing, checkpoint license scope, edge behavior and flicker on RifeLove video before making it a preset or bundling it.
 - [SwinIR](https://github.com/JingyunLiang/SwinIR) has published x2 and x4 classical-SR weights and an x4 real-world model. The official code is Apache-2.0, but the checkpoint release does not attach an explicit weight license. It is an image-restoration network without temporal context; its official benchmark reports 0.539 seconds for one 256x256 LR image on an RTX 2080 Ti, so it is not a plausible GTX 1660 SUPER video default without a much smaller measured workload. Keep it as a local research candidate only until weight terms and video flicker/performance are cleared.
 - [HAT](https://github.com/XPixelGroup/HAT) publishes x2 training configurations and x4 image super-resolution models, including real-world GAN variants. The repository code is Apache-2.0 and provides tiled inference for limited GPU memory, but it does not state a separate license for its downloaded checkpoint assets. Its paper benchmarks are single-image SR, not video-temporal quality; the full HAT model is also substantially larger than SwinIR in the upstream x4 comparison (20.8M vs. 11.9M parameters). Keep it out of default presets and distributed packages until checkpoint rights and local-video qualification are resolved.
-- Current shortlist: continue testing Real-ESRGAN x4plus only as a general SDR baseline, add the smaller AnimeVideo-v3 only for animation, and evaluate a native general x2 model before enabling x2. No candidate is yet qualified as a shipping default. Do not infer video quality from image-only PSNR leaderboards or convert an ambiguous model checkpoint into a distributable pack.
+- Current shortlist (2026-10-31): keep the runnable Real-ESRGAN x2plus local baseline; prioritize only `realesr-general-x4v3` as a new general SR experiment, with STDF-R3 as separate optional compression-repair research. The old x4plus results are historical, not the current baseline; AnimeVideo-v3 is not an additional default. None is qualified as a shipping restoration preset. The decision and pending acceptance matrix above supersede the earlier shortlist.
 - [PS-SR](https://github.com/HiDream-ai/PS-SR), a CVPR 2026 video super-resolution research system, has Apache-2.0 code but its published setup requires Linux, Python 3.10, PyTorch 2.7.1, DiffSynth-Studio, Wan2.1-T2V-1.3B and separately downloaded DAPE, RAM and PS-SR checkpoints. It is not a ready Windows/ONNX package for the current target; every dependent model's license, GPU-memory needs, exportability and local quality would need separate qualification.
 
 These are research notes, not a selected model or an endorsement that any candidate is universally superior. A future permissively licensed or project-trained temporal model can replace them after it passes the same gates.
