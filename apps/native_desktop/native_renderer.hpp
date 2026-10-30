@@ -27,6 +27,7 @@ struct NativeRenderState {
     std::wstring platformSummary;
     std::wstring motionBlurSummary;
     std::wstring restorationSummary;
+    std::wstring denoiseModeSummary;
     std::wstring outputSizeSummary;
     std::wstring stage;
     std::size_t outputFrames = 0;
@@ -37,6 +38,7 @@ struct NativeRenderState {
     bool modelReady = false;
     bool runtimeReady = false;
     bool advancedExpanded = false;
+    bool automaticTemporalDenoise = false;
     float scrollOffset = 0.0F;
 };
 
@@ -54,12 +56,15 @@ struct NativeLayout {
     float contentTop = 92;
     float contentBottom = 626;
     float resourceButtonsTop = 410;
+    bool singleColumn = false;
+    float exportOffset = 0;
+    float contentEnd = 626;
     bool compactImport = false;
     float sourceActionsTop = 116;
     float sourceInputTop = 182;
     float scroll = 0;
     // Export card and HWND controls use the same 20-DIP content inset.
-    [[nodiscard]] float exportCardLeft() const { return split + 20.0F; }
+    [[nodiscard]] float exportCardLeft() const { return singleColumn ? left : split + 20.0F; }
     [[nodiscard]] float exportCardWidth() const { return right - exportCardLeft(); }
     [[nodiscard]] float exportContentLeft() const { return exportCardLeft() + 20.0F; }
     [[nodiscard]] float exportContentWidth() const { return std::max(0.0F, exportCardWidth() - 40.0F); }
@@ -68,19 +73,23 @@ struct NativeLayout {
     [[nodiscard]] static NativeLayout from(float width, float height, float scroll = 0) {
         NativeLayout value;
         value.width = width; value.height = height;
-        value.side = width < 1100 ? 164.0F : 188.0F;
-        value.left = value.side + 24.0F; value.right = width - 24.0F;
-        value.split = value.left + (value.right - value.left - 20.0F) * 0.55F;
+        value.singleColumn = width < 760.0F;
+        value.side = value.singleColumn ? 64.0F : width < 1100 ? 164.0F : 188.0F;
+        value.left = value.side + (value.singleColumn ? 16.0F : 24.0F);
+        value.right = width - (value.singleColumn ? 16.0F : 24.0F);
+        value.split = value.singleColumn ? value.right : value.left + (value.right - value.left - 20.0F) * 0.55F;
+        value.exportOffset = value.singleColumn ? 538.0F : 0.0F;
+        value.contentEnd = 626.0F + value.exportOffset;
         // Two import actions share their own row when the source card is too
         // narrow to hold both its title and the file/folder buttons.
         value.compactImport = value.split - value.left < 440.0F;
         value.sourceActionsTop = value.compactImport ? 150.0F : 116.0F;
         value.sourceInputTop = value.compactImport ? 194.0F : 182.0F;
-        value.dock = height - 100.0F;
+        value.dock = height - (value.singleColumn ? 138.0F : 100.0F);
         value.contentBottom = value.dock - 14.0F;
         // Keep both resource buttons inside short windows at high DPI.
         value.resourceButtonsTop = std::min(410.0F, std::max(18.0F, height - 90.0F));
-        value.scroll = std::clamp(scroll, 0.0F, std::max(0.0F, 626.0F - value.contentBottom));
+        value.scroll = std::clamp(scroll, 0.0F, std::max(0.0F, value.contentEnd - value.contentBottom));
         return value;
     }
 };

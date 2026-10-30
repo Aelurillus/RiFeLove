@@ -74,6 +74,82 @@ These are small synthetic runs on one workstation, with three encode repeats and
 
 ## Licensing and source review
 
+### 2026-10-31 native SDK regression follow-up
+
+The existing x86asm SDK was configured into the separate Release build
+`build/native-sdk-regression-x86asm`; the baseline SDK, existing application
+builds and user bundles were not replaced. All three CMake cache entries
+(`RIFELOVE_FFMPEG_ROOT`, `RIFELOVE_FFMPEG_TOOL`, `RIFELOVE_FFPROBE_TOOL`) point to
+the candidate. Copied runtime DLL hashes match the candidate SDK.
+
+The current no-x86asm baseline can silently saturate chroma in its legacy
+swscale path when converting 4:4:4 to 4:2:0. The product writer now uses
+`SWS_ACCURATE_RND`, matching the existing preview/RIFE converters; a red/green
+known-pixel unit regression covers conversion and spatial resizing. This is a
+pixel correctness repair, not an encoder fallback or output-count repair.
+
+Additional developer drivers live at
+`tools/validation/native_sdk_writer_check.cpp` and
+`tools/validation/native_sdk_processing_check.cpp`. They link to the selected
+native build's libraries and are not packaged as an end-user CLI. The writer
+driver submits known generated frame planes directly to `VideoMuxWriter` and
+does not claim to run a super-resolution model. Seven candidate cases passed
+independent FFmpeg decode with zero plateau pixel error (excluding the intended
+filtered color boundary): planar 4:2:0 unchanged/upscaled, 3840x2160 to
+2560x1440 same-layout scaling, NV12 unchanged/downscaled, planar 10-bit
+downscaled, and P010 downscaled. This specifically covers the writer resize
+stage used after restoration instead of extrapolating from 4:4:4 conversion.
+
+Natural 480x360 12-frame clips encoded through OpenH264, Kvazaar, libaom 8-bit
+and libaom 10-bit all passed independent video/audio decode and retained two
+AAC tracks. Decoded comparison PSNR was 41.4-43.9 dB against the fixture;
+that checks this corruption mode, not RIFE quality. Evidence remains local in
+`out/native-sdk-regression-20261031/` (`cpu-codecs.json`, `writer-cpu.json`).
+The separate build passed the 53-test focused media/color/queue set. A broader
+153-test CPU pass exposed independent in-progress UI and legacy-checkpoint
+failures; it is not recorded as a complete green release gate. Existing Oct
+28/29 records above remain historical and do not qualify the current source
+revision.
+
+Packaging now defaults to the candidate but refuses mismatched build/tool/DLL
+identity. It records actual configuration and binary hashes. A real attempt to
+reuse the old r11 baseline package with the candidate build was rejected on
+`avcodec-62.dll` before creating a staging/output package.
+
+After the GPU slot was released, six-case/36-check real RIFE reference tests
+passed for both ONNX CUDA and TensorRT FP32; six GPU memory/lifetime tests also
+passed (8 CTest entries total). Natural 12-frame clips encoded with H.264 NVENC,
+HEVC NVENC 8-bit and HEVC NVENC 10-bit passed independent decode, with two AAC
+tracks preserved. Actual product writer NV12/H.264 and P010/HEVC scaling from
+3840x2160 to 2560x1440 also passed; NV12 plateaus were exact, P010 chroma maximum
+errors were 3 and 2 ten-bit code values, with no pixels outside the declared
+two-eight-bit-level tolerance.
+
+Three real native application-service runs passed: CUDA RIFE with OpenH264,
+TensorRT RIFE with NVENC/NV12, and CUDA RIFE with NVENC/P010. Each produced 24
+frames at 48 FPS over the original half-second duration, with actual CUDA
+hardware source decode and no reported provider/encoder fallback. Independent
+FFmpeg decoded every frame and confirmed a maximum 0.5 ms timestamp error,
+consistent with the Matroska 1 ms time base. Both copied AAC tracks retained
+all 25 packet payload hashes and all original packet PTS in each run. The
+ten-bit source's nonzero 42 ms video origin was preserved. First-original-frame
+PSNR was 40.3, 57.0 and 53.8 dB respectively; this is a corruption guard, not an
+interpolated-frame quality score. Evidence: `gpu-codecs.json`,
+`writer-gpu.json`, `real-rife-independent-validation.json`, and the build's
+`gpu-reference-regression.xml`. CUDA logged cuDNN convolution algorithm
+fallback warnings, so no general performance claim is made from these clips.
+
+`-RefreshFfmpegRuntime` now permits the reviewed same-source configuration
+transition without copying the entire inference runtime/model set. It still
+checks all source hashes, native/compiler runtime identity, source-lock
+identity and DLL dependency imports, then copies only differing FFmpeg files
+and regenerates dependency/configuration/hash manifests. The new local
+candidate `out/RifeLoveNative-local-20261031-x86asm-sdkcheck` was generated from
+r11 with seven new DLLs (33,423,872 bytes), plus the new executable and small
+metadata. Unchanged large resources are NTFS hard links; r11 files remain
+unchanged. Startup/GUI acceptance of this specific new executable remains
+pending, as do long-video, broad GPU/content and redistribution qualification.
+
 Review the version-specific terms before redistribution:
 
 - [FFmpeg legal guidance](https://www.ffmpeg.org/legal.html)

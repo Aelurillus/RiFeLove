@@ -10,18 +10,19 @@ param(
     [string]$SuperResolutionModelDirectory = "",
     [string]$TemporalRestorationModelDirectory = "",
     [string]$OutputDirectory = "",
-    [switch]$SkipStartupSmoke
+    [switch]$SkipStartupSmoke,
+    [switch]$ValidateDependenciesOnly
 )
 
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptRoot "ffmpeg-sdk-helpers.ps1")
+. (Join-Path $scriptRoot "native-build-dependencies.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
 
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) { $BuildDirectory = Join-Path $repositoryRoot "build/windows-release" }
-if ([string]::IsNullOrWhiteSpace($FfmpegRoot)) { $FfmpegRoot = Join-Path $repositoryRoot "work/codec-ffmpeg-build/ffmpeg-install" }
-if ([string]::IsNullOrWhiteSpace($InferenceRuntimeDirectory)) { $InferenceRuntimeDirectory = "C:/itzming/dependences/rifelove-tensorrt-10.9.0.34/onnxruntime-win-x64-gpu-1.22.0/lib" }
-if ([string]::IsNullOrWhiteSpace($MinGWBinDirectory)) { $MinGWBinDirectory = "C:/Users/Administrator/scoop-toolchain/apps/mingw/current/bin" }
+if ([string]::IsNullOrWhiteSpace($FfmpegRoot)) { $FfmpegRoot = Join-Path $repositoryRoot "work/codec-ffmpeg-build-x86asm/ffmpeg-install" }
 if ([string]::IsNullOrWhiteSpace($CodecLicenseRoot)) { $CodecLicenseRoot = Join-Path $repositoryRoot "work/codec-ffmpeg-build" }
 if ([string]::IsNullOrWhiteSpace($RifeModelDirectory)) { $RifeModelDirectory = Join-Path $repositoryRoot "models/cache/rife-4.25-fp32-sdr8-v3" }
 if ([string]::IsNullOrWhiteSpace($LegacyRifeModelDirectory)) { $LegacyRifeModelDirectory = Join-Path $repositoryRoot "models/cache/rife-4.25-fp32-sdr8-v2" }
@@ -173,6 +174,14 @@ function Read-FfmpegSdkIdentity([string]$BuildPath, [string]$FfmpegPath) {
     if (-not [string]::Equals($cacheRoot, $selectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw "打包拒绝：CMakeCache 的 RIFELOVE_FFMPEG_ROOT 与打包 FFmpeg 根目录不一致。CMake=$cacheRoot；打包=$selectedRoot"
     }
+    $linkInputs = Assert-FfmpegBuildLinkIdentity -BuildDirectory $BuildPath -SdkRoot $selectedRoot
+    foreach ($entry in @(@('RIFELOVE_FFMPEG_TOOL','ffmpeg.exe'), @('RIFELOVE_FFPROBE_TOOL','ffprobe.exe'))) {
+        $cachedTool = Resolve-RepositoryPath (Read-CMakeCacheValue $cachePath $entry[0])
+        $expectedTool = Normalize-ComparablePath (Join-Path $selectedRoot "bin/$($entry[1])")
+        if (-not [string]::Equals($cachedTool,$expectedTool,[StringComparison]::OrdinalIgnoreCase)) {
+            throw "打包拒绝：$($entry[0]) 未指向所选 SDK。请显式重新配置 FFmpeg/ffprobe 工具缓存。"
+        }
+    }
 
     $manifestValue = Read-CMakeCacheValue $cachePath "RIFELOVE_FFMPEG_SDK_MANIFEST"
     if ([string]::IsNullOrWhiteSpace($manifestValue)) {
@@ -218,6 +227,8 @@ function Read-FfmpegSdkIdentity([string]$BuildPath, [string]$FfmpegPath) {
         nvencApiMinor = $minor
         nvencMinimumWindowsDriver = $minimumDriver
         root = $selectedRoot
+        configuration = (Read-FfmpegBuildConfiguration $selectedRoot)
+        linkInputs = $linkInputs
     }
 }
 
@@ -419,20 +430,27 @@ $staging = Join-Path $packageParent (".{0}.staging-{1}" -f $packageLeaf, [Guid]:
 $backup = Join-Path $packageParent (".{0}.previous-{1}" -f $packageLeaf, [Guid]::NewGuid().ToString("N"))
 
 $build = Resolve-ExistingDirectory $BuildDirectory "原生构建"
+$dependencySelection = Resolve-NativePackageBuildDependencies -BuildDirectory $build -InferenceRuntimeDirectory $InferenceRuntimeDirectory -MinGWBinDirectory $MinGWBinDirectory
+$InferenceRuntimeDirectory = $dependencySelection.inferenceRuntimeDirectory
+$MinGWBinDirectory = $dependencySelection.minGWBinDirectory
 $ffmpeg = Resolve-ExistingDirectory $FfmpegRoot "FFmpeg"
-$runtime = Resolve-ExistingDirectory $InferenceRuntimeDirectory "ONNX/TensorRT/CUDA/cuDNN 运行库"
-$mingw = Resolve-ExistingDirectory $MinGWBinDirectory "MinGW 运行库"
+$runtime = Resolve-ExistingDirectory $InferenceRuntimeDirectory "ONNX/TensorRT/CUDA/cuDNN 运行库 [$($dependencySelection.inferenceRuntimeSource)；可用 -InferenceRuntimeDirectory 或 RIFELOVE_TENSORRT_RUNTIME_DIR 覆盖]"
+$mingw = Resolve-ExistingDirectory $MinGWBinDirectory "MinGW 运行库 [$($dependencySelection.minGWSource)；可用 -MinGWBinDirectory 或 RIFELOVE_MINGW_BIN 覆盖]"
 $nativeExe = Resolve-ExistingFile (Join-Path $build "RifeLoveNative.exe") "非 Qt 原生 EXE"
 $ffmpegSdk = Read-FfmpegSdkIdentity $build $ffmpeg
 Assert-NoLinkTree $ffmpeg
 Assert-NoLinkTree $runtime
 Assert-NoLinkTree $mingw
+$compilerIdentity = Get-NativeCompilerRuntimeIdentity $dependencySelection
+Assert-NativeInferenceRuntimeIdentity $dependencySelection
 
 $ffmpegFiles = @(
     "avcodec-62.dll", "avformat-62.dll", "avutil-60.dll", "swresample-6.dll", "swscale-9.dll",
     "avfilter-11.dll", "avdevice-62.dll", "libaom.dll", "libkvazaar.dll", "libopenh264-8.dll"
 )
 foreach ($name in $ffmpegFiles) { Resolve-ExistingFile (Join-Path $ffmpeg "bin/$name") "FFmpeg 运行库" | Out-Null }
+$ffmpegRuntimeHashes = Assert-FfmpegRuntimeIdentity -SdkRoot $ffmpeg -RuntimeDirectory $build -FileNames $ffmpegFiles
+$ffmpegX86asmDescription = if ($ffmpegSdk.configuration.x86asmEnabled) { "enabled; end-to-end throughput remains workload-specific" } else { "disabled; CPU throughput remains unqualified" }
 $runtimeFiles = @(Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll" | Sort-Object Name)
 $requiredRuntimeFiles = @(
     # ONNX Runtime provider and core
@@ -458,9 +476,27 @@ if ($versionLines.Count -lt 2 -or $versionLines[0] -notmatch '^\d+\.\d+\.\d+\.\d
     throw "TensorRT 运行库版本侧车格式无效，必须包含版本和来源 SHA-256：$versionFile"
 }
 $mingwFiles = @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
-foreach ($name in $mingwFiles) { Resolve-ExistingFile (Join-Path $mingw $name) "MinGW 运行库" | Out-Null }
+foreach ($name in $mingwFiles) {
+    Resolve-ExistingFile (Join-Path $mingw $name) "MinGW 运行库" | Out-Null
+    $sdkCompilerRuntime = Resolve-ExistingFile (Join-Path $ffmpeg "bin/$name") "FFmpeg SDK 的 MinGW 运行库"
+    if ((Get-FileHash -LiteralPath $sdkCompilerRuntime -Algorithm SHA256).Hash.ToLowerInvariant() -cne $compilerIdentity.runtimeSha256[$name]) {
+        throw "FFmpeg SDK 的 $name 与原生构建编译器不一致；请使用同一经过核验的工具链重建，拒绝混用 DLL。"
+    }
+}
 $msvcFiles = @("MSVCP140.dll", "MSVCP140_1.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll")
 foreach ($name in $msvcFiles) { Resolve-ExistingFile (Join-Path $env:SystemRoot "System32/$name") "MSVC 运行库" | Out-Null }
+if ($ValidateDependenciesOnly) {
+    [ordered]@{
+        result = 'passed'; purpose = 'dependency-preflight-only'; buildDirectory = $build
+        inferenceRuntimeDirectory = $runtime; inferenceRuntimeSource = $dependencySelection.inferenceRuntimeSource
+        minGWBinDirectory = $mingw; minGWSource = $dependencySelection.minGWSource
+        compiler = $dependencySelection.compiler; compilerIdentity = $compilerIdentity
+        ffmpegLinkInputs = $ffmpegSdk.linkInputs
+        ffmpegX86asm = $ffmpegSdk.configuration.x86asmEnabled; ffmpegRuntimeSha256 = $ffmpegRuntimeHashes
+        packageCreated = $false; launchedExe = $false
+    } | ConvertTo-Json -Depth 8
+    return
+}
 
 $legacyDescriptorPath = Resolve-ExistingFile (Join-Path $LegacyRifeModelDirectory "model.json") "RIFE 4.25 旧版描述"
 $legacyDescriptor = Read-Json $legacyDescriptorPath
@@ -537,7 +573,7 @@ try {
         schemaVersion = 1; product = "RifeLoveNative"; qt = $false; cliIncluded = $false; oss = $false
         defaultModelDirectory = "models/rife-4.25-fp32-sdr8-v3"; legacyModelDirectory = if ($includeLegacyModel) { "models/rife-4.25-fp32-sdr8-v2" } else { $null }
         restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = "models/fastdvdnet-clipped-five-frame-sdr8-eval"; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = "experimental-optional"; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
-        ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; CPU build has no x86asm optimization"; dataDirectory = '%LOCALAPPDATA%\RifeLove'
+        ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm $ffmpegX86asmDescription"; dataDirectory = '%LOCALAPPDATA%\RifeLove'
         portableDataDirectory = "data"; portableModeMarker = "portable-mode.txt"; portableModeMarkerValue = "RifeLovePortable 1"
         legacyModelIncluded = $includeLegacyModel
     }
@@ -555,7 +591,7 @@ try {
     Copy-FileChecked (Find-CodecSourceLicense $codecDepsRoot "aom/src" "libaom") (Join-Path $licenseTarget "libaom-LICENSE.txt")
     $nvCodecNotice = @(
         "This local build uses NVIDIA nv-codec-headers n12.2.72.0 for NVENC/NVDEC integration.",
-        "The source archive SHA-256 and build configuration are recorded in work/codec-ffmpeg-build/BUILD_RECORD.md.",
+        "The source archive SHA-256 is recorded in tools/development/ffmpeg-source-sdk.lock.json; this package records actual configuration and runtime DLL hashes in PACKAGE-MANIFEST.json.",
         "Review NVIDIA Video Codec SDK terms before any redistribution."
     ) -join [Environment]::NewLine
     Set-Content -LiteralPath (Join-Path $licenseTarget "NVIDIA-nv-codec-headers-notice.txt") -Value $nvCodecNotice -Encoding utf8NoBOM
@@ -594,7 +630,8 @@ try {
         generatedAtUtc = [DateTimeOffset]::UtcNow.ToString("o"); executable = "RifeLoveNative.exe"
         executableSha256 = (Get-FileHash -LiteralPath (Join-Path $staging "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
         qtIncluded = $false; cliIncluded = $false; ossEnabled = $false; userMediaIncluded = $false; userDataIncluded = $false
-        ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; nvenc = "integrated in isolated SDK; validated H.264 NVENC and software fallback"; x86asm = "disabled; CPU throughput remains unqualified"; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
+        compilerRuntime = $compilerIdentity
+        ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; runtimeSha256 = $ffmpegRuntimeHashes; configuration = $ffmpegSdk.configuration; linkInputs = $ffmpegSdk.linkInputs; nvenc = "integrated in isolated SDK; H.264 NVENC and software fallback require hardware/workload validation"; x86asm = $ffmpegX86asmDescription; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
         inferenceRuntime = [ordered]@{ source = "local TensorRT/ONNX Runtime CUDA SDK"; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = $versionLines[0]; sourceSha256 = $versionLines[1]; providers = @("TensorRT", "CUDA", "CPU-fallback") }
         models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
         migration = [ordered]@{ legacyModelIncluded = $includeLegacyModel; legacyModelPathToken = $legacyReference.token; legacyModelSha256 = $legacyModelHash; evidence = @($legacyReference.evidence); cleanPackageOmitsUnreferencedLegacy = $true }
@@ -609,7 +646,7 @@ RifeLove 原生 Windows 本机包
 默认模型：models/rife-4.25-fp32-sdr8-v3；models/realesrgan-x2plus-sdr8-v2 为 Real-ESRGAN x2plus v2 本机评估权重；models/fastdvdnet-clipped-five-frame-sdr8-eval 为 FastDVDnet 五帧时序降噪本机评估权重，仅支持已声明的 SDR8 源率降噪。
 任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写。视频输出位置由用户选择，原片不会被覆盖。
 只有在 EXE 同目录创建 portable-mode.txt 且第一行为 RifeLovePortable 1，才显式使用旁边的 data 目录。旧 data 中符合条件的队列与偏好会安全迁移，原文件保留。刷新本机包会保留旧 data 和用户添加的模型；SHA256SUMS.txt 不包含可变用户 data。
-当前包使用隔离构建的 FFmpeg 运行库，包含 H.264 NVENC、OpenH264、Kvazaar 和 libaom；自动编码优先使用 H.264 NVENC，并在不可用时软件回退。该构建关闭 x86asm，CPU 编码性能尚未完成资格确认。
+当前包使用隔离构建的 FFmpeg 运行库，包含 H.264 NVENC、OpenH264、Kvazaar 和 libaom；自动编码优先使用 H.264 NVENC，并在不可用时软件回退。x86asm：$ffmpegX86asmDescription。处理性能依赖硬件、模型、分辨率和编码配置；短片回归不代表所有素材已验收。
 TensorRT、ONNX Runtime CUDA、CUDA、cuDNN 和 FFmpeg DLL 随包放置。仍需要兼容的 NVIDIA 驱动；首次推理可能生成本机 TensorRT 缓存。
 只有刷新时发现 data 中存在带精确 v2 路径 token、模型 ID、版本和 SHA-256 的队列/检查点记录，包才会额外保留 models/rife-4.25-fp32-sdr8-v2；干净包不会捆绑未被实际迁移数据引用的重复 RIFE 模型。
 依赖来源、导入清单、模型 SHA-256、许可证和限制见 PACKAGE-MANIFEST.json、dependency-imports.json、SHA256SUMS.txt 和 licenses。

@@ -70,19 +70,64 @@ The Save dialog initially selects MP4 for platform copies and MKV for the master
 the user can still choose a different output path/container. The summary shows the
 actual current extension, target FPS, selected encoder and requested bitrate/GOP.
 Changing an encoder does not silently reselect Auto. Fractional rates remain exact
-in job settings; the bitrate/GOP policy uses the ceiling of the rate (for example,
-30000/1001 selects the 30 FPS policy rather than a hardcoded 60 FPS fallback).
+in job settings; only the bitrate/GOP policy uses an integer ceiling. The shared
+`platformFrameRateCeiling` computes quotient plus nonzero remainder, avoiding an
+overflow-prone numerator-plus-denominator calculation. Thus `30000/1001` selects
+the 30 FPS policy and `60000/1001` the 60 FPS policy, with no hardcoded 60 FPS
+fallback. Invalid or unrepresentable rates/GOP sizes fail instead of silently
+substituting another setting. YouTube uses half the rounded policy rate (rounded
+up to a whole frame); other local compatibility presets keep a two-second GOP.
 
-The same controls-to-settings conversion is used by the native Start action and
-the native regression test. Single-file jobs use the chosen output extension for
-the container. Batch import receives the selected rate, encoder and exposure,
-selects MP4/MKV from the preset, and calculates bitrate/GOP for each input's actual
-dimensions. Requested bitrate is an encoder setting, not a guaranteed measured
-bitrate or immunity from platform transcoding.
+Batch import receives the selected rate, encoder and exposure, selects MP4/MKV
+from the preset, and calls `application::platformExportSettings` independently
+for every probed source. Bitrate buckets use the **shorter edge of the actual
+output size**, so 1920x1080 and 1080x1920 select the same 1080 tier. This is
+RifeLove's orientation-independent local policy, not an additional claim about a
+platform's portrait-upload eligibility. Without an explicit target size, the
+helper uses the source dimensions multiplied by the selected spatial model's
+scale. An explicit width/height pair overrides that generated size for the
+bitrate calculation. The pipeline/import aspect-ratio and generated-size checks
+remain responsible for whether such a target is actually supported; the policy
+helper does not crop or resize frames. Requested bitrate is an encoder setting,
+not a guaranteed measured bitrate or immunity from platform transcoding.
+
+### Shared native/queue policy API
+
+Native single-file `applyExportControls` now calls the same helper as batch
+import after resolving source width/height, selected model scale and explicit
+output target. Neither path maintains its own height-only bitrate table:
+
+```cpp
+const auto policy = application::platformExportSettings(
+    profile, settings.targetRate, sourceWidth, sourceHeight,
+    settings.encoding.outputWidth, settings.encoding.outputHeight,
+    scaleNumerator, scaleDenominator);
+settings.encoding.bitRate = std::int64_t{policy.bitRateKbps} * 1000;
+settings.encoding.gopSize = policy.gopSizeFrames;
+```
+
+The returned `frameRateCeiling`, `outputWidth` and `outputHeight` describe policy
+inputs for display/diagnostics. Do not replace the exact rational target FPS
+with `frameRateCeiling`, and do not force computed dimensions into encoding just
+to calculate bitrate. `unchanged` means skip the helper and preserve explicit
+user encoding settings. Native HWND regression checks verify YouTube 60 FPS
+uses the same 12 Mbps policy for portrait 1080x1920 and 4:3 1440x1080. These
+control-setting checks do not perform an encode or a platform upload.
+
+CPU-only regression coverage uses real FFV1 probe inputs at 1280x720 and
+1080x1920, metadata-only RIFE/spatial-model fixtures and persisted SQLite queue
+records. It covers both `30000/1001` and `60000/1001`, YouTube/other local
+profiles and 1x/2x output scales across eight independent two-source imports.
+Each record must retain its exact FPS and have its own expected bitrate/GOP,
+overriding deliberately incorrect copied input settings. Additional helper tests
+cover portrait/landscape equivalence, explicit scaled targets, fractional-pixel
+dimensions, partial target pairs and integer overflow. Import does not start
+processing; this evidence does not claim actual model inference, platform
+upload, encoder throughput or visual-quality acceptance.
 
 ## Current implementation boundary
 
-The platform picker initially selects one local MP4 job at a time. YouTube gets its current SDR bitrate recommendation and half-frame-rate GOP; Bilibili and Douyin get local compatibility bitrate estimates and a two-second GOP. Platform profiles initially select `Auto`; manual encoder changes remain available and are retained within the session. The picker does not upload files, set output resolution or crop, or force AAC audio; compatible source audio is preserved by the media pipeline. The profile does not guarantee the platform's final codec, stream bitrate or playback tier. When motion blur is enabled, RifeLove temporally integrates interpolated samples into the selected output frame rate; a 60 FPS upload can gain smoother-looking motion and natural exposure blur, but it cannot carry the actual temporal detail or playback cadence of 144/240 FPS. Inspect the finished file with `ffprobe` before uploading. The platform-copy labels describe intended use, not a successful platform upload.
+The platform picker selects one local output profile at a time and applies it to a single source or to each batch source. YouTube gets its current SDR bitrate recommendation and half-frame-rate GOP; Bilibili and Douyin get local compatibility bitrate estimates and a two-second GOP. Platform profiles initially select `Auto`; manual encoder changes remain available and are retained within the session. The picker does not upload files, set output resolution or crop, or force AAC audio; compatible source audio is preserved by the media pipeline. The profile does not guarantee the platform's final codec, stream bitrate or playback tier. When motion blur is enabled, RifeLove temporally integrates interpolated samples into the selected output frame rate; a 60 FPS upload can gain smoother-looking motion and natural exposure blur, but it cannot carry the actual temporal detail or playback cadence of 144/240 FPS. Inspect the finished file with `ffprobe` before uploading. The platform-copy labels describe intended use, not a successful platform upload.
 
 ## Remaining qualification work
 

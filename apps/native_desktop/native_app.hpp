@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "native_renderer.hpp"
+#include "native_output_target.hpp"
 #include "native_model_store.hpp"
 #include "native_data_directory.hpp"
 #include "core/pipeline/video_pipeline.hpp"
@@ -25,6 +26,7 @@
 #include <vector>
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+#include "native_comparison_window.hpp"
 #include "application/import_service.hpp"
 #include "application/processing_service.hpp"
 #include "application/task_queue.hpp"
@@ -46,6 +48,7 @@ public:
 #ifdef RIFELOVE_NATIVE_TESTING
     [[nodiscard]] HWND testMainWindow() const noexcept { return window_; }
     [[nodiscard]] const NativeRenderState& testViewState() const noexcept { return state_; }
+    bool testNavigateSettings(bool reverse = false) { return focusNextControl(reverse); }
     [[nodiscard]] PipelineSettings testExportSettings() const {
         PipelineSettings settings;
         applyExportControls(settings);
@@ -60,6 +63,17 @@ public:
     bool testUnregisterModel(std::size_t index) { return unregisterLocalModel(index); }
     void testRefreshModels() { refreshLocalModels(); }
     HWND testShowModelCenter() { showModelCenter(); return modelCenterWindow_; }
+    HWND testShowComparison() { showComparison(); return comparisonWindow_ ? comparisonWindow_->window() : nullptr; }
+    bool testSetAutomaticDenoise(bool enabled) { return setAutomaticDenoise(enabled); }
+    bool testCaptureRestorationDescriptors(application::ProcessingJob& job,
+        const restoration::ModelPack* temporal, const restoration::ModelPack* spatial) {
+        return captureRestorationDescriptors(job, temporal, spatial);
+    }
+    void testSetSourceDimensions(int width, int height) {
+        sourceWidth_ = width;
+        sourceHeight_ = height;
+        updateRestorationControls();
+    }
 #endif
 #endif
 
@@ -95,6 +109,8 @@ private:
     static constexpr int kHistoryRefresh = 1021;
     static constexpr int kSelectSourceFolder = 1022;
     static constexpr int kTemporalRestorationCombo = 1024;
+    static constexpr int kComparison = 1025;
+    static constexpr int kAutomaticDenoise = 1026;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -132,11 +148,14 @@ private:
     static LRESULT CALLBACK comboProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK checkboxProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK pathEditProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK scrollChildProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT handleMessage(UINT message, WPARAM wParam, LPARAM lParam);
     void createControls();
     void layoutControls();
     void setFonts();
     void styleCombo(HWND combo);
+    bool focusNextControl(bool reverse);
+    void ensureControlVisible(HWND control);
     void updateView();
     void updateButtonState();
     void toggleAdvancedSettings();
@@ -166,18 +185,7 @@ private:
         bool ready = false;
         std::wstring status;
     };
-    struct OutputTargetCheck final {
-        int width = 0;
-        int height = 0;
-        bool selected = false;
-        bool aspectMatches = false;
-        bool generatedEnough = false;
-        bool dimensionsEven = false;
-
-        [[nodiscard]] bool usable() const noexcept {
-            return selected && aspectMatches && generatedEnough && dimensionsEven;
-        }
-    };
+    using OutputTargetCheck = NativeOutputTarget;
     [[nodiscard]] StartReadiness evaluateStartReadiness() const;
     [[nodiscard]] OutputTargetCheck outputTargetCheck(int selection) const;
     [[nodiscard]] std::wstring outputTargetLabel(int selection) const;
@@ -201,6 +209,8 @@ private:
     void postQueueEvent(application::QueueEvent event);
     void postQueueNotice(NativeQueueNotice notice);
     void startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex);
+    bool captureRestorationDescriptors(application::ProcessingJob& job,
+        const restoration::ModelPack* temporal, const restoration::ModelPack* spatial);
     void stopQueuedProcessing();
     void toggleQueuedPause();
     [[nodiscard]] bool hasBatchSelection() const noexcept;
@@ -234,6 +244,10 @@ private:
     void updateModelCenter();
     void updateModelDetails();
     void showTaskHistory();
+    void showComparison();
+    void configureAutomaticDenoise();
+    bool setAutomaticDenoise(bool enabled);
+    [[nodiscard]] bool automaticDenoiseAvailable() const;
     void refreshTaskHistory();
     void handleHistoryResult(NativeHistoryResult result);
 #endif
@@ -268,6 +282,8 @@ private:
     HWND pauseResumeButton_ = nullptr;
     HWND rejectionDetailsButton_ = nullptr;
     HWND historyButton_ = nullptr;
+    HWND comparisonButton_ = nullptr;
+    HWND automaticDenoiseButton_ = nullptr;
     HWND sourceLabel_ = nullptr;
     HWND outputLabel_ = nullptr;
     HWND rateLabel_ = nullptr;
@@ -294,6 +310,7 @@ private:
     std::atomic<HWND> callbackWindow_{nullptr};
     std::atomic<bool> closing_{false};
     bool advancedExpanded_ = false;
+    bool automaticTemporalDenoise_ = false;
     struct ExportPresetControls {
         int rateSelection = 1;
         int encoderSelection = 0;
@@ -306,6 +323,7 @@ private:
     std::array<ExportPresetControls, 6> exportPresetControls_{};
     int lastPlatformSelection_ = 0;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    std::unique_ptr<NativeComparisonWindow> comparisonWindow_;
     NativeModelPreferences modelPreferences_;
     NativeDataDirectory dataDirectory_;
     bool modelPreferencesWritable_ = true;

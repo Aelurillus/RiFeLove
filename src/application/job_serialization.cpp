@@ -124,6 +124,8 @@ void validate(const ProcessingJob& job) {
     if (job.temporalRestorationModelDirectory.empty() != job.expectedTemporalRestorationDescriptorSha256.empty())
         throw std::invalid_argument("A temporal restoration model path and pinned descriptor hash must be supplied together");
     temporalDenoiseSigma(job.settings.temporalDenoiseSigma255);
+    if (job.settings.automaticTemporalDenoise)
+        (void)restoration::AutomaticDenoiseController(*job.settings.automaticTemporalDenoise);
     if (job.settings.motionBlur.shutterAngleDegrees < 0 || job.settings.motionBlur.shutterAngleDegrees > 360 ||
         job.settings.motionBlur.sampleCount < 1 || job.settings.motionBlur.sampleCount > 16)
         throw std::invalid_argument("Motion blur shutter angle must be 0..360 degrees and sample count must be 1..16");
@@ -151,7 +153,7 @@ void validate(const ProcessingJob& job) {
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",8},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",9},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
         {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
         {"temporalRestorationModelDirectory",utf8(job.temporalRestorationModelDirectory)},
@@ -161,6 +163,7 @@ std::string serializeJob(const ProcessingJob& job) {
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
         {"expectedModelAdapterId",job.expectedModelAdapterId},{"expectedModelAdapterVersion",job.expectedModelAdapterVersion},
         {"temporalDenoiseSigma255",job.settings.temporalDenoiseSigma255},
+        {"automaticTemporalDenoise",nullptr},
         {"motionBlur",{{"enabled",job.settings.motionBlur.enabled},{"shutterAngleDegrees",job.settings.motionBlur.shutterAngleDegrees},{"sampleCount",job.settings.motionBlur.sampleCount}}},
         {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"outputWidth",e.outputWidth},{"outputHeight",e.outputHeight},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
             {"bitRate",e.bitRate},{"gopSize",e.gopSize},{"maxBFrames",e.maxBFrames},{"allowPrecisionLoss",e.allowPrecisionLoss},{"options",e.encoderOptions}}},
@@ -169,13 +172,20 @@ std::string serializeJob(const ProcessingJob& job) {
     // window. Bind enabled jobs/checkpoints to this algorithm; old sharp
     // fallback segments must not be silently reused by the corrected path.
     if (job.settings.motionBlur.enabled) json["motionBlur"]["algorithmVersion"] = 2;
+    if (job.settings.automaticTemporalDenoise) {
+        const auto& automatic = *job.settings.automaticTemporalDenoise;
+        json["automaticTemporalDenoise"] = {{"algorithmVersion",restoration::automaticDenoiseAlgorithmVersion},
+            {"replayPolicy",restoration::automaticDenoiseReplayPolicy},{"relativeAdjustment",automatic.relativeAdjustment},
+            {"smoothingSeconds",automatic.smoothingSeconds},{"maximumSigmaChangePerSecond",automatic.maximumSigmaChangePerSecond},
+            {"minimumConfidence",automatic.minimumConfidence}};
+    }
     const auto result = json.dump(); if (result.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB"); return result;
 }
 ProcessingJob parseJob(const std::string& source, const std::string& output, const std::string& value) {
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion < 1 || schemaVersion > 8) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion < 1 || schemaVersion > 9) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -191,6 +201,16 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
     if (schemaVersion >= 3) job.settings.inferenceBackend = json.at("inferenceBackend").get<std::string>();
     if (schemaVersion >= 7) job.settings.temporalDenoiseSigma255 = json.at("temporalDenoiseSigma255").get<float>();
+    if (schemaVersion >= 9 && !json.at("automaticTemporalDenoise").is_null()) {
+        const auto& automatic = json.at("automaticTemporalDenoise");
+        if (!automatic.is_object() || automatic.size() != 6 ||
+            integer<int>(automatic.at("algorithmVersion")) != restoration::automaticDenoiseAlgorithmVersion ||
+            automatic.at("replayPolicy").get<std::string>() != restoration::automaticDenoiseReplayPolicy)
+            throw std::invalid_argument("Unsupported automatic Gaussian-denoise algorithm or replay policy");
+        job.settings.automaticTemporalDenoise = restoration::AutomaticDenoiseSettings{
+            automatic.at("relativeAdjustment").get<double>(),automatic.at("smoothingSeconds").get<double>(),
+            automatic.at("maximumSigmaChangePerSecond").get<double>(),automatic.at("minimumConfidence").get<double>()};
+    }
     if (schemaVersion >= 5) {
         const auto& blur = json.at("motionBlur");
         job.settings.motionBlur.enabled = blur.at("enabled").get<bool>();
@@ -312,6 +332,9 @@ std::string serializeResult(const PipelineResult& r) {
         {"temporalRestorationModelId",r.temporalRestorationModelId},{"temporalRestorationBackend",r.temporalRestorationBackend},
         {"temporalRestorationFallbackReason",r.temporalRestorationFallbackReason},
         {"temporalRestorationScale",{{"numerator",r.temporalRestorationScaleNumerator},{"denominator",r.temporalRestorationScaleDenominator}}},
+        {"automaticGaussianDenoise",{{"algorithmVersion",1},{"active",r.automaticTemporalDenoiseActive},
+            {"analyzedSourceFrames",r.automaticDenoiseAnalyzedFrames},{"confidentSourceFrames",r.automaticDenoiseConfidentFrames},
+            {"conditionedSourceFrames",r.automaticDenoiseAppliedFrames},{"countsScope","current_execution"}}},
         {"modelAdapter",{{"id",r.adapterId},{"version",r.adapterVersion}}},{"inferenceFallbackReason",r.inferenceFallbackReason},
         {"sourceDecoder",r.sourceDecoder},{"sourceDecodeAcceleration",r.sourceDecodeAcceleration},
         {"sourceDecodeFallbackReason",r.sourceDecodeFallbackReason},

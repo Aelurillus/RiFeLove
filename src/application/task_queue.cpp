@@ -43,7 +43,7 @@ const ConfiguredTask& find(const std::vector<ConfiguredTask>& rows, const std::s
 bool ownsOutput(TaskState state) { return state == TaskState::queued || state == TaskState::running || state == TaskState::paused || state == TaskState::interrupted; }
 std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment,
     const std::optional<restoration::Capabilities>& restorationRuntime = std::nullopt,
-    const std::optional<restoration::Capabilities>& temporalRestorationRuntime = std::nullopt) {
+    const std::optional<restoration::Capabilities>& temporalRestorationRuntime = std::nullopt, std::stop_token stop = {}) {
     auto identity = Json::parse(identityText);
     if (identity.value("schemaVersion",0) != 1 && identity.value("schemaVersion",0) != 2)
         throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
@@ -56,6 +56,7 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
     Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},
         {"job",Json::parse(serializeJob(job))},{"identity",identity},
         {"mediaRuntime",media::MediaEngine::runtimeVersion()},
+        {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity(stop))},
         {"framesPerSegment",framesPerSegment}};
     const auto recordRuntime = [&](const char* name, const std::optional<restoration::Capabilities>& runtime,
                                    const std::filesystem::path& modelDirectory) {
@@ -173,7 +174,22 @@ bool TaskQueue::start(Callback callback) {
         pause_.resume();
         worker_ = std::jthread([this, callback = std::move(callback), token] {
             std::string error;
-            try { run(token,callback); } catch (const std::exception& failure) { error = failure.what(); }
+            try { run(token,callback); } catch (const std::exception& failure) {
+                error = failure.what();
+                // A progress/terminal database write can fail after the task
+                // was claimed. The worker has now ended, so leaving that row
+                // running would strand it until the application is restarted.
+                std::string unfinished;
+                { std::lock_guard lock(activity_); unfinished = activeId_; }
+                if (!unfinished.empty()) {
+                    try {
+                        const auto diagnostic = ("Queue worker ended before its terminal state was saved: " + error).substr(0,64 * 1024);
+                        (void)store_.interruptActive(unfinished,diagnostic);
+                    } catch (const std::exception& recovery) {
+                        error += "; could not persist interrupted task state: " + std::string(recovery.what());
+                    }
+                }
+            }
             { std::lock_guard lock(activity_); activeId_.clear(); }
             busy_.store(false);
             QueueEvent event; event.drained = true; event.queueError = std::move(error); callback(std::move(event));
@@ -212,6 +228,7 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     auto job = parseJob(task.task.sourcePath,task.task.outputPath,task.configuration);
     applyStoredIdentity(job,task.identity);
     auto expectedManifest = Json::parse(checkpointManifest(job,task.identity,checkpointFramesPerSegment_));
+    CheckpointArtifacts::requireMediaPipelineIdentity(manifest,expectedManifest.dump());
     if (!job.restorationModelDirectory.empty() || !job.temporalRestorationModelDirectory.empty()) {
         const auto saved = Json::parse(manifest);
         const auto restoreRuntime = [&](const char* name, const std::filesystem::path& modelDirectory) {
@@ -297,8 +314,9 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (settings.temporalRestorationBackend) temporalRestorationRuntime = settings.temporalRestorationBackend->capabilities();
                 if (job.temporalRestorationModelDirectory.empty() == temporalRestorationRuntime.has_value())
                     throw std::logic_error("Temporal restoration model and runtime identity do not match");
-                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime,temporalRestorationRuntime);
+                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime,temporalRestorationRuntime,cancellation.get_token());
                 const auto previousManifest = artifacts.manifest();
+                if (!previousManifest.empty()) CheckpointArtifacts::requireMediaPipelineIdentity(previousManifest,manifest);
                 if (!previousManifest.empty() && !CheckpointArtifacts::manifestMatches(previousManifest,manifest))
                     throw std::logic_error("Checkpoint identity or runtime changed; refusing to reuse prior segments");
                 store_.saveIdentity(current->task.id,identityJson);

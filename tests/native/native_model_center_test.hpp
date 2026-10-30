@@ -2,6 +2,9 @@
 
 #include "native_app.hpp"
 #include "native_model_store.hpp"
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+#include "application/job_serialization.hpp"
+#endif
 
 #include <chrono>
 #include <fstream>
@@ -193,6 +196,44 @@ void checkLocalModelCenter(Check check) {
         check(SendMessageW(GetDlgItem(main, 1017), CB_GETCURSEL, 0, 0) > 0 &&
             SendMessageW(GetDlgItem(main, 1024), CB_GETCURSEL, 0, 0) > 0,
             "saved restoration defaults are applied to the actual job selectors");
+        check(!app.testExportSettings().automaticTemporalDenoise && !app.testViewState().automaticTemporalDenoise,
+            "experimental automatic Gaussian denoise defaults off even when a temporal model is selected");
+        check(app.testExportSettings().temporalDenoiseSigma255 == 25.0F &&
+            app.testViewState().restorationSummary.find(L"FastDVDnet 固定 σ25") != std::wstring::npos &&
+            app.testViewState().denoiseModeSummary.find(L"仍降噪") != std::wstring::npos,
+            "automatic off truthfully identifies selected FastDVDnet as fixed-sigma denoise, not bypass");
+        check(app.testSetAutomaticDenoise(true) && app.testExportSettings().automaticTemporalDenoise && app.testViewState().automaticTemporalDenoise,
+            "explicit opt-in with a validated FastDVDnet transfers automatic Gaussian denoise into job settings");
+        check(app.testViewState().restorationSummary.find(L"自动高斯") != std::wstring::npos &&
+            app.testViewState().restorationSummary.find(L"固定 σ25") == std::wstring::npos &&
+            app.testViewState().denoiseModeSummary.find(L"软件解码") != std::wstring::npos,
+            "automatic opt-in replaces fixed-sigma summary with experimental automatic mode and decode cost");
+        check(app.testSetAutomaticDenoise(false) && !app.testExportSettings().automaticTemporalDenoise &&
+            app.testViewState().restorationSummary.find(L"固定 σ25") != std::wstring::npos,
+            "turning automatic off restores the still-active fixed-sigma mode");
+        check(app.testSetAutomaticDenoise(true), "re-enable automatic for the queue serialization fixture");
+        application::ProcessingJob denoiseJob;
+        denoiseJob.source = "C:/fixture/source.mp4"; denoiseJob.output = "C:/fixture/output.mkv";
+        denoiseJob.modelDirectory = rife; denoiseJob.runtimeDirectory = temporary.root / L"runtime";
+        denoiseJob.temporalRestorationModelDirectory = temporal;
+        denoiseJob.expectedTemporalRestorationDescriptorSha256 = inference::sha256File(temporal / L"model.json", 256 * 1024);
+        denoiseJob.settings = app.testExportSettings();
+        const auto persisted = application::parseJob(denoiseJob.source, denoiseJob.output, application::serializeJob(denoiseJob));
+        check(persisted.settings.automaticTemporalDenoise && persisted.temporalRestorationModelDirectory == temporal &&
+            persisted.settings.automaticTemporalDenoise->minimumConfidence == denoiseJob.settings.automaticTemporalDenoise->minimumConfidence,
+            "native automatic-denoise settings and selected temporal model survive the queue serialization boundary");
+        const HWND temporalCombo = GetDlgItem(main, 1024);
+        const auto temporalSelection = SendMessageW(temporalCombo, CB_GETCURSEL, 0, 0);
+        SendMessageW(temporalCombo, CB_SETCURSEL, 0, 0);
+        SendMessageW(main, WM_COMMAND, MAKEWPARAM(1024, CBN_SELCHANGE), reinterpret_cast<LPARAM>(temporalCombo));
+        check(!app.testExportSettings().automaticTemporalDenoise && !app.testSetAutomaticDenoise(true),
+            "removing the FastDVDnet selection disables automatic denoise and blocks invalid re-enablement");
+        check(app.testViewState().restorationSummary.find(L"降噪：关闭") != std::wstring::npos &&
+            app.testViewState().denoiseModeSummary.find(L"可选降噪：关闭") != std::wstring::npos,
+            "no temporal model is truthfully labeled as denoise off");
+        SendMessageW(temporalCombo, CB_SETCURSEL, temporalSelection, 0);
+        SendMessageW(main, WM_COMMAND, MAKEWPARAM(1024, CBN_SELCHANGE), reinterpret_cast<LPARAM>(temporalCombo));
+        check(!app.testExportSettings().automaticTemporalDenoise, "reselecting a model cannot silently re-enable experimental processing");
         if (main) DestroyWindow(main);
     }
     {

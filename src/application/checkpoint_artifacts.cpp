@@ -1,14 +1,25 @@
 #include "application/checkpoint_artifacts.hpp"
+#include "inference/model_pack.hpp"
+#include "processing_pipeline_identity.hpp"
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libswscale/swscale.h>
+}
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cwctype>
 #include <iomanip>
 #include <limits>
 #include <random>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -312,7 +323,25 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
     try {
         auto actual = Json::parse(saved);
         const auto wanted = Json::parse(expected);
+        // All manifests created by the current queue require content-bound
+        // media identity. Keep legacy job-schema comparisons available only
+        // when neither side purports to carry the new proof.
+        if (actual.contains("mediaPipelineIdentity") || wanted.contains("mediaPipelineIdentity"))
+            requireMediaPipelineIdentity(saved,expected);
         if (actual == wanted) return true;
+        // Schema 9 makes automatic conditioning and its exact replay policy
+        // explicit. Old fixed-sigma output is reusable only with auto absent.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 9 && actual.at("job").value("schemaVersion",0) < 9) {
+            if (actual.at("job").contains("automaticTemporalDenoise") ||
+                !wanted.at("job").contains("automaticTemporalDenoise") ||
+                !wanted.at("job").at("automaticTemporalDenoise").is_null()) return false;
+            auto previous = wanted;
+            previous["job"].erase("automaticTemporalDenoise");
+            previous["job"]["schemaVersion"] = 8;
+            return manifestMatches(saved,previous.dump());
+        }
         // Schema 8 introduces a second, source-rate restoration model. Older
         // checkpoints can migrate only when that additional model is absent;
         // compare the remainder through the existing schema-7 migrations.
@@ -469,6 +498,179 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
     } catch (const std::exception&) {
         return false;
     }
+}
+
+std::string CheckpointArtifacts::mediaPipelineIdentity(std::stop_token stop) {
+    // Bump this whenever writer conversion/filter/color interpretation changes.
+    // v2 binds the corrected YUV layout resampling: bicubic for pixel-layout
+    // conversion, Lanczos for size changes, accurate rounding and explicit
+    // matrix/range preservation. DLL hashes independently bind libswscale code.
+    constexpr auto writerAlgorithm = "swscale-bicubic-layout-lanczos-resize-accurate-rnd-matrix-range-v2";
+    Json libraries = Json::object();
+    Json dependencies = Json::object();
+    std::vector<HMODULE> modules;
+    const auto modulePath = [](HMODULE module) {
+        std::vector<wchar_t> path(32768);
+        const auto count = GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
+        if (count == 0 || count >= path.size()) throw std::runtime_error("Could not resolve loaded media DLL file");
+        return std::filesystem::path(std::wstring(path.data(),count));
+    };
+    const auto record = [&](const char* name, unsigned version, const char* configuration) {
+        if (stop.stop_requested()) throw std::runtime_error("Media runtime identity verification cancelled");
+        if (!configuration || !*configuration) throw std::runtime_error("FFmpeg build configuration is unavailable");
+        // configuration() returns the compiled-in static string in that DLL.
+        // Use its data address, avoiding MinGW import stubs in the executable
+        // that can make &avcodec_version identify the EXE instead of its DLL.
+        HMODULE module = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(configuration),&module))
+            throw std::runtime_error(std::string("Could not locate loaded FFmpeg module: ") + name);
+        if (module == GetModuleHandleW(nullptr))
+            throw std::runtime_error(std::string("FFmpeg checkpoint identity requires an identifiable loaded DLL: ") + name);
+        SourceLease lease(modulePath(module));
+        const auto binary = lease.fingerprint(stop);
+        const std::string config(configuration);
+        libraries[name] = {{"version",version},{"configurationSha256",inference::sha256(std::as_bytes(std::span(config)))},
+            {"binarySha256",binary.sha256},{"binarySize",binary.size}};
+        modules.push_back(module);
+    };
+    record("avcodec",avcodec_version(),avcodec_configuration());
+    record("avformat",avformat_version(),avformat_configuration());
+    record("avutil",avutil_version(),avutil_configuration());
+    record("swscale",swscale_version(),swscale_configuration());
+    std::vector<HMODULE> visited = modules;
+    std::array<wchar_t,32768> windowsPath{};
+    const auto windowsLength = GetWindowsDirectoryW(windowsPath.data(),static_cast<UINT>(windowsPath.size()));
+    if (!windowsLength || windowsLength >= windowsPath.size()) throw std::runtime_error("Could not identify Windows system-library directory");
+    const std::wstring windowsPrefix = std::wstring(windowsPath.data(),windowsLength) + L"\\";
+    // Follow resolved IAT addresses, not PATH guesses or merely import names.
+    // This captures linked external encoders and their non-OS dependencies,
+    // including OpenH264/Kvazaar/AOM and swresample when actually imported.
+    for (std::size_t index = 0; index < modules.size(); ++index) {
+        if (stop.stop_requested()) throw std::runtime_error("Media runtime identity verification cancelled");
+        const auto* base = reinterpret_cast<const std::byte*>(modules[index]);
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 1024 * 1024)
+            throw std::runtime_error("Loaded media module has an unsupported executable header");
+        const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        if (pe->Signature != IMAGE_NT_SIGNATURE) throw std::runtime_error("Loaded media DLL has no valid PE identity");
+        const auto size = pe->OptionalHeader.SizeOfImage;
+        const auto imports = pe->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        if (!imports.VirtualAddress) continue;
+        if (imports.VirtualAddress >= size || imports.Size > size - imports.VirtualAddress)
+            throw std::runtime_error("Loaded media DLL import table exceeds its mapped image");
+        const auto* entry = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + imports.VirtualAddress);
+        for (std::size_t offset = 0; offset + sizeof(*entry) <= imports.Size; offset += sizeof(*entry),++entry) {
+            if (!entry->FirstThunk) break;
+            if (entry->FirstThunk >= size) throw std::runtime_error("Loaded media DLL has an invalid import address table");
+            const auto* thunk = reinterpret_cast<const IMAGE_THUNK_DATA*>(base + entry->FirstThunk);
+            const auto count = (size - entry->FirstThunk) / sizeof(*thunk);
+            for (std::size_t item = 0; item < count && thunk[item].u1.Function; ++item) {
+                HMODULE dependency = nullptr;
+                if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(thunk[item].u1.Function),&dependency))
+                    throw std::runtime_error("Could not resolve actual loaded media dependency");
+                if (std::find(visited.begin(),visited.end(),dependency) != visited.end()) continue;
+                visited.push_back(dependency);
+                const auto file = modulePath(dependency);
+                const auto bytes = file.filename().u8string();
+                std::string name(bytes.begin(),bytes.end());
+                std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                const auto& full = file.native();
+                const bool system = full.size() > windowsPrefix.size() && CompareStringOrdinal(full.c_str(),static_cast<int>(windowsPrefix.size()),
+                    windowsPrefix.c_str(),static_cast<int>(windowsPrefix.size()),TRUE) == CSTR_EQUAL;
+                // Do not treat third-party codec DLLs as OS libraries merely
+                // because someone installed them below the Windows directory.
+                const bool externalCodec = name.starts_with("lib") || name.find("openh264") != std::string::npos ||
+                    name.find("kvazaar") != std::string::npos || name.find("aom") != std::string::npos ||
+                    name.find("dav1d") != std::string::npos || name.find("x264") != std::string::npos ||
+                    name.find("x265") != std::string::npos || name.find("vpx") != std::string::npos;
+                if (system && !externalCodec) continue;
+                SourceLease lease(file);
+                const auto binary = lease.fingerprint(stop);
+                if (dependencies.contains(name)) throw std::runtime_error("Ambiguous loaded media dependency basename");
+                dependencies[name] = {{"binarySha256",binary.sha256},{"binarySize",binary.size}};
+                modules.push_back(dependency);
+            }
+        }
+    }
+    return Json{{"schemaVersion",2},{"writerAlgorithm",writerAlgorithm},
+        {"writerSourceSha256",RIFELOVE_WRITER_SOURCE_SHA256},{"libraries",libraries},{"dependencies",dependencies},
+        {"processingPipeline",Json::parse(detail::processingPipelineIdentityJson)}}.dump();
+}
+
+void CheckpointArtifacts::requireMediaPipelineIdentity(const std::string& saved, const std::string& expected) {
+    const auto actual = Json::parse(saved), wanted = Json::parse(expected);
+    const auto require = [](const Json& manifest, const char* kind) -> const Json& {
+        if (!manifest.is_object() || !manifest.contains("mediaPipelineIdentity"))
+            throw std::logic_error(std::string(kind) + " checkpoint has no content-verified FFmpeg/writer identity; preserved files cannot be safely resumed. Restart with a new output path.");
+        const auto& identity = manifest.at("mediaPipelineIdentity");
+        if (!identity.is_object() || identity.size() != 6 || identity.value("schemaVersion",0) != 2 ||
+            !identity.contains("writerAlgorithm") || !identity.at("writerAlgorithm").is_string() || identity.at("writerAlgorithm").get<std::string>().empty() ||
+            !identity.contains("libraries") || !identity.at("libraries").is_object() || identity.at("libraries").size() != 4)
+            throw std::logic_error(std::string(kind) + " checkpoint media/processing identity is incomplete or unsupported; preserved files require a new output job.");
+        const auto digest = [](const Json& value) {
+            if (!value.is_string()) return false;
+            const auto text = value.get<std::string>();
+            return text.size() == 64 && std::all_of(text.begin(),text.end(),[](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+        };
+        if (!identity.contains("writerSourceSha256") || !digest(identity.at("writerSourceSha256")))
+            throw std::logic_error("Checkpoint writer source identity is missing or malformed; preserved files require a new output job.");
+        if (!identity.contains("processingPipeline") || !identity.at("processingPipeline").is_object())
+            throw std::logic_error("Checkpoint processing pipeline identity is missing; preserved files require a new output job.");
+        const auto& pipeline = identity.at("processingPipeline");
+        if (pipeline.size() != 5 || pipeline.value("schemaVersion",0) != 1 ||
+            !pipeline.contains("algorithmVersion") || !pipeline.at("algorithmVersion").is_string() || pipeline.at("algorithmVersion").get<std::string>().empty() ||
+            !pipeline.contains("sourceSha256") || !digest(pipeline.at("sourceSha256")) ||
+            !pipeline.contains("sourceFiles") || !pipeline.at("sourceFiles").is_object() || pipeline.at("sourceFiles").empty() ||
+            !pipeline.contains("build") || !pipeline.at("build").is_object())
+            throw std::logic_error("Checkpoint processing source/algorithm proof is malformed; preserved files require a new output job.");
+        std::string canonical = "algorithm=" + pipeline.at("algorithmVersion").get<std::string>() + "\n";
+        for (const auto& [name,hash] : pipeline.at("sourceFiles").items()) {
+            if (name.empty() || name.front() == '/' || name.find('\\') != std::string::npos || name.find(':') != std::string::npos ||
+                name.find("..") != std::string::npos || name.find('\n') != std::string::npos || name.find('=') != std::string::npos || !digest(hash))
+                throw std::logic_error("Checkpoint controlled source entry is malformed; preserved files require a new output job.");
+            canonical += name + "=" + hash.get<std::string>() + "\n";
+        }
+        if (inference::sha256(std::as_bytes(std::span(canonical))) != pipeline.at("sourceSha256").get<std::string>())
+            throw std::logic_error("Checkpoint processing source manifest digest is invalid; preserved files require a new output job.");
+        const auto& build = pipeline.at("build");
+        if (build.size() != 5 || !build.contains("compilerId") || !build.at("compilerId").is_string() || build.at("compilerId").get<std::string>().empty() ||
+            !build.contains("compilerVersion") || !build.at("compilerVersion").is_string() || build.at("compilerVersion").get<std::string>().empty() ||
+            !build.contains("buildType") || !build.at("buildType").is_string() || build.at("buildType").get<std::string>().empty() ||
+            !build.contains("cxxFlagsSha256") || !digest(build.at("cxxFlagsSha256")) || build.value("cxxStandard",0) != 20)
+            throw std::logic_error("Checkpoint processing build contract is malformed; preserved files require a new output job.");
+        if (!identity.contains("dependencies") || !identity.at("dependencies").is_object())
+            throw std::logic_error("Checkpoint linked media dependency identity is missing; preserved files require a new output job.");
+        for (const auto& [name,library] : identity.at("dependencies").items()) {
+            if (name.empty() || name.find_first_of("/\\:") != std::string::npos || !library.is_object() || library.size() != 2 ||
+                !library.contains("binarySha256") || !digest(library.at("binarySha256")) ||
+                !library.contains("binarySize") || !library.at("binarySize").is_number_unsigned() || library.at("binarySize").get<std::uint64_t>() == 0)
+                throw std::logic_error("Checkpoint linked codec DLL identity is malformed; preserved files require a new output job.");
+        }
+        for (const auto* name : {"avcodec","avformat","avutil","swscale"}) {
+            const auto& libraries = identity.at("libraries");
+            if (!libraries.contains(name)) throw std::logic_error("Checkpoint media DLL identity is missing; preserved files require a new output job.");
+            const auto& library = libraries.at(name);
+            if (!library.is_object() || library.size() != 4 || !library.contains("binarySha256") || !digest(library.at("binarySha256")) ||
+                !library.contains("configurationSha256") || !digest(library.at("configurationSha256")) ||
+                !library.contains("binarySize") || !library.at("binarySize").is_number_unsigned() || library.at("binarySize").get<std::uint64_t>() == 0 ||
+                !library.contains("version") || !library.at("version").is_number_unsigned() || library.at("version").get<std::uint64_t>() == 0)
+                throw std::logic_error("Checkpoint media DLL identity is malformed; preserved files require a new output job.");
+        }
+        return identity;
+    };
+    const auto& a = require(actual,"Saved");
+    const auto& b = require(wanted,"Current");
+    if (a.at("processingPipeline") != b.at("processingPipeline"))
+        throw std::logic_error("Processing pipeline source/headers, algorithm or build contract changed; checkpoint files were preserved. Restart with a new output path.");
+    if (a.at("writerAlgorithm") != b.at("writerAlgorithm") || a.at("writerSourceSha256") != b.at("writerSourceSha256"))
+        throw std::logic_error("Writer color/scaling algorithm changed; checkpoint files were preserved. Restart with a new output path.");
+    for (const auto* name : {"avcodec","avformat","avutil","swscale"})
+        if (a.at("libraries").at(name) != b.at("libraries").at(name))
+            throw std::logic_error(std::string("Loaded FFmpeg ") + name + " content/build changed; checkpoint files were preserved. Restart with a new output path.");
+    if (a.at("dependencies") != b.at("dependencies"))
+        throw std::logic_error("Linked external codec/media DLL content changed; checkpoint files were preserved. Restart with a new output path.");
 }
 
 } // namespace rifelove::application

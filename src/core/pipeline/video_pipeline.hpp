@@ -4,6 +4,7 @@
 #include "interpolation/scene_analysis.hpp"
 #include "media/video_writer.hpp"
 #include "restoration/video_restoration_backend.hpp"
+#include "restoration/noise_estimate.hpp"
 
 #include <functional>
 #include <cmath>
@@ -59,6 +60,10 @@ struct PipelineSettings {
     // reused only with the same conditioning; it is not a generic quality or
     // compression-restoration setting.
     float temporalDenoiseSigma255 = 25.0F;
+    // Experimental opt-in, persisted by job schema 9. Checkpoints bind the
+    // analyzer/settings/replay-policy identity and rebuild its state by
+    // decoding the original software source timeline from the beginning.
+    std::optional<restoration::AutomaticDenoiseSettings> automaticTemporalDenoise;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     // Runtime-only queue integration. It is intentionally omitted from the
     // serialized user job configuration.
@@ -152,6 +157,10 @@ struct PipelineResult {
     std::string temporalRestorationFallbackReason;
     int temporalRestorationScaleNumerator = 1;
     int temporalRestorationScaleDenominator = 1;
+    bool automaticTemporalDenoiseActive = false;
+    std::size_t automaticDenoiseAnalyzedFrames = 0;
+    std::size_t automaticDenoiseConfidentFrames = 0;
+    std::size_t automaticDenoiseAppliedFrames = 0;
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;

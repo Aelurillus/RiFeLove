@@ -32,7 +32,16 @@ public:
     [[nodiscard]] static media::VideoSegmentContract parseContract(const std::string& json);
     // Schema 1 checkpoints predate adapter identity. They may be upgraded in
     // memory only as the built-in RIFE SDR adapter; custom identities fail closed.
+    // That historical job migration alone cannot establish current media proof:
+    // the queue additionally requires mediaPipelineIdentity before reuse.
     [[nodiscard]] static bool manifestMatches(const std::string& saved, const std::string& expected);
+    // Content identity of the actual loaded FFmpeg DLLs, writer algorithm and
+    // reviewed production sources/headers/build contract. Paths are relative
+    // source inventory keys; installation paths are never identity inputs.
+    [[nodiscard]] static std::string mediaPipelineIdentity(std::stop_token stop = {});
+    // Require this current identity before verifying/reusing or removing any
+    // recorded artifacts. Legacy version-only evidence is insufficient.
+    static void requireMediaPipelineIdentity(const std::string& saved, const std::string& expected);
 
 private:
     void ensureDirectory() const;

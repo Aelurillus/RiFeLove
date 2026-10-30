@@ -154,6 +154,38 @@ TEST(TaskStore, ConfiguredRecoveryIncludesPausedAndDoesNotModifyLegacyWorkers) {
     EXPECT_THROW(store.transition(id,rifelove::TaskState::queued),std::logic_error);
 }
 
+TEST(TaskStore, WorkerAbortInterruptsOnlyItsActiveTaskAndRetainsRecoveryEvidence) {
+    TemporaryDatabase database;
+    rifelove::TaskStore store(database.path.string());
+    const auto ids = store.createConfigured({{"source-a","out-a","{}"},{"source-b","out-b","{}"},{"source-c","out-c","{}"}});
+    store.transition(ids[0],rifelove::TaskState::running);
+    store.saveIdentity(ids[0],"{\"identity\":true}");
+    store.saveProgress(ids[0],"{\"frames\":64}");
+    store.setCheckpointManifest(ids[0],"{\"schemaVersion\":1}");
+    store.recordCheckpointSegment(ids[0],{0,0,64,"segment.mkv",std::string(64,'a'),1024,"{\"frames\":64}"});
+    store.saveOutputPublicationIntent(ids[0],std::string(64,'b'),4096,"{\"outputFrames\":64}");
+    store.transition(ids[0],rifelove::TaskState::paused);
+    store.transition(ids[2],rifelove::TaskState::running);
+    store.finish(ids[2],rifelove::TaskState::completed,"{\"outputFrames\":1}");
+
+    EXPECT_TRUE(store.interruptActive(ids[0],"terminal database write failed"));
+    EXPECT_FALSE(store.interruptActive(ids[0],"must not replace the original diagnostic"));
+    EXPECT_FALSE(store.interruptActive(ids[1],"queued task must remain pending"));
+    EXPECT_FALSE(store.interruptActive(ids[2],"completed task must remain complete"));
+    EXPECT_FALSE(store.interruptActive("missing","unknown task"));
+    const auto rows = store.configured();
+    ASSERT_EQ(rows.size(),3U);
+    EXPECT_EQ(rows[0].task.state,rifelove::TaskState::interrupted);
+    EXPECT_EQ(rows[0].task.error,"terminal database write failed");
+    EXPECT_EQ(rows[0].identity,"{\"identity\":true}");
+    EXPECT_EQ(rows[0].progress,"{\"frames\":64}");
+    EXPECT_EQ(store.checkpointSegments(ids[0]).size(),1U);
+    ASSERT_TRUE(store.outputPublicationIntent(ids[0]).has_value());
+    EXPECT_EQ(store.outputPublicationIntent(ids[0])->byteCount,4096U);
+    EXPECT_EQ(rows[1].task.state,rifelove::TaskState::queued);
+    EXPECT_EQ(rows[2].task.state,rifelove::TaskState::completed);
+}
+
 TEST(TaskStore, RollsBackWholeBatchWhenALaterDatabaseWriteFails) {
     TemporaryDatabase database;
     rifelove::TaskStore store(database.path.string());

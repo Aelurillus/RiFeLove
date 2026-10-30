@@ -1,8 +1,10 @@
 #include "application/job_serialization.hpp"
 #include "application/local_lease.hpp"
 #include "application/import_service.hpp"
+#include "application/task_queue.hpp"
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <sqlite3.h>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -11,6 +13,11 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "../integration/platform_import_test.hpp"
+
+TEST(BatchPlatformImport, PersistsPerSourcePortraitLandscapeFractionalRateAndSuperResolutionPolicy) {
+    rifelove::tests::platform_import::verifyPersistedPolicy();
+}
 
 TEST(BatchImportDimensions, ValidatesEachSourceAgainstTargetAndModelScale) {
     using rifelove::application::supportsImportOutputDimensions;
@@ -47,6 +54,50 @@ TEST(BatchPlatformBitrate, UsesEachSourceHeightAndTargetRate) {
     EXPECT_THROW(platformBitrateKbps(PlatformBitrate::youtube, 0, 60), std::invalid_argument);
     EXPECT_THROW(platformBitrateKbps(PlatformBitrate::youtube, 1080, 0), std::invalid_argument);
     EXPECT_THROW(platformOutputHeight(1080, 0, 2, 0), std::invalid_argument);
+}
+
+TEST(BatchPlatformBitrate, RoundsRationalRatesUpWithoutOverflowOrFallback) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    EXPECT_EQ(platformFrameRateCeiling(Rational(30000,1001)),30);
+    EXPECT_EQ(platformFrameRateCeiling(Rational(60000,1001)),60);
+    EXPECT_EQ(platformFrameRateCeiling(Rational(60001,1000)),61);
+    EXPECT_EQ(platformFrameRateCeiling(Rational(1,std::numeric_limits<std::int64_t>::max())),1);
+    EXPECT_EQ(platformFrameRateCeiling(Rational(std::numeric_limits<std::int64_t>::max(),
+        std::numeric_limits<std::int64_t>::max() - 1)),2);
+    EXPECT_EQ(platformFrameRateCeiling(Rational(std::numeric_limits<int>::max())),std::numeric_limits<int>::max());
+    EXPECT_THROW(platformFrameRateCeiling(Rational(0)),std::invalid_argument);
+    EXPECT_THROW(platformFrameRateCeiling(Rational(-1)),std::invalid_argument);
+    EXPECT_THROW(platformFrameRateCeiling(Rational(static_cast<std::int64_t>(std::numeric_limits<int>::max()) + 1)),std::invalid_argument);
+    EXPECT_THROW(platformGopSizeFrames(PlatformBitrate::localQuality,std::numeric_limits<int>::max()),std::invalid_argument);
+    EXPECT_EQ(platformGopSizeFrames(PlatformBitrate::youtube,std::numeric_limits<int>::max()),1073741824);
+}
+
+TEST(BatchPlatformBitrate, UsesActualShortEdgeForPortraitLandscapeScaleAndExplicitTargets) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    for (const auto rate : {Rational(30000,1001),Rational(60000,1001)}) {
+        const bool high = rate > Rational(30);
+        for (const auto profile : {PlatformBitrate::youtube,PlatformBitrate::localQuality}) {
+            const auto landscape = platformExportSettings(profile,rate,1920,1080);
+            const auto portrait = platformExportSettings(profile,rate,1080,1920);
+            EXPECT_EQ(landscape.bitRateKbps,profile == PlatformBitrate::youtube ? (high ? 12000 : 8000) : 20000);
+            EXPECT_EQ(portrait.bitRateKbps,landscape.bitRateKbps);
+            EXPECT_EQ(portrait.gopSizeFrames,profile == PlatformBitrate::youtube ? (high ? 30 : 15) : (high ? 120 : 60));
+            const auto scaled = platformExportSettings(profile,rate,1080,1920,0,0,2,1);
+            EXPECT_EQ(scaled.outputWidth,2160); EXPECT_EQ(scaled.outputHeight,3840);
+            EXPECT_EQ(scaled.bitRateKbps,profile == PlatformBitrate::youtube ? (high ? 68000 : 45000) : 70000);
+            const auto explicitTarget = platformExportSettings(profile,rate,1080,1920,1440,2560,2,1);
+            EXPECT_EQ(explicitTarget.outputWidth,1440); EXPECT_EQ(explicitTarget.outputHeight,2560);
+            EXPECT_EQ(explicitTarget.bitRateKbps,profile == PlatformBitrate::youtube ? (high ? 24000 : 16000) : 40000);
+        }
+    }
+    EXPECT_THROW(platformExportSettings(PlatformBitrate::youtube,Rational(60),1920,1080,0,1440),std::invalid_argument);
+    EXPECT_THROW(platformExportSettings(PlatformBitrate::youtube,Rational(60),1920,1080,2560,0),std::invalid_argument);
+    EXPECT_THROW(platformExportSettings(PlatformBitrate::youtube,Rational(60),0,1080),std::invalid_argument);
+    EXPECT_THROW(platformExportSettings(PlatformBitrate::youtube,Rational(60),1920,1081,0,0,1,2),std::invalid_argument);
+    EXPECT_THROW(platformExportSettings(PlatformBitrate::youtube,Rational(60),std::numeric_limits<int>::max(),1080,0,0,2,1),std::invalid_argument);
+    EXPECT_THROW(platformExportSettings(PlatformBitrate::unchanged,Rational(60),1920,1080),std::invalid_argument);
 }
 
 namespace {
@@ -92,6 +143,38 @@ TEST(ProcessingConfiguration, RoundTripsAllAdvancedSettingsAndPinnedIdentity) {
     EXPECT_EQ(restored.settings.encoding.outputHeight,1440);
     EXPECT_EQ(restored.settings.encoding.encoderOptions.at("preset"),"p5"); EXPECT_EQ(restored.settings.encoding.maxBFrames,3);
 }
+
+TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentParameters) {
+    auto job = configuredJob();
+    job.settings.automaticTemporalDenoise = rifelove::restoration::AutomaticDenoiseSettings{-0.25,0.7,12.0,0.8};
+    const auto encoded = serializeJob(job);
+    const auto document = nlohmann::json::parse(encoded);
+    EXPECT_EQ(document.at("schemaVersion"),9);
+    EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),1);
+    EXPECT_EQ(document.at("automaticTemporalDenoise").at("replayPolicy"),"software-source-pts-from-start-v1");
+    const auto restored = parseJob(job.source,job.output,encoded);
+    ASSERT_TRUE(restored.settings.automaticTemporalDenoise);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->relativeAdjustment,-0.25);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->smoothingSeconds,0.7);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->maximumSigmaChangePerSecond,12.0);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->minimumConfidence,0.8);
+    EXPECT_EQ(serializeJob(restored),encoded);
+    for (const auto* field : {"algorithmVersion","replayPolicy","relativeAdjustment","smoothingSeconds","maximumSigmaChangePerSecond","minimumConfidence"}) {
+        auto bad = document; bad["automaticTemporalDenoise"].erase(field);
+        EXPECT_ANY_THROW((void)parseJob(job.source,job.output,bad.dump()));
+    }
+    auto bad = document; bad["automaticTemporalDenoise"]["algorithmVersion"] = 2;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["automaticTemporalDenoise"]["replayPolicy"] = "seek-to-last-frame";
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["automaticTemporalDenoise"]["relativeAdjustment"] = 1.1;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    auto legacy = nlohmann::json::parse(serializeJob(configuredJob()));
+    legacy["schemaVersion"] = 8; legacy.erase("automaticTemporalDenoise");
+    const auto fixed = parseJob(job.source,job.output,legacy.dump());
+    EXPECT_FALSE(fixed.settings.automaticTemporalDenoise);
+    EXPECT_FLOAT_EQ(fixed.settings.temporalDenoiseSigma255,17.5F);
+}
 TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThresholds) {
     const auto job = configuredJob(); auto json = nlohmann::json::parse(serializeJob(job));
     json.erase("sourceDurationEstimate");
@@ -112,6 +195,8 @@ TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThreshold
     bad = job; bad.settings.motionBlur.sampleCount = 17; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.temporalDenoiseSigma255 = 4.9F; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.temporalDenoiseSigma255 = 55.1F; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.automaticTemporalDenoise.emplace(); bad.settings.automaticTemporalDenoise->minimumConfidence = -0.1;
+    EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.expectedTemporalRestorationDescriptorSha256.clear(); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.temporalRestorationModelDirectory.clear(); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.encoding.frameRate = Rational(24); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
@@ -342,4 +427,57 @@ TEST(SourceLease, HashesWithBoundedReadsAndPreventsConcurrentWrites) {
         }
         EXPECT_TRUE(std::filesystem::remove(file));
     } catch (...) { std::filesystem::remove(file); throw; }
+}
+
+TEST(TaskQueue, FailedTerminalWriteDoesNotStrandAnActiveTaskUntilRestart) {
+    const auto directory = std::filesystem::temp_directory_path() / ("rifelove-queue-abort-" + std::to_string(std::random_device{}()));
+    ASSERT_TRUE(std::filesystem::create_directory(directory));
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove_all(path,error); } } cleanup{directory};
+    const auto database = directory / "queue.sqlite";
+    std::vector<std::string> ids;
+    {
+        TaskStore seed(database.string());
+        // Invalid configuration fails before any media/model/GPU operation.
+        ids = seed.createConfigured({{"source-a","out-a","{}"},{"source-b","out-b","{}"}});
+    }
+    sqlite3* injected = nullptr;
+    ASSERT_EQ(sqlite3_open(database.string().c_str(),&injected),SQLITE_OK);
+    const auto status = sqlite3_exec(injected,
+        "CREATE TRIGGER reject_terminal_write BEFORE UPDATE ON tasks WHEN NEW.state IN ('completed','failed','cancelled') "
+        "BEGIN SELECT RAISE(ABORT,'injected terminal write failure'); END",nullptr,nullptr,nullptr);
+    sqlite3_close(injected);
+    ASSERT_EQ(status,SQLITE_OK);
+
+    TaskQueue queue(database);
+    bool drained = false;
+    std::string queueError;
+    ASSERT_TRUE(queue.start([&](QueueEvent event) {
+        if (event.drained) { drained = true; queueError = std::move(event.queueError); }
+    }));
+    queue.wait();
+    EXPECT_TRUE(drained);
+    EXPECT_FALSE(queue.busy());
+    EXPECT_NE(queueError.find("injected terminal write failure"),std::string::npos);
+    const auto aborted = queue.list();
+    ASSERT_EQ(aborted.size(),2U);
+    EXPECT_EQ(aborted[0].task.id,ids[0]);
+    EXPECT_EQ(aborted[0].task.state,TaskState::interrupted);
+    EXPECT_NE(aborted[0].task.error.find("terminal state was saved"),std::string::npos);
+    EXPECT_EQ(aborted[1].task.state,TaskState::queued);
+
+    ASSERT_EQ(sqlite3_open(database.string().c_str(),&injected),SQLITE_OK);
+    const auto dropStatus = sqlite3_exec(injected,"DROP TRIGGER reject_terminal_write",nullptr,nullptr,nullptr);
+    sqlite3_close(injected);
+    ASSERT_EQ(dropStatus,SQLITE_OK);
+    drained = false;
+    ASSERT_TRUE(queue.start([&](QueueEvent event) {
+        if (event.drained) { drained = true; queueError = std::move(event.queueError); }
+    }));
+    queue.wait();
+    EXPECT_TRUE(drained);
+    EXPECT_TRUE(queueError.empty());
+    const auto continued = queue.list();
+    ASSERT_EQ(continued.size(),2U);
+    EXPECT_EQ(continued[0].task.state,TaskState::interrupted);
+    EXPECT_EQ(continued[1].task.state,TaskState::failed);
 }

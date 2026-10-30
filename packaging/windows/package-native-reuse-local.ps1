@@ -3,13 +3,22 @@ param(
     [string]$SourceDirectory = "",
     [string]$BuildDirectory = "",
     [string]$OutputDirectory = "",
-    [string]$TemporalRestorationModelDirectory = ""
+    [string]$TemporalRestorationModelDirectory = "",
+    # Explicitly restage only differing FFmpeg DLLs from the selected build's
+    # SDK. Source/model/inference files remain verified, immutable hard links.
+    [switch]$RefreshFfmpegRuntime,
+    # Create a new explicitly portable package with a permanent, checksummed
+    # marker and empty independent data directory, suitable for isolated QA.
+    [switch]$PortableMode
 )
 
 # Local preview only. Hard links save space on the same NTFS volume. The new
 # names remain usable if the old directory is removed, but modifying the linked
 # files in place changes both previews; the checksum manifest detects that.
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "ffmpeg-sdk-helpers.ps1")
+. (Join-Path $PSScriptRoot "native-package-options.ps1")
+. (Join-Path $PSScriptRoot "native-build-dependencies.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
 if (-not $SourceDirectory) { $SourceDirectory = Join-Path $outputRoot "RifeLoveNative-local-nvenc" }
@@ -25,6 +34,7 @@ if (-not $source.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase) 
     [string]::Equals($source, $target, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Source and new output must be distinct directories inside the repository out directory."
 }
+Assert-NativePackageDirectoriesDisjoint -SourceDirectory $source -OutputDirectory $target
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Source package is missing: $source" }
 if (Test-Path -LiteralPath $target) { throw "Refusing to overwrite an existing package: $target" }
 foreach ($directory in @($outputRoot, $source, $build)) {
@@ -155,6 +165,14 @@ function Read-FfmpegSdkIdentity([string]$BuildPath, [string]$FfmpegPath) {
     if (-not [string]::Equals($cacheRoot, $selectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw "打包拒绝：CMakeCache 的 RIFELOVE_FFMPEG_ROOT 与复用包 FFmpeg 根目录不一致。CMake=$cacheRoot；复用包=$selectedRoot"
     }
+    $linkInputs = Assert-FfmpegBuildLinkIdentity -BuildDirectory $BuildPath -SdkRoot $selectedRoot
+    foreach ($entry in @(@('RIFELOVE_FFMPEG_TOOL','ffmpeg.exe'), @('RIFELOVE_FFPROBE_TOOL','ffprobe.exe'))) {
+        $cachedTool = Resolve-RepositoryPath (Read-CMakeCacheValue $cachePath $entry[0])
+        $expectedTool = Normalize-ComparablePath (Join-Path $selectedRoot "bin/$($entry[1])")
+        if (-not [string]::Equals($cachedTool,$expectedTool,[StringComparison]::OrdinalIgnoreCase)) {
+            throw "Reuse refused: $($entry[0]) does not point to the selected SDK. Reconfigure both FFmpeg/ffprobe tool cache paths explicitly."
+        }
+    }
 
     $manifestValue = Read-CMakeCacheValue $cachePath "RIFELOVE_FFMPEG_SDK_MANIFEST"
     if ([string]::IsNullOrWhiteSpace($manifestValue)) {
@@ -200,6 +218,8 @@ function Read-FfmpegSdkIdentity([string]$BuildPath, [string]$FfmpegPath) {
         nvencApiMinor = $minor
         nvencMinimumWindowsDriver = $minimumDriver
         root = $selectedRoot
+        configuration = (Read-FfmpegBuildConfiguration $selectedRoot)
+        linkInputs = $linkInputs
     }
 }
 
@@ -213,7 +233,26 @@ if ($manifest.packageKind -ne "local-native-windows-x64" -or $manifest.qtInclude
     throw "Source package is not the expected local, non-Qt desktop bundle."
 }
 if ([string]::IsNullOrWhiteSpace([string]$manifest.ffmpeg.root)) { throw "Source package has no FFmpeg SDK root; rebuild a full package first." }
-$ffmpegSdk = Read-FfmpegSdkIdentity $build ([string]$manifest.ffmpeg.root)
+$ffmpegSdk = Read-FfmpegSdkIdentity $build $(if ($RefreshFfmpegRuntime) { 'local-sdk:ffmpeg' } else { [string]$manifest.ffmpeg.root })
+if ($null -eq $manifest.ffmpeg.binaries -or @($manifest.ffmpeg.binaries).Count -eq 0) {
+    throw "Source package has no FFmpeg runtime DLL list; create a full package first."
+}
+# A source lock identifies input versions, not the compiled configuration. Both
+# baseline and x86asm builds share it, so verify the actual reused DLL bytes.
+$ffmpegFiles = @($manifest.ffmpeg.binaries)
+$ffmpegRuntimeHashes = Assert-FfmpegRuntimeIdentity -SdkRoot $ffmpegSdk.root -RuntimeDirectory $build -FileNames $ffmpegFiles
+$ffmpegRefreshPlan = Get-FfmpegRuntimeRefreshPlan -SdkRoot $ffmpegSdk.root -SourceDirectory $source -FileNames $ffmpegFiles
+$refreshedFfmpegFiles = @{}
+if ($RefreshFfmpegRuntime) {
+    $supportedFiles = @('avcodec-62.dll','avformat-62.dll','avutil-60.dll','swresample-6.dll','swscale-9.dll','avfilter-11.dll','avdevice-62.dll','libaom.dll','libkvazaar.dll','libopenh264-8.dll')
+    if ($ffmpegFiles.Count -ne $supportedFiles.Count -or (Compare-Object ($supportedFiles | Sort-Object) ($ffmpegFiles | Sort-Object))) {
+        throw "SDK refresh supports only the complete reviewed FFmpeg 8.1.3 DLL inventory; create a full package for changed dependency versions."
+    }
+    if (-not $manifest.ffmpeg.ContainsKey('sdkManifest')) { throw "SDK refresh requires recorded source lock identity; create a full package first." }
+    foreach ($entry in $ffmpegRefreshPlan.files) { if ($entry.replace) { $refreshedFfmpegFiles[$entry.name] = $entry.selectedSha256 } }
+} else {
+    $null = Assert-FfmpegRuntimeIdentity -SdkRoot $ffmpegSdk.root -RuntimeDirectory $source -FileNames $ffmpegFiles
+}
 if ($manifest.ffmpeg.ContainsKey("sdkManifest")) {
     $recordedSdk = $manifest.ffmpeg.sdkManifest
     if ($recordedSdk -isnot [System.Collections.IDictionary]) { throw "Source package FFmpeg SDK manifest is invalid; rebuild a full package first." }
@@ -319,6 +358,13 @@ foreach ($relative in $expected.Keys) {
     if (-not (Test-Path -LiteralPath (Resolve-ManifestPath $relative) -PathType Leaf)) { throw "Source checksum file is missing: $relative" }
 }
 
+# A source package's own checksums do not bind it to this build. Compare its
+# complete ORT/TRT/CUDA DLL inventory and version sidecar to the build reference.
+Assert-NativeInferenceRuntimeIdentity ([pscustomobject]@{
+    cache = (Read-NativePackageBuildCache $build)
+    inferenceRuntimeDirectory = (Join-Path $source 'runtime')
+})
+
 $objdump = (Get-Command llvm-objdump.exe -ErrorAction Stop).Source
 function Get-Imports([string]$binary) {
     return @(& $objdump -p $binary | ForEach-Object {
@@ -335,6 +381,28 @@ if (Compare-Object -ReferenceObject $recordedImports -DifferenceObject $newImpor
     throw "New executable imports differ from the recorded dependency list."
 }
 if ($newImports | Where-Object { $_ -match '(?i)^qt|qml' }) { throw "New executable imports Qt/QML." }
+foreach ($name in @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')) {
+    $selectedCompilerRuntime = Join-Path $build $name
+    $sourceCompilerRuntime = Join-Path $source $name
+    if (-not (Test-Path -LiteralPath $selectedCompilerRuntime -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $sourceCompilerRuntime -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $selectedCompilerRuntime -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath $sourceCompilerRuntime -Algorithm SHA256).Hash) {
+        throw "Compiler runtime identity differs for ${name}; create a full package instead of reusing incompatible DLLs."
+    }
+}
+$dependencyImports = Get-Content -Raw -LiteralPath (Join-Path $source 'dependency-imports.json') | ConvertFrom-Json -AsHashtable
+$dependencyImports.native = $newImports
+$dependencyImports.ffmpeg = [ordered]@{}
+foreach ($name in $ffmpegFiles) {
+    $selectedImports = @(Get-Imports (Join-Path $ffmpegSdk.root "bin/$name"))
+    $sourceImports = @(Get-Imports (Join-Path $source $name))
+    if ($selectedImports.Count -eq 0 -or (Compare-Object $sourceImports $selectedImports)) {
+        throw "Selected FFmpeg DLL dependencies differ for ${name}; create a full package instead of a configuration refresh."
+    }
+    $dependencyImports.ffmpeg[$name] = $selectedImports
+}
+Write-Output "FFmpeg refresh plan: $($refreshedFfmpegFiles.Count) changed DLLs; $($ffmpegRefreshPlan.replacementBytes) bytes; verified models/inference runtime remain hard linked."
 
 $stage = "$target.staging-$([guid]::NewGuid().ToString('N'))"
 if (-not $stage.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Invalid staging path." }
@@ -342,10 +410,12 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($source.Length).TrimStart('\', '/').Replace('\', '/')
-        if ($relative -in @("SHA256SUMS.txt", "PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "portable.flag")) { continue }
+        if ($relative -in @("SHA256SUMS.txt", "PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "dependency-imports.json", "portable.flag", "portable-mode.txt")) { continue }
         if ($relative -match '(?i)(^|/)qt|qml|(^|/)rifelove-cli(\.exe)?$') { throw "Unexpected Qt or CLI artifact: $relative" }
         $destination = Join-Path $stage ($relative.Replace('/', '\'))
-        New-HardLinkChecked $file.FullName $destination
+        if ($refreshedFfmpegFiles.ContainsKey($relative)) {
+            Copy-Item -LiteralPath (Join-Path $ffmpegSdk.root "bin/$relative") -Destination $destination
+        } else { New-HardLinkChecked $file.FullName $destination }
     }
     if (-not $temporalInSource) {
         foreach ($file in $temporalPack.files) {
@@ -355,7 +425,9 @@ try {
         New-HardLinkChecked $temporalPack.licensePath (Join-Path $stage "licenses/Model-fastdvdnet-clipped-five-frame-sdr8-eval-LICENSE.txt")
     }
     New-Item -ItemType Directory -Path (Join-Path $stage "data") | Out-Null
+    $dataMode = Initialize-NativePackageDataMode -PackageRoot $stage -PortableMode:$PortableMode
     Copy-Item -LiteralPath $exe -Destination (Join-Path $stage "RifeLoveNative.exe")
+    $dependencyImports | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $stage 'dependency-imports.json') -Encoding utf8NoBOM
 
     $defaultsPath = Join-Path $source "config/defaults.json"
     if (-not (Test-Path -LiteralPath $defaultsPath -PathType Leaf)) { throw "Source package defaults are missing: $defaultsPath" }
@@ -363,7 +435,10 @@ try {
     $defaults["temporalRestorationModelDirectory"] = $temporalRelative
     $defaults["temporalRestorationDefaultEnabled"] = $false
     $defaults["temporalRestorationMode"] = "experimental-optional"
-    $defaults["dataDirectory"] = '%LOCALAPPDATA%\RifeLove'
+    $defaults["ffmpeg"] = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm enabled=$($ffmpegSdk.configuration.x86asmEnabled); workload-specific throughput requires validation"
+    $defaults["dataDirectory"] = $dataMode.dataDirectory
+    $defaults["defaultDataDirectory"] = $dataMode.defaultDataDirectory
+    $defaults["portableModeEnabled"] = $dataMode.portableModeEnabled
     $defaults["portableDataDirectory"] = "data"
     $defaults["portableModeMarker"] = "portable-mode.txt"
     $defaults["portableModeMarkerValue"] = "RifeLovePortable 1"
@@ -398,38 +473,54 @@ try {
     $manifest.inferenceRuntime.providers = @("TensorRT", "CUDA", "CPU-fallback")
     $manifest.temporalRestorationDefaultEnabled = $false
     $manifest.storage = "local-only; no Alibaba OSS"
-    $manifest.dataDirectory = '%LOCALAPPDATA%\RifeLove'
+    $manifest.dataDirectory = $dataMode.dataDirectory
+    $manifest.defaultDataDirectory = $dataMode.defaultDataDirectory
+    $manifest.portableModeEnabled = $dataMode.portableModeEnabled
+    $manifest.portableModeMarkerIncluded = $dataMode.markerIncluded
+    $manifest.packagedDataState = $dataMode.dataState
     $manifest.portableDataDirectory = "data"
     $manifest.portableModeMarker = "portable-mode.txt"
     $manifest.portableModeMarkerValue = "RifeLovePortable 1"
     $manifest.ffmpeg.root = "local-sdk:ffmpeg"
     $manifest.ffmpeg.source = "local SDK selected by the native build"
+    $manifest.ffmpeg.configuration = $ffmpegSdk.configuration
+    $manifest.ffmpeg.linkInputs = $ffmpegSdk.linkInputs
+    $manifest.ffmpeg.runtimeSha256 = $ffmpegRuntimeHashes
+    $manifest.ffmpeg.configurationRefresh = [ordered]@{ requested = [bool]$RefreshFfmpegRuntime; replacedFiles = @($refreshedFfmpegFiles.Keys | Sort-Object); addedRuntimeBytes = $ffmpegRefreshPlan.replacementBytes; sourceBundleUnchanged = $true }
+    $manifest.ffmpeg.x86asm = if ($ffmpegSdk.configuration.x86asmEnabled) { "enabled; end-to-end throughput remains workload-specific" } else { "disabled; CPU throughput remains unqualified" }
     $manifest.inferenceRuntime.source = "local TensorRT/ONNX Runtime CUDA SDK"
     $manifest.packageName = Split-Path -Leaf $target
     $manifest.generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $manifest.executableSha256 = (Get-FileHash -LiteralPath (Join-Path $stage "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest.ffmpeg.sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver }
-    $manifest.updatePolicy = "local preview; immutable dependencies share NTFS hard links with the source package; FastDVDnet is linked from the local model cache when absent"
+    $manifest.updatePolicy = "local preview; verified identical dependencies share NTFS hard links; explicit FFmpeg configuration refresh copies only changed SDK DLLs; source bundle is never modified"
     $manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $stage "PACKAGE-MANIFEST.json") -Encoding utf8NoBOM
+    $dataModeDescription = if ($PortableMode) {
+        '此包已显式启用便携模式：portable-mode.txt 为永久保留且纳入校验清单的 RifeLovePortable 1 标记。正常可写时，任务数据库与模型偏好使用本包独立的 data 目录；打包时该目录为空，不复制旧包或 Windows 用户目录的数据。请保留标记，并在界面详情中核对实际用户数据目录。现有程序若发现标记无效或 data 不可写，会回退到 Windows 用户数据目录；出现回退时不能将该次运行视为隔离验收。'
+    } else {
+        '此普通包未启用便携模式，未捆绑 portable-mode.txt。任务数据库与本机模型偏好使用 Windows 当前用户的 %LOCALAPPDATA%\RifeLove；本包 data 为空。需要专用隔离便携包时，请在新输出目录打包并显式传入 -PortableMode。'
+    }
     @"
 RifeLove 原生 Windows 本机预览
 
 双击 RifeLoveNative.exe。请保留此目录中的 runtime、models 和其他运行库。
 这是本机预览，不是完整产品或可公开再分发的安装包。包含本机模型中心与用户数据目录迁移；完整最终产品、长视频恢复和通用动态压缩/细节修复仍需继续验收。
-任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写；视频输出位置由用户选择。
-便携模式需在 EXE 同目录创建 portable-mode.txt，第一行为 RifeLovePortable 1，才会使用旁边的 data 目录。符合条件的旧 data 队列与偏好会安全迁移，原文件保留。
+$dataModeDescription
+视频输出位置由用户选择；此包不包含用户视频、队列、日志或模型偏好。
 高帧率与长视频仍需更广泛的兼容性验收；失败时不会发布未通过验证的输出。TensorRT 初次加载可能较慢。
+FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-256 记录在 PACKAGE-MANIFEST.json；复用包和新 EXE 旁的 FFmpeg DLL 必须与所选 SDK 逐字节匹配。
 默认使用 RIFE 4.25 插帧模型；Real-ESRGAN x2plus 超分可选，默认关闭。
 包内 FastDVDnet 五帧模型仅是 SDR8 实验性时序降噪模型，默认关闭；它可与超分同时选择，但不代表通用压缩修复、去模糊或细节增强能力。
 此目录与旧本机预览使用 NTFS 硬链接复用不可变依赖，删除旧目录不会使本目录失效；直接修改共享依赖会同时影响两个目录。
+本次 FFmpeg 配置刷新：$($refreshedFfmpegFiles.Count) 个不同 DLL 独立复制（$($ffmpegRefreshPlan.replacementBytes) 字节）；旧包文件不被覆盖，模型和推理运行库保留校验后的硬链接。
 模型、视频和任务留在本机；阿里云 OSS 已停用。模型及 NVIDIA 运行库的公开再分发许可仍需审核。
 "@ | Set-Content -LiteralPath (Join-Path $stage "README-本机原生包.txt") -Encoding utf8NoBOM
     $lines = @("RifeLove native local bundle SHA-256")
     foreach ($file in @(Get-SafeFiles $stage | Sort-Object FullName)) {
         $relative = $file.FullName.Substring($stage.Length).TrimStart('\', '/').Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        $knownHash = if ($expected.ContainsKey($relative)) { $expected[$relative] } elseif ($temporalAdditionalExpected.ContainsKey($relative)) { $temporalAdditionalExpected[$relative] } else { $null }
-        if ($relative -notin @("PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json") -and
+        $knownHash = if ($relative -ceq $dataMode.markerName) { $dataMode.markerSha256 } elseif ($refreshedFfmpegFiles.ContainsKey($relative)) { $refreshedFfmpegFiles[$relative] } elseif ($expected.ContainsKey($relative)) { $expected[$relative] } elseif ($temporalAdditionalExpected.ContainsKey($relative)) { $temporalAdditionalExpected[$relative] } else { $null }
+        if ($relative -notin @("PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "dependency-imports.json") -and
             ([string]::IsNullOrWhiteSpace($knownHash) -or $hash -ne $knownHash)) {
             throw "Linked dependency changed during packaging: $relative"
         }

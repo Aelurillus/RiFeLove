@@ -2,6 +2,10 @@
 #include "application/job_serialization.hpp"
 #include "application/task_queue.hpp"
 #include "media/video_writer.hpp"
+#include "media/ffmpeg_helpers.hpp"
+extern "C" {
+#include <libswscale/swscale.h>
+}
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -10,9 +14,20 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <span>
 #include <stdexcept>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace {
+void resealProcessingProof(nlohmann::json& pipeline) {
+    std::string canonical = "algorithm=" + pipeline.at("algorithmVersion").get<std::string>() + "\n";
+    for (const auto& [name,hash] : pipeline.at("sourceFiles").items()) canonical += name + "=" + hash.get<std::string>() + "\n";
+    pipeline["sourceSha256"] = rifelove::inference::sha256(std::as_bytes(std::span(canonical)));
+}
+
 class CheckpointFixture final {
 public:
     CheckpointFixture() {
@@ -94,6 +109,290 @@ TEST(CheckpointArtifacts, ContractRoundTripsExactRationalsAndColorExpectations) 
     EXPECT_EQ(restored.primaries,contract.primaries);
     EXPECT_EQ(restored.range,contract.range);
     EXPECT_THROW((void)rifelove::application::CheckpointArtifacts::parseContract("{\"schemaVersion\":2}"),std::invalid_argument);
+}
+
+TEST(MediaPipelineIdentity, HashesActualLoadedDllContentsAndWriterImplementation) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    const auto identity = nlohmann::json::parse(CheckpointArtifacts::mediaPipelineIdentity());
+    EXPECT_EQ(identity.at("schemaVersion"),2);
+    EXPECT_EQ(identity.at("writerSourceSha256").get<std::string>().size(),64U);
+    EXPECT_NE(identity.at("writerAlgorithm").get<std::string>().find("bicubic-layout"),std::string::npos);
+    const auto& pipeline = identity.at("processingPipeline");
+    EXPECT_EQ(pipeline.at("schemaVersion"),1);
+    EXPECT_EQ(pipeline.at("algorithmVersion"),"rife-processing-source-contract-v1");
+    EXPECT_GE(pipeline.at("sourceFiles").size(),70U);
+    for (const auto* source : {"src/media/rife_color.cpp","src/media/rife_color.hpp","src/timeline/timeline.cpp",
+             "src/timeline/timeline.hpp","src/interpolation/scene_analysis.cpp","src/interpolation/scene_analysis.hpp",
+             "src/core/pipeline/video_pipeline.cpp","src/core/pipeline/video_pipeline.hpp","src/restoration/noise_estimate.cpp",
+             "src/restoration/noise_estimate.hpp","src/restoration/temporal_window.cpp","src/restoration/temporal_window.hpp"})
+        EXPECT_TRUE(pipeline.at("sourceFiles").contains(source)) << source;
+    EXPECT_EQ(pipeline.at("sourceFiles").at("src/media/video_writer.cpp"),identity.at("writerSourceSha256"));
+    EXPECT_EQ(pipeline.at("build").at("cxxStandard"),20);
+    // Obtain independent DLL data addresses, rather than reproducing the
+    // configuration-string lookup used by production code.
+    const auto inspect = [&](const char* name, const void* data) {
+        HMODULE module = nullptr;
+        ASSERT_TRUE(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(data),&module));
+        ASSERT_NE(module,GetModuleHandleW(nullptr));
+        std::array<wchar_t,32768> path{};
+        const auto length = GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
+        ASSERT_GT(length,0U); ASSERT_LT(length,path.size());
+        const auto file = std::filesystem::path(std::wstring(path.data(),length));
+        EXPECT_EQ(identity.at("libraries").at(name).at("binarySha256"),inference::sha256File(file,512 * 1024 * 1024));
+        EXPECT_EQ(identity.at("libraries").at(name).at("binarySize"),std::filesystem::file_size(file));
+        EXPECT_FALSE(identity.at("libraries").at(name).contains("path"));
+    };
+    inspect("avcodec",avcodec_get_class());
+    inspect("avformat",avformat_get_class());
+    inspect("avutil",av_get_pix_fmt_name(AV_PIX_FMT_YUV420P));
+    inspect("swscale",sws_get_class());
+    for (const auto& [name,library] : identity.at("dependencies").items()) {
+        const auto encoded = std::filesystem::path(std::u8string(name.begin(),name.end()));
+        const auto module = GetModuleHandleW(encoded.c_str());
+        ASSERT_NE(module,nullptr) << name;
+        std::array<wchar_t,32768> path{};
+        const auto length = GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
+        ASSERT_GT(length,0U); ASSERT_LT(length,path.size());
+        const auto file = std::filesystem::path(std::wstring(path.data(),length));
+        EXPECT_EQ(library.at("binarySha256"),inference::sha256File(file,512 * 1024 * 1024)) << name;
+    }
+    for (const auto* codec : {L"libopenh264-8.dll",L"libkvazaar.dll",L"libaom.dll",L"swresample-6.dll"}) {
+        if (!GetModuleHandleW(codec)) continue;
+        const auto name = std::filesystem::path(codec).string();
+        EXPECT_TRUE(identity.at("dependencies").contains(name)) << "Loaded linked media dependency was omitted: " << name;
+    }
+    RecordProperty("loaded_media_identity",identity.dump());
+    RecordProperty("ffmpeg_reported_version",media::MediaEngine::runtimeVersion());
+    EXPECT_EQ(nlohmann::json::parse(CheckpointArtifacts::mediaPipelineIdentity()),identity);
+    std::stop_source cancel; cancel.request_stop();
+    EXPECT_THROW((void)CheckpointArtifacts::mediaPipelineIdentity(cancel.get_token()),std::runtime_error);
+}
+
+TEST(MediaPipelineIdentity, RejectsVersionOnlyEvidenceEveryChangedDllAndWriterAlgorithm) {
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    const Json current{{"schemaVersion",2},{"mediaRuntime",rifelove::media::MediaEngine::runtimeVersion()},
+        {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())}};
+    EXPECT_NO_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(current.dump(),current.dump()));
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(current.dump(),current.dump()));
+    auto legacy = current; legacy.erase("mediaPipelineIdentity");
+    EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(legacy.dump(),current.dump()),std::logic_error);
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(current.dump(),legacy.dump()));
+    for (const auto* name : {"avcodec","avformat","avutil","swscale"}) {
+        auto changed = current;
+        auto digest = changed["mediaPipelineIdentity"]["libraries"][name]["binarySha256"].get<std::string>();
+        digest[0] = digest[0] == '0' ? '1' : '0';
+        changed["mediaPipelineIdentity"]["libraries"][name]["binarySha256"] = digest;
+        // Both human-readable/version numbers remain the same.
+        EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(changed.dump(),current.dump()),std::logic_error) << name;
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),current.dump())) << name;
+        changed = current;
+        changed["mediaPipelineIdentity"]["libraries"][name].erase("binarySha256");
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump())) << name;
+    }
+    for (const auto* field : {"writerAlgorithm","writerSourceSha256"}) {
+        auto changed = current;
+        changed["mediaPipelineIdentity"][field] = field == std::string("writerSourceSha256") ? std::string(64,'0') : "previous-writer";
+        EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(changed.dump(),current.dump()),std::logic_error);
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),current.dump()));
+    }
+    auto changedDependency = current;
+    auto& dependency = changedDependency["mediaPipelineIdentity"]["dependencies"];
+    if (dependency.empty()) dependency["added-codec.dll"] = {{"binarySha256",std::string(64,'0')},{"binarySize",std::uint64_t{1}}};
+    else dependency.begin().value()["binarySha256"] = std::string(64,'0');
+    EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(changedDependency.dump(),current.dump()),std::logic_error);
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changedDependency.dump(),current.dump()));
+}
+
+TEST(MediaPipelineIdentity, QueueResumesOnlyMatchingProofAndPreservesRejectedSegmentsAndRecords) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    for (int change = 0; change < 8; ++change) {
+        SCOPED_TRACE(change);
+        CheckpointFixture fixture;
+        const auto database = fixture.directory / "queue.sqlite", output = fixture.directory / "result.mkv";
+        ProcessingJob job;
+        job.source = fixture.source.string(); job.output = output.string();
+        job.modelDirectory = fixture.directory / "model"; job.runtimeDirectory = fixture.directory / "runtime";
+        job.settings.targetRate = Rational(50);
+        ProcessingIdentity identity{};
+        { SourceLease lease(fixture.source); identity.source = lease.fingerprint({}); }
+        identity.modelId = "rife-fixture"; identity.modelVersion = "1"; identity.modelSha256 = std::string(64,'a');
+        identity.backend = "onnxruntime_cuda"; identity.device.name = "CPU-only resume fixture";
+        const auto identityText = serializeIdentity(identity);
+        applyStoredIdentity(job,identityText);
+        const auto configuration = serializeJob(job);
+        Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},{"job",Json::parse(configuration)},
+            {"identity",Json::parse(identityText)},{"mediaRuntime",media::MediaEngine::runtimeVersion()},
+            {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())},{"framesPerSegment",256}};
+        if (change == 1) manifest.erase("mediaPipelineIdentity");
+        if (change == 2) manifest["mediaPipelineIdentity"]["libraries"]["swscale"]["binarySha256"] = std::string(64,'0');
+        if (change == 3) manifest["mediaPipelineIdentity"]["writerAlgorithm"] = "old-color-scaler";
+        if (change == 4 || change == 5) {
+            auto& pipeline = manifest["mediaPipelineIdentity"]["processingPipeline"];
+            pipeline["sourceFiles"][change == 4 ? "src/media/rife_color.cpp" : "src/timeline/timeline.hpp"] = std::string(64,'0');
+            resealProcessingProof(pipeline);
+        }
+        if (change == 6) {
+            manifest["mediaPipelineIdentity"]["schemaVersion"] = 1;
+            manifest["mediaPipelineIdentity"].erase("processingPipeline");
+        }
+        if (change == 7) {
+            auto& pipeline = manifest["mediaPipelineIdentity"]["processingPipeline"];
+            pipeline["algorithmVersion"] = "previous-processing-algorithm"; resealProcessingProof(pipeline);
+        }
+        std::string taskId, segmentHash;
+        std::filesystem::path segmentPath, uncommitted;
+        {
+            TaskStore seed(database.string());
+            taskId = seed.createConfigured({{job.source,job.output,configuration}}).front();
+            seed.transition(taskId,TaskState::running); seed.saveIdentity(taskId,identityText);
+            CheckpointArtifacts artifacts(seed,taskId,output); artifacts.setManifest(manifest.dump());
+            const auto segment = createSegment(fixture,artifacts);
+            segmentPath = std::filesystem::path(segment.path);
+            segmentHash = artifacts.commit(0,0,2,segment).sha256;
+            if (change != 0) { uncommitted = artifacts.segmentPath(99); std::ofstream marker(uncommitted); marker << "must remain untouched"; }
+            EXPECT_EQ(seed.recoverConfigured(),1U);
+        }
+        TaskQueue queue(database);
+        if (change == 0) EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
+        else {
+            try { queue.resumeCheckpoint(taskId); FAIL() << "Incompatible media proof was reused"; }
+            catch (const std::logic_error& error) { EXPECT_NE(std::string(error.what()).find("new output"),std::string::npos); }
+            EXPECT_TRUE(std::filesystem::exists(uncommitted));
+        }
+        const auto rows = queue.list(); ASSERT_EQ(rows.size(),1U);
+        EXPECT_EQ(rows.front().task.state,change == 0 ? TaskState::queued : TaskState::interrupted);
+        EXPECT_EQ(rows.front().configuration,configuration); EXPECT_EQ(rows.front().identity,identityText);
+        EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),manifest.dump());
+        EXPECT_EQ(inference::sha256File(segmentPath,16 * 1024 * 1024),segmentHash);
+        EXPECT_TRUE(std::filesystem::exists(database)); EXPECT_FALSE(std::filesystem::exists(output));
+    }
+}
+
+TEST(MediaPipelineIdentity, ProcessingSourceHeaderAlgorithmAndBuildChangesFailClosed) {
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    const Json current{{"schemaVersion",2},{"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())}};
+    for (const auto* source : {"src/media/rife_color.cpp","src/media/rife_color.hpp","src/timeline/timeline.hpp",
+             "src/core/pipeline/video_pipeline.cpp","src/interpolation/scene_analysis.cpp","src/restoration/temporal_window.cpp"}) {
+        auto changed = current;
+        auto& pipeline = changed["mediaPipelineIdentity"]["processingPipeline"];
+        pipeline["sourceFiles"][source] = std::string(64,'0'); resealProcessingProof(pipeline);
+        EXPECT_EQ(changed["mediaPipelineIdentity"]["writerSourceSha256"],current["mediaPipelineIdentity"]["writerSourceSha256"]);
+        EXPECT_NO_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(changed.dump(),changed.dump()));
+        EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(changed.dump(),current.dump()),std::logic_error) << source;
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),current.dump()));
+    }
+    for (const auto* field : {"compilerVersion","buildType","cxxFlagsSha256"}) {
+        auto changed = current;
+        changed["mediaPipelineIdentity"]["processingPipeline"]["build"][field] =
+            field == std::string("cxxFlagsSha256") ? std::string(64,'0') : "other";
+        EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(changed.dump(),current.dump()),std::logic_error);
+    }
+    auto corrupt = current;
+    corrupt["mediaPipelineIdentity"]["processingPipeline"]["sourceSha256"] = std::string(64,'0');
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(corrupt.dump(),corrupt.dump()));
+    auto previous = current;
+    previous["mediaPipelineIdentity"]["schemaVersion"] = 1;
+    previous["mediaPipelineIdentity"].erase("processingPipeline");
+    EXPECT_THROW(CheckpointArtifacts::requireMediaPipelineIdentity(previous.dump(),current.dump()),std::logic_error);
+}
+
+TEST(MediaPipelineIdentity, LegacyPublishedOutputsReconcileWithoutReusingUnboundSegments) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    // An already published complete file is distinct from stitching unfinished
+    // historical segments into a new encode. Only its saved validation/hash
+    // proof can authorize adoption; a version-only manifest cannot do so.
+    for (int history = 0; history < 4; ++history) {
+        SCOPED_TRACE(history);
+        CheckpointFixture fixture;
+        const auto database = fixture.directory / "queue.sqlite", output = fixture.directory / "published.mkv";
+        ProcessingJob job;
+        job.source = fixture.source.string(); job.output = output.string();
+        job.modelDirectory = fixture.directory / "missing-historical-model";
+        job.runtimeDirectory = fixture.directory / "missing-historical-runtime";
+        const auto configuration = serializeJob(job);
+        const std::string historicalIdentity = "{\"schemaVersion\":1,\"historical\":true}";
+        const Json manifest{{"schemaVersion",2},{"mediaRuntime","8.1.3"},{"historical",true}};
+        std::string taskId, segmentHash, publishedHash, result;
+        std::filesystem::path segmentPath;
+        {
+            TaskStore seed(database.string());
+            taskId = seed.createConfigured({{job.source,job.output,configuration}}).front();
+            seed.transition(taskId,TaskState::running); seed.saveIdentity(taskId,historicalIdentity);
+            CheckpointArtifacts artifacts(seed,taskId,output); artifacts.setManifest(manifest.dump());
+            const auto segment = createSegment(fixture,artifacts);
+            segmentPath = std::filesystem::path(segment.path);
+            segmentHash = artifacts.commit(0,0,2,segment).sha256;
+            std::filesystem::copy_file(segmentPath,output);
+            const auto validation = media::MediaEngine::verifyVideoSegment(output.string(),segment.contract);
+            result = Json{{"schemaVersion",1},{"outputFrames",2},{"aiFrames",0},{"originalFrames",2},{"heldFrames",0},
+                {"validation",{{"decodedFrames",validation.frameCount}}}}.dump();
+            publishedHash = inference::sha256File(output,16 * 1024 * 1024);
+            if (history != 3)
+                seed.saveOutputPublicationIntent(taskId,publishedHash,std::filesystem::file_size(output),result);
+            if (history == 1) seed.finish(taskId,TaskState::completed,result);
+            if (history == 2) { std::ofstream changed(output,std::ios::binary | std::ios::app); changed << "changed after publication"; }
+        }
+        const auto actualPublishedHash = inference::sha256File(output,16 * 1024 * 1024);
+        {
+            TaskQueue queue(database);
+            const auto rows = queue.list(); ASSERT_EQ(rows.size(),1U);
+            EXPECT_EQ(queue.recoveredPublishedOutputCount(),history == 0 ? 1U : 0U);
+            EXPECT_EQ(rows.front().task.state,history < 2 ? TaskState::completed : TaskState::interrupted);
+            EXPECT_EQ(rows.front().result,history < 2 ? result : "");
+            if (history == 2) EXPECT_NE(rows.front().task.error.find("does not match the saved validation proof"),std::string::npos);
+            EXPECT_EQ(rows.front().configuration,configuration);
+            EXPECT_EQ(rows.front().identity,historicalIdentity);
+            EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),manifest.dump());
+            EXPECT_EQ(inference::sha256File(segmentPath,16 * 1024 * 1024),segmentHash);
+            EXPECT_EQ(inference::sha256File(output,16 * 1024 * 1024),actualPublishedHash);
+            EXPECT_TRUE(std::filesystem::exists(fixture.source));
+        }
+        // Reopening a second time must not re-adopt or reinterpret history.
+        TaskQueue reopened(database);
+        EXPECT_EQ(reopened.recoveredPublishedOutputCount(),0U);
+        EXPECT_EQ(reopened.list().front().task.state,history < 2 ? TaskState::completed : TaskState::interrupted);
+    }
+}
+
+TEST(CheckpointArtifacts, AutomaticNoiseIdentityRejectsEveryChangedParameterAndFixedSigmaHistory) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    ProcessingJob job;
+    job.source = "C:/source.mkv"; job.output = "C:/output.mkv";
+    job.modelDirectory = "C:/model"; job.runtimeDirectory = "C:/runtime";
+    Json fixed{{"schemaVersion",2},{"job",Json::parse(serializeJob(job))},{"identity",Json::object()}};
+    auto versionEight = fixed;
+    versionEight["job"]["schemaVersion"] = 8;
+    versionEight["job"].erase("automaticTemporalDenoise");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(versionEight.dump(),fixed.dump()));
+    job.settings.automaticTemporalDenoise.emplace();
+    auto automatic = fixed; automatic["job"] = Json::parse(serializeJob(job));
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(automatic.dump(),automatic.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(fixed.dump(),automatic.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(versionEight.dump(),automatic.dump()));
+    for (const auto* field : {"relativeAdjustment","smoothingSeconds","maximumSigmaChangePerSecond","minimumConfidence"}) {
+        auto changed = automatic;
+        changed["job"]["automaticTemporalDenoise"][field] = 0.12345;
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump())) << field;
+    }
+    auto changed = automatic; changed["job"]["automaticTemporalDenoise"]["algorithmVersion"] = 2;
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
+    changed = automatic; changed["job"]["automaticTemporalDenoise"]["replayPolicy"] = "other-decoder";
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
+    changed = automatic; changed["identity"]["source"] = "changed source";
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
+    changed = automatic; changed["temporalRestorationRuntime"] = {{"signature","changed runtime"}};
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
 }
 
 TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
@@ -227,7 +526,7 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
     EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(restoration.dump(),changedRestoration.dump()));
 }
 
-TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
+TEST(CheckpointArtifacts, TaskQueueRejectsUnboundLegacyMediaIdentityWithoutChangingArtifacts) {
     using namespace rifelove;
     using namespace rifelove::application;
     CheckpointFixture fixture;
@@ -256,6 +555,7 @@ TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
     oldConfiguration.erase("expectedRestorationDescriptorSha256");
     oldConfiguration.erase("temporalRestorationModelDirectory");
     oldConfiguration.erase("expectedTemporalRestorationDescriptorSha256");
+    oldConfiguration.erase("automaticTemporalDenoise");
     auto manifestJob = oldConfiguration;
     manifestJob["expectedSourceSha256"] = sourceIdentity.sha256;
     const nlohmann::json identity{
@@ -281,11 +581,19 @@ TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
     }
     {
         TaskQueue queue(database);
-        EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
+        try { queue.resumeCheckpoint(taskId); FAIL() << "Legacy version-only media proof was accepted"; }
+        catch (const std::logic_error& error) { EXPECT_NE(std::string(error.what()).find("no content-verified FFmpeg/writer identity"),std::string::npos); }
         const auto tasks = queue.list();
         ASSERT_EQ(tasks.size(),1U);
-        EXPECT_EQ(tasks.front().task.state,TaskState::queued);
+        EXPECT_EQ(tasks.front().task.state,TaskState::interrupted);
+        EXPECT_EQ(tasks.front().configuration,oldConfiguration.dump());
+        EXPECT_EQ(tasks.front().identity,identity.dump());
         EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),oldManifest);
+        TaskStore verifyStore(database.string());
+        CheckpointArtifacts artifacts(verifyStore,taskId,output);
+        const auto preserved = artifacts.verifyCommitted();
+        ASSERT_EQ(preserved.size(),1U);
+        EXPECT_EQ(preserved.front().contract.frameCount,2U);
     }
 }
 

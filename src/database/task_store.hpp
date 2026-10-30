@@ -81,6 +81,10 @@ public:
     void completePublishedOutput(const std::string& id);
     // Preserve a startup-recovery diagnostic without changing an interrupted task's state.
     void setInterruptedRecoveryError(const std::string& id, const std::string& error);
+    // A worker that exits before its terminal write succeeds must not leave a
+    // live-looking task behind in the current process. Preserve all checkpoint
+    // and publication evidence; never overwrite a task already made terminal.
+    [[nodiscard]] bool interruptActive(const std::string& id, const std::string& error);
     [[nodiscard]] std::size_t recoverConfigured();
 
     // A checkpoint manifest is immutable for a task. Segment records are added

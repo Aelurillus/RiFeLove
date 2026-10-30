@@ -2,6 +2,9 @@
 #include "native_renderer.hpp"
 #include "native_model_center_test.hpp"
 #include "native_data_directory_test.hpp"
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+#include "native_comparison_test.hpp"
+#endif
 
 #include <windows.h>
 #include <commctrl.h>
@@ -509,6 +512,61 @@ void checkLongComboPopup(HWND window) {
 
 void checkOutputFieldAlignment(HWND window);
 
+void checkQualityFieldSpacing(HWND window) {
+    const UINT dpi = GetDpiForWindow(window);
+    const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
+    const std::array<int, 3> controls{1024, 1017, 1018};
+    const std::array<int, 3> labelTops{331, 397, 463};
+    for (std::size_t index = 0; index < controls.size(); ++index) {
+        const HWND control = GetDlgItem(window, controls[index]);
+        check(control != nullptr, "find restoration field for label spacing");
+        if (!control) continue;
+        RECT rect{};
+        GetWindowRect(control, &rect);
+        MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&rect), 2);
+        check(rect.top >= px(labelTops[index] + 22),
+            "restoration selector leaves the entire painted label and spacing visible");
+        check(rect.bottom <= px(labelTops[index] + 64),
+            "restoration selector does not cover the following label or section divider");
+    }
+}
+
+void checkAspectPreservingOutputTargets() {
+    using rifelove::native_desktop::nativeOutputTarget;
+    struct Example { int sourceWidth, sourceHeight, selection, width, height; bool usable, nominal; };
+    const std::array<Example, 13> examples{{
+        {1920, 1080, 1, 2560, 1440, true, true},
+        {1920, 1080, 2, 3840, 2160, true, true},
+        {1080, 1920, 1, 1440, 2560, true, true},
+        {1440, 1080, 1, 1920, 1440, true, true},
+        {1440, 1080, 2, 2880, 2160, true, true},
+        {1080, 1440, 1, 1440, 1920, true, true},
+        {1080, 1080, 2, 2160, 2160, true, true},
+        {3440, 1440, 2, 5160, 2160, true, true},
+        {2560, 1080, 1, 3456, 1458, true, false},
+        {1366, 768, 1, 2732, 1536, true, false},
+        {1366, 768, 2, 4098, 2304, false, false},
+        {1280, 720, 2, 3840, 2160, false, true},
+        {32768, 4, 1, 11796480, 1440, false, true},
+    }};
+    for (const auto& example : examples) {
+        const auto result = nativeOutputTarget(example.sourceWidth, example.sourceHeight, example.selection);
+        check(result.width == example.width && result.height == example.height,
+            "size preset chooses the expected even dimensions for the source ratio");
+        check(result.aspectMatches && result.dimensionsEven,
+            "size preset preserves exact source ratio with even encoder dimensions");
+        check(result.usable() == example.usable && result.nominalSize == example.nominal,
+            "size preset reports x2/encoder limits and approximate nominal sizes honestly");
+    }
+    check(!nativeOutputTarget(0, 1080, 1).usable() && !nativeOutputTarget(1920, -1, 1).usable(),
+        "invalid or unknown source dimensions cannot enable a size preset");
+    check(!nativeOutputTarget(1920, 1080, 0).selected && !nativeOutputTarget(1920, 1080, 3).selected,
+        "original-size and unknown selections do not impose a target");
+    const auto oversized = nativeOutputTarget(std::numeric_limits<int>::max(), 1, 2);
+    check(!oversized.usable() && !oversized.dimensionsSupported,
+        "extreme source ratios cannot overflow into a valid encoding target");
+}
+
 void checkNarrowImportLayout(HWND window, const std::filesystem::path& screenshot = {}) {
     RECT original{};
     GetWindowRect(window, &original);
@@ -533,6 +591,7 @@ void checkNarrowImportLayout(HWND window, const std::filesystem::path& screensho
               "file and folder buttons retain separate hit targets in narrow windows");
     }
     checkOutputFieldAlignment(window);
+    checkQualityFieldSpacing(window);
     if (!screenshot.empty()) check(captureClient(window, screenshot), "capture narrow import layout");
     SetWindowPos(window, nullptr, original.left, original.top, original.right - original.left,
                  original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -571,7 +630,163 @@ void checkOutputFieldAlignment(HWND window) {
     check(browse.top >= field.bottom + px(20), "path summary has space above the output location button");
 }
 
+void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesystem::path& screenshot = {}) {
+    RECT original{}; GetWindowRect(window, &original);
+    const UINT dpi = GetDpiForWindow(window);
+    const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
+    const float scale = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+    const auto rect = [&](HWND control) {
+        RECT value{}; GetWindowRect(control, &value);
+        MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&value), 2); return value;
+    };
+    const auto withinViewport = [&](HWND control) {
+        RECT client{}; GetClientRect(window, &client);
+        const auto layout = NativeLayout::from(client.right / scale, client.bottom / scale, app.testViewState().scrollOffset);
+        const RECT field = rect(control);
+        return IsWindowVisible(control) && field.top >= px(static_cast<int>(layout.contentTop)) &&
+            field.bottom <= px(static_cast<int>(layout.contentBottom)) + 1 &&
+            field.left >= px(static_cast<int>(layout.left)) && field.right <= px(static_cast<int>(layout.right)) + 1;
+    };
+    const HWND source = GetDlgItem(window, 1002), sourceEdit = GetDlgItem(window, 1001), rate = GetDlgItem(window, 1005);
+    const HWND blur = GetDlgItem(window, 1013), advanced = GetDlgItem(window, 1016);
+    const bool priorBlur = SendMessageW(blur, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    const bool priorAdvanced = app.testViewState().advancedExpanded;
+    const auto priorRate = SendMessageW(rate, CB_GETCURSEL, 0, 0);
+    const auto scrollTop = [&] { SendMessageW(window, WM_VSCROLL, SB_TOP, 0); };
+    for (const int width : {480, 600, 700, 790, 800, 850}) {
+        SetWindowPos(window, nullptr, original.left, original.top, px(width), px(600), SWP_NOZORDER | SWP_NOACTIVATE);
+        scrollTop();
+        RECT client{}; GetClientRect(window, &client);
+        const auto layout = NativeLayout::from(client.right / scale, client.bottom / scale);
+        if (width == 480 && !screenshot.empty()) {
+            auto top = screenshot; top.replace_filename(top.stem().wstring() + L"-480-top" + top.extension().wstring());
+            check(captureClient(window, top), "capture real 480-DIP HWND at the top of its settings viewport");
+            SendMessageW(window, WM_VSCROLL, SB_BOTTOM, 0);
+            auto bottom = screenshot; bottom.replace_filename(bottom.stem().wstring() + L"-480-bottom" + bottom.extension().wstring());
+            check(captureClient(window, bottom), "capture real 480-DIP HWND at the bottom of its settings viewport");
+            scrollTop();
+        }
+        check((width < 760 && layout.singleColumn) || (width >= 790 && layout.split > layout.left),
+            "small HWND retains usable settings through the single/two-column transition");
+        check(rect(source).right - rect(source).left >= px(100), "small window retains a full-size file button");
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+        check(rect(GetDlgItem(window, 1022)).right - rect(GetDlgItem(window, 1022)).left >= px(96),
+            "small window retains a usable folder import button");
+#endif
+        check(rect(GetDlgItem(window, 1003)).right - rect(GetDlgItem(window, 1003)).left >= px(width < 760 ? 270 : 160),
+            "output field retains readable width rather than becoming a narrow second column");
+        for (const int id : {1009, 1010, 1023}) {
+            const auto button = rect(GetDlgItem(window, id));
+            check(button.left >= px(static_cast<int>(layout.left)) && button.right <= client.right && button.bottom <= client.bottom,
+                "fixed start, cancel and pause hit targets stay wholly inside the main area");
+            check(IsWindowVisible(GetDlgItem(window, id)), "fixed task actions stay visible while settings scroll");
+        }
+
+        SetFocus(source);
+        const auto beforeButtonWheel = app.testViewState().scrollOffset;
+        SendMessageW(source, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA), 0);
+        check(app.testViewState().scrollOffset > beforeButtonWheel, "wheel over a native button scrolls the settings viewport");
+        SendMessageW(sourceEdit, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA), 0);
+        check(app.testViewState().scrollOffset > beforeButtonWheel + 40, "wheel over an edit also scrolls the settings viewport");
+
+        scrollTop(); SetFocus(source);
+        const bool sizeEnabled = IsWindowEnabled(GetDlgItem(window, 1018));
+        bool sawOutput = false, sawBrowse = false, sawRate = false, sawSize = false;
+        for (int count = 0; count < 32; ++count) {
+            check(app.testNavigateSettings(), "forward Tab navigation finds an enabled intended-visible control");
+            const int id = GetDlgCtrlID(GetFocus());
+            if (id == 1003 || id == 1004 || id == 1005 || id == 1018) {
+                check(withinViewport(GetFocus()), "Tab automatically scrolls hidden export controls fully into view");
+                sawOutput |= id == 1003; sawBrowse |= id == 1004; sawRate |= id == 1005;
+                sawSize |= id == 1018;
+            }
+            check(id != 1014 && id != 1015 && id != 1011, "Tab skips collapsed exposure and inactive custom-rate inputs");
+            if (sawOutput && sawBrowse && sawRate) break;
+        }
+        check(sawOutput && sawBrowse && sawRate, "Tab reaches target FPS, output path and output browse in small windows");
+        check(!sizeEnabled || sawSize, "Tab reaches the output-size selector when it is enabled");
+
+        // Closed fields scroll the page; open lists retain their own wheel
+        // behavior and cannot unexpectedly move the surrounding settings.
+        SetFocus(rate); SendMessageW(rate, CB_SHOWDROPDOWN, FALSE, 0);
+        const auto selected = SendMessageW(rate, CB_GETCURSEL, 0, 0);
+        const auto beforeComboWheel = app.testViewState().scrollOffset;
+        SendMessageW(rate, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA), 0);
+        check(app.testViewState().scrollOffset > beforeComboWheel, "wheel over a closed drop-down scrolls the page");
+        check(SendMessageW(rate, CB_GETCURSEL, 0, 0) == selected, "closed drop-down wheel cannot silently change target FPS");
+        SetFocus(rate);
+        SendMessageW(rate, CB_SHOWDROPDOWN, TRUE, 0);
+        check(SendMessageW(rate, CB_GETDROPPEDSTATE, 0, 0), "small-window drop-down can open after automatic scrolling");
+        const auto openScroll = app.testViewState().scrollOffset;
+        SendMessageW(rate, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA), 0);
+        check(app.testViewState().scrollOffset == openScroll, "wheel over an open drop-down stays with its list");
+        SendMessageW(rate, CB_SHOWDROPDOWN, FALSE, 0);
+        SendMessageW(rate, CB_SETCURSEL, priorRate, 0);
+
+        bool returned = false;
+        for (int count = 0; count < 32; ++count) {
+            check(app.testNavigateSettings(true), "reverse Tab navigation reaches earlier settings");
+            if (GetFocus() == source) { returned = true; break; }
+        }
+        check(returned && withinViewport(source) && app.testViewState().scrollOffset < 100,
+            "Shift+Tab returns from export controls to the visible import actions");
+
+        SendMessageW(blur, BM_SETCHECK, BST_CHECKED, 0);
+        SendMessageW(window, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
+        if (!app.testViewState().advancedExpanded) SendMessageW(advanced, BM_CLICK, 0, 0);
+        SetFocus(source); bool sawShutter = false, sawSamples = false;
+        for (int count = 0; count < 32; ++count) {
+            app.testNavigateSettings(); const int id = GetDlgCtrlID(GetFocus());
+            if (id == 1014 || id == 1015) {
+                check(withinViewport(GetFocus()), "expanded exposure inputs scroll fully into view when reached by Tab");
+                sawShutter |= id == 1014; sawSamples |= id == 1015;
+            }
+            if (sawShutter && sawSamples) break;
+        }
+        check(sawShutter && sawSamples, "Tab reaches both shutter and sampling controls after expanding parameters");
+        const auto samples = rect(GetDlgItem(window, 1015));
+        check(samples.right <= px(static_cast<int>(layout.split - 20)) + 2,
+            "exposure sampling field stays inside its quality card at the two-column breakpoint");
+        if (!priorAdvanced) SendMessageW(advanced, BM_CLICK, 0, 0);
+        SendMessageW(blur, BM_SETCHECK, priorBlur ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(window, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
+        scrollTop();
+    }
+    SetWindowPos(window, nullptr, original.left, original.top, original.right - original.left,
+        original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    scrollTop(); SetFocus(source);
+}
+
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+void checkMissingRestorationDescriptor(NativeApp& app, HWND window) {
+    using namespace rifelove;
+    native_test::ModelCenterTemporaryDirectory fixture;
+    restoration::ModelPack temporal{}, spatial{};
+    temporal.directory = fixture.root / L"temporal";
+    spatial.directory = fixture.root / L"spatial";
+    std::filesystem::create_directories(temporal.directory);
+    std::filesystem::create_directories(spatial.directory);
+    const auto wasProcessing = app.testViewState().processing;
+    application::ProcessingJob job;
+    job.expectedTemporalRestorationDescriptorSha256 = "unchanged-temporal";
+    job.expectedRestorationDescriptorSha256 = "unchanged-spatial";
+    check(!app.testCaptureRestorationDescriptors(job, &temporal, nullptr),
+        "missing selected temporal descriptor is converted to a startup failure without throwing");
+    check(IsWindow(window) && app.testViewState().processing == wasProcessing && app.testViewState().stage == L"failed" &&
+        app.testViewState().status.find(L"恢复所选降噪/超分模型的 model.json") != std::wstring::npos &&
+        app.testViewState().status.find(L"重新选择模型") != std::wstring::npos,
+        "missing selected model keeps the desktop alive and provides recovery or reselection guidance");
+    std::ofstream(temporal.directory / L"model.json", std::ios::binary) << "{}";
+    check(!app.testCaptureRestorationDescriptors(job, &temporal, &spatial),
+        "missing spatial descriptor is caught after a successful temporal descriptor read");
+    check(job.expectedTemporalRestorationDescriptorSha256 == "unchanged-temporal" &&
+        job.expectedRestorationDescriptorSha256 == "unchanged-spatial" &&
+        job.temporalRestorationModelDirectory.empty() && job.restorationModelDirectory.empty(),
+        "descriptor read failure does not leave a partially captured job for enqueueing");
+    check(app.testCaptureRestorationDescriptors(job, nullptr, nullptr),
+        "startup descriptor validation remains usable after a failed selection");
+}
+
 void checkRestorationControls(NativeApp& app, HWND window, bool requireDenoise) {
     const HWND temporal = GetDlgItem(window, 1024);
     const HWND restoration = GetDlgItem(window, 1017);
@@ -583,6 +798,33 @@ void checkRestorationControls(NativeApp& app, HWND window, bool requireDenoise) 
     check(SendMessageW(restoration, CB_GETCURSEL, 0, 0) == 0, "optional restoration defaults to off");
     const auto temporalOffLabel = comboItem(temporal, 0);
     const auto spatialOffLabel = comboItem(restoration, 0);
+    app.testSetSourceDimensions(0, 0);
+    check(comboItem(outputSize, 1).find(L"导入视频后") != std::wstring::npos && comboItem(outputSize, 1).find(L"0 × 0") == std::wstring::npos,
+        "unknown source dimensions show a waiting-for-video label instead of an approximate zero-pixel target");
+    const HWND platform = GetDlgItem(window, 1012);
+    const auto previousPlatform = SendMessageW(platform, CB_GETCURSEL, 0, 0);
+    SendMessageW(platform, CB_SETCURSEL, 1, 0);
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(1012, CBN_SELCHANGE), reinterpret_cast<LPARAM>(platform));
+    app.testSetSourceDimensions(1080, 1920);
+    check(app.testExportSettings().encoding.bitRate == 12000000,
+        "single-file portrait 1080p YouTube bitrate uses the output short edge rather than its 1920-pixel height");
+    app.testSetSourceDimensions(1440, 1080);
+    check(app.testExportSettings().encoding.bitRate == 12000000,
+        "single-file 4:3 YouTube bitrate agrees with the same shared actual-output policy used for batch jobs");
+    SendMessageW(platform, CB_SETCURSEL, previousPlatform, 0);
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(1012, CBN_SELCHANGE), reinterpret_cast<LPARAM>(platform));
+    app.testSetSourceDimensions(1440, 1080);
+    check(comboItem(outputSize, 1).find(L"1920 × 1440") != std::wstring::npos &&
+          comboItem(outputSize, 2).find(L"2880 × 2160") != std::wstring::npos,
+        "4:3 source updates the actual output-size selector without offering stretched 16:9 output");
+    app.testSetSourceDimensions(3440, 1440);
+    check(comboItem(outputSize, 2).find(L"5160 × 2160") != std::wstring::npos,
+        "ultrawide source updates the actual output-size selector at its original ratio");
+    app.testSetSourceDimensions(2560, 1080);
+    check(comboItem(outputSize, 1).starts_with(L"约 ") &&
+          comboItem(outputSize, 1).find(L"3456 × 1458") != std::wstring::npos,
+        "non-integral nominal preset displays approximate wording and exact output pixels");
+    app.testSetSourceDimensions(1920, 1080);
     check(temporalOffLabel.find(L"默认") != std::wstring::npos && temporalOffLabel.find(L"降噪") != std::wstring::npos,
         "optional denoise off label explains the default");
     check(spatialOffLabel.find(L"默认") != std::wstring::npos && spatialOffLabel.find(L"超分") != std::wstring::npos,
@@ -609,6 +851,9 @@ void checkRestorationControls(NativeApp& app, HWND window, bool requireDenoise) 
         check(app.testViewState().restorationSummary.find(L"降噪") != std::wstring::npos &&
               app.testViewState().restorationSummary.find(L"超分：关闭") != std::wstring::npos,
             "selected FastDVDnet summary identifies denoise");
+        check(comboItem(temporal, denoiseIndex).find(L"固定 σ25") != std::wstring::npos &&
+              app.testViewState().restorationSummary.find(L"固定 σ25") != std::wstring::npos,
+            "FastDVDnet selector and summary explain that automatic off still uses fixed sigma 25");
     }
 
     int spatialIndex = -1;
@@ -946,9 +1191,28 @@ int wmain(int argc, wchar_t** argv) {
         if (isolated) CloseDesktop(isolated);
         return 1;
     }
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    if ((argc == 4 || argc == 5) && std::wstring(argv[1]) == L"--comparison") {
+        {
+            rifelove::native_test::ModelCenterTemporaryDirectory profile;
+            NativeApp app({}, profile.root / L"LocalAppData");
+            check(app.create(GetModuleHandleW(nullptr), SW_SHOWNOACTIVATE), "create owner for real-media comparison");
+            if (const HWND owner = app.testMainWindow()) {
+                rifelove::native_test::checkNativeComparisonFiles(check, pumpUntil, captureClient, owner,
+                    std::filesystem::path(argv[2]), std::filesystem::path(argv[3]), argc == 5 ? std::filesystem::path(argv[4]) : std::filesystem::path{});
+                DestroyWindow(owner);
+            }
+        }
+        SetThreadDesktop(original); CloseDesktop(isolated);
+        if (failures) return 1;
+        std::cout << "Native comparison: real decode, matched time, adjacent frames, slider and EOF passed.\n";
+        return 0;
+    }
+#endif
 
     rifelove::native_test::checkLocalModelPreferences(check);
     rifelove::native_test::checkNativeDataDirectories(check);
+    checkAspectPreservingOutputTargets();
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (argc == 1) rifelove::native_test::checkLocalModelCenter(check);
 #endif
@@ -965,11 +1229,23 @@ int wmain(int argc, wchar_t** argv) {
             checkLongComboPopup(window);
             checkNarrowImportLayout(window);
             checkOutputFieldAlignment(window);
+            checkQualityFieldSpacing(window);
+            checkResponsiveInteraction(app, window, argc == 3 && argv[1][0] != L'-' ? std::filesystem::path(argv[2]) : std::filesystem::path{});
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             const bool denoiseRun = (argc == 4 || argc == 5) &&
                 (std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" ||
                  std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");
             checkRestorationControls(app, window, denoiseRun);
+            if (argc == 1) {
+                checkMissingRestorationDescriptor(app, window);
+                SendMessageW(GetDlgItem(window, 1025), BM_CLICK, 0, 0);
+                const HWND comparison = app.testShowComparison();
+                check(comparison && GetDlgItem(comparison, 1301) && GetDlgItem(comparison, 1302),
+                    "main comparison action opens a reusable native window with source and result file selectors");
+                if (comparison) SendMessageW(comparison, WM_CLOSE, 0, 0);
+                check(IsWindow(window), "closing comparison preserves the main task window");
+                rifelove::native_test::checkNativeComparison(check, pumpUntil, window);
+            }
             const HWND pause = GetDlgItem(window, 1023);
             check(pause && IsWindowVisible(pause), "pause/resume button is visible");
             if (pause) {
@@ -1089,9 +1365,11 @@ int wmain(int argc, wchar_t** argv) {
         const float height = 680.0F / scale;
         const auto layout = NativeLayout::from(1366.0F / scale, height);
         check(layout.resourceButtonsTop + 72.0F <= height, "resource buttons fit a short scaled window");
-        check(layout.dock + 70.0F <= height, "action buttons fit a short scaled window");
-        check(layout.right > layout.split && layout.split > layout.left, "scaled columns retain positive width");
-        check(layout.right - 330.0F > layout.left && layout.right - 254.0F <= layout.right && layout.right - layout.left - 360.0F > 0,
+        check(layout.dock + (layout.singleColumn ? 122.0F : 70.0F) <= height, "action buttons fit a short scaled window");
+        check((layout.singleColumn ? layout.right == layout.split : layout.right > layout.split) && layout.split > layout.left,
+            "scaled settings retain positive width in either layout mode");
+        check(layout.right - 330.0F > layout.left && layout.right - 254.0F <= layout.right &&
+            layout.right - layout.left - (layout.singleColumn ? 4.0F : 360.0F) > 0,
             "pause button and status text retain room at high DPI");
         if (layout.compactImport)
             check(layout.sourceActionsTop >= 144 && layout.sourceInputTop >= layout.sourceActionsTop + 42,

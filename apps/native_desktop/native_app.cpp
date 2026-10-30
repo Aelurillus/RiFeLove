@@ -131,7 +131,7 @@ bool isUpscaleRestoration(const restoration::ModelPack& model) {
 
 std::wstring restorationSelectorLabel(const restoration::ModelPack& model) {
     const std::wstring name = wideFromUtf8(model.displayName.empty() ? model.id : model.displayName);
-    if (isTemporalRestoration(model)) return L"FastDVDnet · 时序降噪（实验性）";
+    if (isTemporalRestoration(model)) return L"FastDVDnet · 降噪（默认固定 σ25）";
     if (hasRestorationTask(model, restoration::Task::deblur)) return name + L"  ·  去模糊";
     if (isUpscaleRestoration(model))
         return model.id.starts_with("realesrgan-") ? L"超分辨率 ×2 · Real-ESRGAN" : name + L"  ·  超分辨率 ×2";
@@ -296,6 +296,7 @@ NativeApp::~NativeApp() {
     closing_ = true;
     callbackWindow_.store(nullptr);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    comparisonWindow_.reset();
     if (modelCenterWindow_ && IsWindow(modelCenterWindow_)) DestroyWindow(modelCenterWindow_);
     if (modelCenterFont_) DeleteObject(modelCenterFont_);
     if (historyWindow_ && IsWindow(historyWindow_)) DestroyWindow(historyWindow_);
@@ -365,8 +366,13 @@ int NativeApp::run() {
         const BOOL result = GetMessageW(&message, nullptr, 0, 0);
         if (result <= 0) return result == 0 ? static_cast<int>(message.wParam) : 1;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+        if (comparisonWindow_ && comparisonWindow_->handleDialogMessage(message)) continue;
         if (modelCenterWindow_ && IsDialogMessageW(modelCenterWindow_, &message)) continue;
 #endif
+        if (message.message == WM_KEYDOWN && message.wParam == VK_TAB &&
+            (message.hwnd == window_ || IsChild(window_, message.hwnd)) && !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
+            if (focusNextControl((GetKeyState(VK_SHIFT) & 0x8000) != 0)) continue;
+        }
         if (!IsDialogMessageW(window_, &message)) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
@@ -554,44 +560,25 @@ bool NativeApp::hasBatchSelection() const noexcept {
 #endif
 
 NativeApp::OutputTargetCheck NativeApp::outputTargetCheck(int selection) const {
-    OutputTargetCheck result{};
-    if (selection < 1 || selection > 2) return result;
-
-    result.selected = true;
-    const bool portrait = sourceHeight_ > sourceWidth_;
-    if (selection == 1) {
-        result.width = portrait ? 1440 : 2560;
-        result.height = portrait ? 2560 : 1440;
-    } else {
-        result.width = portrait ? 2160 : 3840;
-        result.height = portrait ? 3840 : 2160;
-    }
-    result.dimensionsEven = result.width > 0 && result.height > 0 &&
-        result.width % 2 == 0 && result.height % 2 == 0;
-    if (sourceWidth_ <= 0 || sourceHeight_ <= 0) return result;
-
-    const auto sourceWidth = static_cast<long long>(sourceWidth_);
-    const auto sourceHeight = static_cast<long long>(sourceHeight_);
-    const auto targetWidth = static_cast<long long>(result.width);
-    const auto targetHeight = static_cast<long long>(result.height);
-    // Restoration preserves the source aspect ratio. Require exact equality
-    // so the UI never silently crops or stretches the output.
-    result.aspectMatches = sourceWidth * targetHeight == sourceHeight * targetWidth;
-    result.generatedEnough = sourceWidth * 2 >= targetWidth && sourceHeight * 2 >= targetHeight;
-    return result;
+    return nativeOutputTarget(sourceWidth_, sourceHeight_, selection);
 }
 
 std::wstring NativeApp::outputTargetLabel(int selection) const {
     const auto target = outputTargetCheck(selection);
     if (!target.selected) return L"原始输出尺寸";
+    if (target.width <= 0 || target.height <= 0)
+        return std::wstring(selection == 1 ? L"1440p" : L"2160p") + L"  ·  导入视频后按源比例计算";
 
-    std::wstring label = selection == 1 ? L"1440p  ·  " : L"2160p  ·  ";
+    std::wstring label = target.nominalSize ? L"" : L"约 ";
+    label += selection == 1 ? L"1440p  ·  " : L"2160p  ·  ";
     label += std::to_wstring(target.width) + L" × " + std::to_wstring(target.height);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (sourceInspected_) {
-        if (!target.aspectMatches) label += L"  ·  源比例不匹配";
+        if (!target.dimensionsSupported) label += L"  ·  超出编码尺寸";
+        else if (!target.aspectMatches) label += L"  ·  源比例不匹配";
         else if (!target.generatedEnough) label += L"  ·  源尺寸不足";
         else if (!target.dimensionsEven) label += L"  ·  需要偶数尺寸";
+        else label += L"  ·  保持源比例";
     }
 #endif
     return label;
@@ -678,6 +665,7 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
         const bool supportsFixedSize = hasModel && isUpscaleRestoration(spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)]);
         const auto target = outputTargetCheck(outputSizeIndex);
         if (!supportsFixedSize) add(L"当前可选画质处理模型不支持固定输出尺寸");
+        else if (!target.dimensionsSupported) add(L"目标尺寸超出编码限制");
         else if (!target.aspectMatches) add(L"输入比例不匹配");
         else if (!target.generatedEnough) add(L"目标尺寸超出 x2 能力");
         else if (!target.dimensionsEven) add(L"目标尺寸需要偶数像素");
@@ -797,9 +785,13 @@ void NativeApp::createControls() {
     cancelButton_ = createButton(L"取消", kCancel);
     rejectionDetailsButton_ = createButton(L"拒绝明细", kRejectionDetails);
     historyButton_ = createButton(L"任务历史", kTaskHistory);
+    comparisonButton_ = createButton(L"逐帧比较", kComparison);
+    automaticDenoiseButton_ = createButton(L"自动降噪：关", kAutomaticDenoise);
     ShowWindow(rejectionDetailsButton_, SW_HIDE);
 #ifndef RIFELOVE_NATIVE_HAS_PROCESSING
     ShowWindow(historyButton_, SW_HIDE);
+    EnableWindow(comparisonButton_, FALSE);
+    EnableWindow(automaticDenoiseButton_, FALSE);
 #endif
     const auto checkboxProc = SetWindowLongPtrW(motionBlurCheck_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::checkboxProcedure));
     SetPropW(motionBlurCheck_, L"RifeLoveCheckboxProc", reinterpret_cast<HANDLE>(checkboxProc));
@@ -853,6 +845,12 @@ void NativeApp::createControls() {
     ShowWindow(outputSizeLabel_, SW_HIDE);
     ShowWindow(outputSizeCombo_, SW_HIDE);
     setFonts();
+    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) {
+        if (!control) continue;
+        const auto original = SetWindowLongPtrW(control, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::scrollChildProcedure));
+        SetPropW(control, L"RifeLoveScrollChildProc", reinterpret_cast<HANDLE>(original));
+        SetPropW(control, L"RifeLoveScrollChildOwner", reinterpret_cast<HANDLE>(this));
+    }
     layoutControls();
     updateView();
 }
@@ -863,7 +861,7 @@ void NativeApp::setFonts() {
     font_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         L"Microsoft YaHei UI");
-    const std::array<HWND, 34> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 36> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_,
         sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_, platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_};
     for (const auto control : controls) if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
     for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) {
@@ -894,6 +892,9 @@ void NativeApp::layoutControls() {
     const float rightWidth = layout.exportContentWidth();
     const auto move = [&](HWND control, float x, float y, float width, float height, bool visible = true, bool fixed = false, float expandedHeight = 0) {
         if (!control) return;
+        SetPropW(control, L"RifeLoveFocusEligible", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(visible ? 1 : 0)));
+        SetPropW(control, L"RifeLoveScrollY", reinterpret_cast<HANDLE>(fixed ? 0 : static_cast<INT_PTR>(y) + 1));
+        SetPropW(control, L"RifeLoveScrollHeight", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(height)));
         if (!fixed) y -= layout.scroll;
         const bool inViewport = fixed || (y >= layout.contentTop && y + height <= layout.contentBottom);
         MoveWindow(control, scaled(static_cast<int>(x), s), scaled(static_cast<int>(y), s),
@@ -943,39 +944,48 @@ void NativeApp::layoutControls() {
 #endif
     move(sourceButton_, layout.compactImport ? left : layout.split - 126, layout.sourceActionsTop, 106, 34);
     move(sourceEdit_, left + 10, layout.sourceInputTop, leftWidth - 20, 42);
-    moveCombo(temporalRestorationCombo_, left, 342, leftWidth, 36);
-    moveCombo(restorationCombo_, left, 408, leftWidth, 36);
-    moveCombo(outputSizeCombo_, left, 474, leftWidth, 36);
+    move(automaticDenoiseButton_, layout.split - 130, 300, 110, 30);
+    // Keep each field below its painted label (331/397/463 DIP). The old
+    // 11-DIP offset let the HWND cover the lower half of the label text.
+    moveCombo(temporalRestorationCombo_, left, 354, leftWidth, 36);
+    moveCombo(restorationCombo_, left, 420, leftWidth, 36);
+    moveCombo(outputSizeCombo_, left, 486, leftWidth, 36);
     move(motionBlurCheck_, left, 536, leftWidth - 100, 32);
     move(advancedButton_, layout.split - 110, 536, 90, 32);
     const bool blurEnabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     move(shutterEdit_, left + 68, 584, 64, 30, advancedExpanded_);
-    move(samplesEdit_, left + 218, 584, 54, 30, advancedExpanded_);
+    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 584, leftWidth < 280 ? 50 : 54, 30, advancedExpanded_);
     EnableWindow(shutterEdit_, blurEnabled);
     EnableWindow(samplesEdit_, blurEnabled);
-    moveCombo(platformCombo_, second, 162, rightWidth, 36);
+    const float exportY = layout.exportOffset;
+    moveCombo(platformCombo_, second, 162 + exportY, rightWidth, 36);
     const bool customRate = SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0) == static_cast<int>(kTargetRates.size());
-    moveCombo(rateCombo_, second, 240, customRate ? rightWidth * 0.55F : rightWidth, 38);
-    move(rateCustomEdit_, second + rightWidth * 0.57F + 8, 246, rightWidth * 0.43F - 16, 26, customRate);
-    moveCombo(encoderCombo_, second, 318, rightWidth, 36);
-    move(outputEdit_, second + 10, 394, rightWidth - 20, 42);
-    move(outputButton_, layout.outputBrowseLeft(), 460, layout.outputBrowseWidth(), 34);
-    move(modelButton_, 18, layout.resourceButtonsTop, layout.side - 36, 32, true, true);
-    move(runtimeButton_, 18, layout.resourceButtonsTop + 40, layout.side - 36, 32, true, true);
+    moveCombo(rateCombo_, second, 240 + exportY, customRate ? rightWidth * 0.55F : rightWidth, 38);
+    move(rateCustomEdit_, second + rightWidth * 0.57F + 8, 246 + exportY, rightWidth * 0.43F - 16, 26, customRate);
+    moveCombo(encoderCombo_, second, 318 + exportY, rightWidth, 36);
+    move(outputEdit_, second + 10, 394 + exportY, rightWidth - 20, 42);
+    move(outputButton_, layout.outputBrowseLeft(), 460 + exportY, layout.outputBrowseWidth(), 34);
+    SetWindowTextW(modelButton_, layout.singleColumn ? L"模型" : L"本地模型中心");
+    SetWindowTextW(runtimeButton_, layout.singleColumn ? L"运行" : L"选择运行库");
+    move(modelButton_, layout.singleColumn ? 8 : 18, layout.resourceButtonsTop, layout.side - (layout.singleColumn ? 16 : 36), 32, true, true);
+    move(runtimeButton_, layout.singleColumn ? 8 : 18, layout.resourceButtonsTop + 40, layout.side - (layout.singleColumn ? 16 : 36), 32, true, true);
+    move(comparisonButton_, right - 250, 28, 112, 34, true, true);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
-    move(historyButton_, 12, 188, layout.side - 24, 42, taskQueue_ != nullptr, true);
+    SetWindowTextW(historyButton_, layout.singleColumn ? L"记录" : L"任务历史");
+    move(historyButton_, layout.singleColumn ? 8 : 12, 188, layout.side - (layout.singleColumn ? 16 : 24), 42, taskQueue_ != nullptr, true);
 #else
     ShowWindow(historyButton_, SW_HIDE);
 #endif
-    move(startButton_, right - 158, layout.dock + 26, 158, 44, true, true);
-    move(pauseResumeButton_, right - 330, layout.dock + 26, 76, 44, true, true);
-    move(cancelButton_, right - 246, layout.dock + 26, 76, 44, true, true);
+    const float actionTop = layout.dock + (layout.singleColumn ? 78 : 26);
+    move(startButton_, right - 158, actionTop, 158, 44, true, true);
+    move(pauseResumeButton_, right - 330, actionTop, 76, 44, true, true);
+    move(cancelButton_, right - 246, actionTop, 76, 44, true, true);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     move(rejectionDetailsButton_, left + 145, layout.dock + 10, 88, 26, !queueRejections_.empty(), true);
 #else
     ShowWindow(rejectionDetailsButton_, SW_HIDE);
 #endif
-    const int range = std::max(0, static_cast<int>(626 - layout.contentBottom));
+    const int range = std::max(0, static_cast<int>(layout.contentEnd - layout.contentBottom));
     SCROLLINFO scroll{};
     scroll.cbSize = sizeof(SCROLLINFO); scroll.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     scroll.nMin = 0; scroll.nMax = range; scroll.nPage = 1; scroll.nPos = static_cast<int>(layout.scroll);
@@ -990,6 +1000,54 @@ void NativeApp::scrollSettings(int delta) {
     state_.scrollOffset = std::max(0.0F, state_.scrollOffset + static_cast<float>(delta));
     layoutControls();
     InvalidateRect(window_, nullptr, FALSE);
+}
+
+void NativeApp::ensureControlVisible(HWND control) {
+    if (!window_ || !control) return;
+    const auto encoded = reinterpret_cast<INT_PTR>(GetPropW(control, L"RifeLoveScrollY"));
+    if (encoded == 0) return;
+    const float y = static_cast<float>(encoded - 1);
+    const float height = static_cast<float>(reinterpret_cast<INT_PTR>(GetPropW(control, L"RifeLoveScrollHeight")));
+    RECT client{}; GetClientRect(window_, &client);
+    const auto layout = NativeLayout::from(static_cast<float>(client.right) / dpiScale(), static_cast<float>(client.bottom) / dpiScale(), state_.scrollOffset);
+    float desired = layout.scroll;
+    if (y < layout.scroll + layout.contentTop + 8) desired = y - layout.contentTop - 8;
+    else if (y + height > layout.scroll + layout.contentBottom - 8) desired = y + height - layout.contentBottom + 8;
+    desired = NativeLayout::from(layout.width, layout.height, desired).scroll;
+    if (desired != state_.scrollOffset) { state_.scrollOffset = desired; layoutControls(); InvalidateRect(window_, nullptr, FALSE); }
+}
+
+bool NativeApp::focusNextControl(bool reverse) {
+    const std::array<HWND, 25> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_,
+        motionBlurCheck_, advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
+        modelButton_, runtimeButton_, comparisonButton_, historyButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
+    const auto found = std::find(order.begin(), order.end(), GetFocus());
+    const int initial = found == order.end() ? (reverse ? 0 : -1) : static_cast<int>(found - order.begin());
+    for (int distance = 1; distance <= static_cast<int>(order.size()); ++distance) {
+        const int index = (initial + (reverse ? -distance : distance) + static_cast<int>(order.size()) * 2) % static_cast<int>(order.size());
+        const HWND control = order[static_cast<std::size_t>(index)];
+        if (!control || !GetPropW(control, L"RifeLoveFocusEligible") || !IsWindowEnabled(control)) continue;
+        ensureControlVisible(control);
+        if (!IsWindowVisible(control)) continue;
+        SetFocus(control);
+        return GetFocus() == control;
+    }
+    return false;
+}
+
+LRESULT CALLBACK NativeApp::scrollChildProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    const auto original = reinterpret_cast<WNDPROC>(GetPropW(window, L"RifeLoveScrollChildProc"));
+    auto* app = reinterpret_cast<NativeApp*>(GetPropW(window, L"RifeLoveScrollChildOwner"));
+    if (app && message == WM_MOUSEWHEEL) {
+        wchar_t name[32]{}; GetClassNameW(window, name, static_cast<int>(std::size(name)));
+        const bool openList = _wcsicmp(name, L"COMBOBOX") == 0 && SendMessageW(window, CB_GETDROPPEDSTATE, 0, 0);
+        if (!openList) return SendMessageW(app->window_, message, wParam, lParam);
+    }
+    if (app && message == WM_SETFOCUS) app->ensureControlVisible(window);
+    if (message == WM_NCDESTROY) {
+        for (const auto* property : {L"RifeLoveScrollChildProc", L"RifeLoveScrollChildOwner", L"RifeLoveFocusEligible", L"RifeLoveScrollY", L"RifeLoveScrollHeight"}) RemovePropW(window, property);
+    }
+    return original ? CallWindowProcW(original, window, message, wParam, lParam) : DefWindowProcW(window, message, wParam, lParam);
 }
 
 void NativeApp::updateView() {
@@ -1025,6 +1083,7 @@ void NativeApp::updateView() {
         ? L"自然曝光：" + controlText(shutterEdit_) + L"° · " + controlText(samplesEdit_) + L" 次采样；参数可修改"
         : L"自然曝光：关闭；可手动开启并修改参数";
     state_.restorationSummary = L"降噪：关闭 · 超分：关闭";
+    state_.denoiseModeSummary = L"可选降噪：关闭 · 默认项见模型中心";
     state_.outputSizeSummary = L"原始输出尺寸";
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     const int temporalIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
@@ -1034,14 +1093,20 @@ void NativeApp::updateView() {
     if (hasTemporal || hasSpatial) {
         state_.restorationSummary.clear();
         state_.restorationSummary += L"降噪：";
-        state_.restorationSummary += hasTemporal ? L"FastDVDnet" : L"关闭";
+        state_.restorationSummary += hasTemporal
+            ? (automaticTemporalDenoise_ ? L"FastDVDnet 自动高斯*" : L"FastDVDnet 固定 σ25")
+            : L"关闭";
         state_.restorationSummary += L" · 超分：";
         state_.restorationSummary += hasSpatial ? L"×2" : L"关闭";
     }
+    if (hasTemporal) state_.denoiseModeSummary = automaticTemporalDenoise_
+        ? L"实验自动高斯降噪 · 软件解码 / 恢复重放"
+        : L"固定 σ25 · 自动估计关闭（仍降噪）";
     const int outputSizeIndex = outputSizeCombo_ ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
     if (outputSizeIndex > 0) state_.outputSizeSummary = outputTargetLabel(outputSizeIndex);
 #endif
     state_.advancedExpanded = advancedExpanded_;
+    state_.automaticTemporalDenoise = automaticTemporalDenoise_;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     state_.sourceReady = sourceInspected_;
     if (modelLabel_) SetWindowTextW(modelLabel_, state_.modelReady && state_.runtimeReady ? L"模型和运行库 · 已就绪" : L"模型和运行库 · 待检查");
@@ -1078,6 +1143,9 @@ void NativeApp::updateButtonState() {
     for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_,
         rateCustomEdit_, encoderCombo_, platformCombo_, modelButton_, runtimeButton_, motionBlurCheck_,
         temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) if (control) EnableWindow(control, !serviceBusy);
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    EnableWindow(automaticDenoiseButton_, !serviceBusy);
+#endif
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (!serviceBusy) updateRestorationControls();
     updateModelDetails();
@@ -1610,6 +1678,41 @@ void NativeApp::showTaskHistory() {
     refreshTaskHistory();
 }
 
+void NativeApp::showComparison() {
+    if (!comparisonWindow_) comparisonWindow_ = std::make_unique<NativeComparisonWindow>();
+    if (!comparisonWindow_->open(window_, currentSource(), currentOutput()))
+        MessageBoxW(window_, L"无法创建本地逐帧比较窗口。", L"RifeLove", MB_OK | MB_ICONERROR);
+}
+
+bool NativeApp::automaticDenoiseAvailable() const {
+    const int index = static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0));
+    return index > 0 && index <= static_cast<int>(temporalRestorationModels_.size()) &&
+        isTemporalRestoration(temporalRestorationModels_[static_cast<std::size_t>(index - 1)]);
+}
+
+bool NativeApp::setAutomaticDenoise(bool enabled) {
+    if (enabled && !automaticDenoiseAvailable()) return false;
+    automaticTemporalDenoise_ = enabled;
+    updateView();
+    return true;
+}
+
+void NativeApp::configureAutomaticDenoise() {
+    if (!automaticDenoiseAvailable()) {
+        MessageBoxW(window_, L"请先在可选降噪中选择已校验的 FastDVDnet。\n\n实验性自动高斯降噪默认关闭，不是压缩修复或一般细节恢复。",
+            L"实验性自动高斯降噪", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const int choice = MessageBoxW(window_,
+        L"实验性自动高斯降噪仅估计近似高斯噪声并调节 FastDVDnet。\n\n"
+        L"可能将胶片颗粒误判为噪声并损失细节；不能修复压缩伪影，也不等于一般细节恢复。\n"
+        L"当前实现强制软件解码；断点恢复时需要从头重放。默认关闭。\n\n"
+        L"是：启用实验性自动模式\n否：使用固定 σ25（仍降噪）\n取消：保持当前设置\n\n"
+        L"若要完全关闭降噪，请在“可选降噪”中选择关闭。",
+        L"实验性自动高斯降噪", MB_YESNOCANCEL | MB_ICONINFORMATION | (automaticTemporalDenoise_ ? MB_DEFBUTTON1 : MB_DEFBUTTON2));
+    if (choice == IDYES || choice == IDNO) (void)setAutomaticDenoise(choice == IDYES);
+}
+
 void NativeApp::refreshTaskHistory() {
     if (!historyWindow_ || !IsWindow(historyWindow_)) return;
     const auto generation = ++historyGeneration_;
@@ -1648,6 +1751,13 @@ void NativeApp::handleHistoryResult(NativeHistoryResult result) {
 #endif
 
 void NativeApp::applyExportControls(PipelineSettings& settings) const {
+    settings.automaticTemporalDenoise.reset();
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    if (automaticTemporalDenoise_) {
+        if (!automaticDenoiseAvailable()) throw std::invalid_argument("experimental automatic Gaussian denoise requires a selected validated FastDVDnet model");
+        settings.automaticTemporalDenoise.emplace();
+    }
+#endif
     const int rateIndex = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
     if (rateIndex >= 0 && rateIndex < static_cast<int>(kTargetRates.size()))
         settings.targetRate = Rational(kTargetRates[static_cast<std::size_t>(rateIndex)]);
@@ -1683,16 +1793,11 @@ void NativeApp::applyExportControls(PipelineSettings& settings) const {
 #endif
     const int platformIndex = static_cast<int>(SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0));
     if (platformIndex > 0) {
-        const auto& rate = settings.targetRate;
-        const auto roundedRate = rate.numerator() / rate.denominator() + (rate.numerator() % rate.denominator() != 0);
-        if (roundedRate > std::numeric_limits<int>::max() / 2)
-            throw std::invalid_argument("target frame rate exceeds the platform GOP limit");
-        const int integerRate = static_cast<int>(roundedRate);
         const auto profile = platformIndex == 1 ? application::PlatformBitrate::youtube : application::PlatformBitrate::localQuality;
-        const int outputHeight = application::platformOutputHeight(sourceHeight_, settings.encoding.outputHeight,
-            scaleNumerator, scaleDenominator);
-        settings.encoding.bitRate = static_cast<std::int64_t>(application::platformBitrateKbps(profile, outputHeight, integerRate)) * 1000;
-        settings.encoding.gopSize = application::platformGopSizeFrames(profile, integerRate);
+        const auto platform = application::platformExportSettings(profile, settings.targetRate, sourceWidth_, sourceHeight_,
+            settings.encoding.outputWidth, settings.encoding.outputHeight, scaleNumerator, scaleDenominator);
+        settings.encoding.bitRate = static_cast<std::int64_t>(platform.bitRateKbps) * 1000;
+        settings.encoding.gopSize = platform.gopSizeFrames;
     }
     settings.motionBlur.enabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (settings.motionBlur.enabled) {
@@ -1769,18 +1874,11 @@ void NativeApp::startProcessing() {
     job.runtimeDirectory = runtimeDirectory_;
     const int temporalRestorationIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const int restorationIndex = restorationCombo_ ? static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
-    if (temporalRestorationIndex > 0 && temporalRestorationIndex <= static_cast<int>(temporalRestorationModels_.size())) {
-        const auto& temporalRestoration = temporalRestorationModels_[static_cast<std::size_t>(temporalRestorationIndex - 1)];
-        temporalRestorationModelPack_ = temporalRestoration;
-        job.temporalRestorationModelDirectory = temporalRestoration.directory;
-        job.expectedTemporalRestorationDescriptorSha256 = inference::sha256File(temporalRestoration.directory / L"model.json", 256 * 1024);
-    }
-    if (restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size())) {
-        const auto& restoration = spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)];
-        restorationModelPack_ = restoration;
-        job.restorationModelDirectory = restoration.directory;
-        job.expectedRestorationDescriptorSha256 = inference::sha256File(restoration.directory / L"model.json", 256 * 1024);
-    }
+    const auto* temporal = temporalRestorationIndex > 0 && temporalRestorationIndex <= static_cast<int>(temporalRestorationModels_.size())
+        ? &temporalRestorationModels_[static_cast<std::size_t>(temporalRestorationIndex - 1)] : nullptr;
+    const auto* spatial = restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size())
+        ? &spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)] : nullptr;
+    if (!captureRestorationDescriptors(job, temporal, spatial)) return;
     const int platformIndex = static_cast<int>(SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0));
     try {
         applyExportControls(job.settings);
@@ -1833,6 +1931,33 @@ void NativeApp::cancelProcessing() {
 }
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+bool NativeApp::captureRestorationDescriptors(application::ProcessingJob& job,
+    const restoration::ModelPack* temporal, const restoration::ModelPack* spatial) {
+    try {
+        // Finish both reads before changing the captured job or selected packs.
+        // A model removed after discovery is an actionable startup error, not
+        // an exception that may escape the Win32 command callback.
+        const auto temporalHash = temporal ? inference::sha256File(temporal->directory / L"model.json", 256 * 1024) : std::string{};
+        const auto spatialHash = spatial ? inference::sha256File(spatial->directory / L"model.json", 256 * 1024) : std::string{};
+        if (temporal) {
+            job.temporalRestorationModelDirectory = temporal->directory;
+            job.expectedTemporalRestorationDescriptorSha256 = temporalHash;
+            temporalRestorationModelPack_ = *temporal;
+        }
+        if (spatial) {
+            job.restorationModelDirectory = spatial->directory;
+            job.expectedRestorationDescriptorSha256 = spatialHash;
+            restorationModelPack_ = *spatial;
+        }
+        return true;
+    } catch (const std::exception& error) {
+        state_.stage = L"failed";
+        state_.status = L"模型文件检查失败：请恢复所选降噪/超分模型的 model.json 并确认可读，或重新选择模型后再试。详情：" + wideFromUtf8(error.what());
+        updateView();
+        return false;
+    }
+}
+
 void NativeApp::toggleQueuedPause() {
     if (!taskQueue_ || !taskQueue_->busy() || queuePauseTransitionPending_) return;
     queuePauseTransitionPending_ = true;
@@ -2352,6 +2477,9 @@ void NativeApp::syncRestorationSelectors() {
 
 void NativeApp::updateRestorationControls() {
     if (!temporalRestorationCombo_ || !restorationCombo_ || !outputSizeCombo_) return;
+    if (!automaticDenoiseAvailable()) automaticTemporalDenoise_ = false;
+    state_.automaticTemporalDenoise = automaticTemporalDenoise_;
+    if (automaticDenoiseButton_) SetWindowTextW(automaticDenoiseButton_, automaticTemporalDenoise_ ? L"自动降噪：开*" : L"自动降噪：关");
     const int priorSize = static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0));
     if (SendMessageW(outputSizeCombo_, CB_GETCOUNT, 0, 0) >= 3) {
         SendMessageW(outputSizeCombo_, CB_DELETESTRING, 2, 0);
@@ -2692,6 +2820,8 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         else if (action == SB_LINEDOWN) scrollSettings(32);
         else if (action == SB_PAGEUP) scrollSettings(-180);
         else if (action == SB_PAGEDOWN) scrollSettings(180);
+        else if (action == SB_TOP) { state_.scrollOffset = 0; scrollSettings(0); }
+        else if (action == SB_BOTTOM) { state_.scrollOffset = 100000; scrollSettings(0); }
         else if (action == SB_THUMBTRACK || action == SB_THUMBPOSITION) {
             SCROLLINFO info{};
             info.cbSize = sizeof(SCROLLINFO); info.fMask = SIF_TRACKPOS;
@@ -2706,7 +2836,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         if (info) {
             const float s = dpiScale();
             const RECT work = monitorWorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST));
-            info->ptMinTrackSize.x = std::min<LONG>(scaled(850, s), std::max<LONG>(1, work.right - work.left));
+            info->ptMinTrackSize.x = std::min<LONG>(scaled(480, s), std::max<LONG>(1, work.right - work.left));
             info->ptMinTrackSize.y = std::min<LONG>(scaled(530, s), std::max<LONG>(1, work.bottom - work.top));
         }
         return 0;
@@ -2794,6 +2924,8 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             case kStart: startProcessing(); return 0;
             case kCancel: cancelProcessing(); return 0;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+            case kComparison: showComparison(); return 0;
+            case kAutomaticDenoise: configureAutomaticDenoise(); return 0;
             case kTaskHistory: showTaskHistory(); return 0;
             case kRejectionDetails: {
                 if (queueRejections_.empty()) return 0;

@@ -53,6 +53,134 @@ An interrupted task can use either of these paths:
 
 Checkpoint resume is allowed only when the saved manifest matches the current local job, source/model identity and media runtime, the requested output does not already exist, and every committed segment passes its stored hash and full media/timeline verification. The production queue commits a video-only segment every 256 output frames. It decodes from the source beginning to rebuild RIFE context, skips inference for the committed output prefix, generates the rest, then validates and stream-copies the segments into the final file with source audio and supported auxiliary streams. The desktop offers **从检查点继续** for interrupted tasks and keeps **从头重启** as a separate action.
 
+### Media and processing-pipeline content identity
+
+New manifests retain the database's schema-2 envelope and add a version-2
+`mediaPipelineIdentity`. The human-readable FFmpeg version remains diagnostic
+only. The identity binds the actual loaded `avcodec`, `avformat`, `avutil` and
+`swscale` DLLs by SHA-256 and byte count, plus each library's compiled
+configuration digest and ABI version. It follows resolved import-address-table
+targets to fingerprint linked non-OS dependencies, including external codec
+libraries such as OpenH264, Kvazaar and AOM, and `swresample` if imported. This
+also covers software fallbacks of an `auto` encoder. Ordinary Windows system
+libraries are excluded; known third-party codec/library names are still included
+if installed below the Windows directory. Dynamic GPU driver libraries are
+governed by the existing GPU/runtime identity and are not claimed to be covered
+by this FFmpeg import closure.
+
+Core modules are located using their returned compiled-configuration data
+addresses, avoiding executable import stubs that could identify the EXE instead
+of a MinGW DLL. Dependencies are resolved from loaded IAT addresses rather than
+guessed PATH locations. Actual file contents are read under write/delete-denying
+read leases with a bounded 1 MiB hashing buffer. Installation directories,
+timestamps and file IDs are not identity inputs; identical DLL bytes at a new
+location remain equivalent. Hashing is cancellation-aware and performed when
+creating/checking the manifest; it is not a per-frame operation. A failed lookup
+or read fails verification instead of falling back to a version string.
+
+Writer identity includes the explicit conversion algorithm
+`swscale-bicubic-layout-lanczos-resize-accurate-rnd-matrix-range-v2` and a build-time
+SHA-256 of `src/media/video_writer.cpp`. CMake watches that source and regenerates
+the compiled digest when it changes. Consequently, the corrected chroma-layout
+filter cannot reuse segments whose old writer implementation is unproven, even
+when both FFmpeg builds report 8.1.3. Future conversion changes must keep the
+algorithm label accurate; the source digest provides an additional automatic
+guard.
+
+The embedded `processingPipeline` proof has its own schema version 1 and
+`rife-processing-source-contract-v1` algorithm contract. Its explicit reviewed
+file inventory is maintained in `cmake/ProcessingPipelineIdentity.cmake`:
+all production `src/` files and headers, the root build definition, this identity
+module and generated-header templates. It therefore covers RIFE color,
+decode/encode, timeline scheduling, interpolation, scene detection, restoration,
+GPU/inference and checkpoint replay changes, including header-only changes.
+Tests, native/QML UI files, packaging and model weights are outside that list;
+model and runtime identity checks still apply independently. A configure-time
+omission audit rejects any new unreviewed file under `src/`. All controlled
+files are configure dependencies, so their changes regenerate the compiled proof.
+
+The build emits an auditable `processing_pipeline_identity.json` alongside its
+generated header. Its aggregate SHA-256 covers `algorithm=<version>\n` followed
+by sorted `<relative/path>=<file SHA-256>\n` records. The proof also binds the
+compiler ID/version, explicit single-configuration build type, C++20 contract
+and SHA-256 of global/configuration C++ flags. Manifest loading independently
+recomputes the aggregate and then requires the entire processing proof to match.
+This is deliberately conservative: even a non-pixel production-source change
+can require a fresh output job. Build paths and installed source files are not
+runtime identity inputs. No source tree is required on the user's machine.
+
+**Unfinished legacy tasks:** a manifest carrying only a version string, or the
+earlier version-1 DLL/writer proof without processing-source identity, has no
+complete proof of which pipeline produced its segments. Explicit resume rejects
+it with a diagnostic requiring a new output job. The database/task configuration,
+identity, manifest, committed segment bytes and even uncommitted segment files
+are preserved. No cleanup occurs before media identity matches. This release
+does not infer a safe exception merely from a source pixel format: the saved
+proof does not establish every writer operation that happened. A settings-only
+legacy schema migration is still testable as a historical transformation, but
+does not bypass the new queue's mandatory media proof.
+
+**Already completed/published outputs:** existing results are not concatenated
+with newly encoded segments. Completed history is retained. Startup reconciliation
+of an already published output continues to require its saved full-file hash,
+byte count and validation-result proof; this transition does not re-encode or
+delete that output and does not certify an old result's perceptual color quality.
+The new media identity gates segment reuse, rather than reclassifying all old
+completed files as current-writer output.
+
+CPU regressions compare each recorded DLL digest with an independent loaded
+module address/file hash, reject each changed core/external DLL and writer
+identity despite equal version strings, and exercise real SQLite checkpoint
+creation and same-proof resume. A separate four-case legacy-publication
+regression preserves completed history, adopts a byte-identical already
+published FFV1 file only with saved validation proof, and refuses changed or
+unproven final files without touching them. Changed/missing media proof is rejected while
+configuration, identity, manifest and committed/uncommitted file bytes remain
+intact. These fixtures run FFV1 media verification without GPU/model inference;
+they are not a multi-hour or all-codec recovery qualification.
+
+Source-identity regressions additionally change RIFE color, timeline and
+restoration source/header digests while retaining the writer digest, reseal the
+aggregate, and require refusal against the current build. They cover algorithm,
+compiler/build flags, malformed aggregate and old proof refusal; the same proof
+still resumes. A pure CMake fixture checks deterministic generation, actual
+source/header edits, compiler flags and the unreviewed-source omission guard.
+
+Historical embedded-media-schema-1 evidence, executed 2026-10-31: independent
+CPU probes loaded the baseline and x86asm SDKs
+in separate processes and checked every core digest against that SDK's actual
+file bytes. Both reported FFmpeg `8.1.3`; their `avcodec` SHA-256 values were
+`d33ecd64d8f526e04b642889892d27e8b56f45f0c1e43d90e42c9afa443e6844`
+and `d9ecfb2355486d3870495444340047c2e883a3837e6f53b0a93dd354785ece9a`
+respectively. The `swscale` digests also differed:
+`610e15224bc94f8610ede5a0227247ff76810523cd97ad02458f057af9f2af5d`
+(baseline) and `f2745605d914c8ba6828853b6bad2fe4581eca68c5665512014f338ec7afc137`
+(x86asm). Both identities captured seven linked dependencies: AOM, Kvazaar,
+OpenH264, swresample, libgcc, libstdc++ and libwinpthread. The writer source
+identity was the same. Total file bytes hashed per identity were 41,037,782
+(baseline) and 43,166,166 (x86asm), using the bounded buffer above; this is not
+per-frame work. The ignored evidence is
+`work/verification/media-identity-20261031/{baseline.xml,x86asm.xml,summary.json}`.
+The probe executable there is a hard link to the local test executable, not an
+additional distributed application or a model bundle. The selected CPU suite
+covering queue/media identity, stored tasks, settings, batch policy and dynamic
+noise controls passed 49/49, including the four-case legacy-publication fixture.
+No GPU processing was run for this identity check.
+
+A separate historical media-schema-1 GPU queue replay rebuilt the independent x86asm driver
+and ran the existing 12-source-frame RIFE + automatic FastDVDnet synthetic
+fixture through ONNX Runtime CUDA. Fresh tasks wrote identical media proof;
+an intentionally terminated paused worker recovered in a new process, retained
+the original serialized manifest and reused two committed segments unchanged
+(4 frames), processing the remaining 20. The complete 24-frame decoded pixels,
+PTS and decoded audio matched the uninterrupted reference, and the source hash
+was unchanged. Core DLL digests were checked against the selected x86asm SDK,
+and the compiled writer digest matched its source. Evidence is retained under
+`work/verification/automatic-denoise-checkpoint-media-identity-x86asm-20261031/`.
+This proves that earlier small same-identity GPU recovery path, not the newer
+source-proof schema, cross-build reuse or multi-hour qualification. The new
+schema requires rebuilt binaries and its own validation before making that claim.
+
 Committed segments and uncommitted `.partial` files are left untouched when the process first reopens the database. On an explicit checkpoint-resume request, RifeLove first verifies the immutable task manifest and every committed segment, then removes only unjournaled `segment-*.mkv` files and matching `.partial` writers at or beyond the committed segment prefix inside that task's checkpoint directory. It preserves unrelated files and never scans or deletes partial outputs beside the requested final output. Recovery never treats a partial file as a complete checkpoint. A previously validated final output is adopted automatically after restart only when its saved byte count, SHA-256 and validation-result structure all match. A modified output or damaged proof stays interrupted and is never overwritten. Cooperative cancellation removes its own live partial output; process termination does not.
 
 ## Evidence and remaining scope

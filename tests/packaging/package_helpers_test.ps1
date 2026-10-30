@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "../../packaging/windows/package-helpers.ps1")
+. (Join-Path $PSScriptRoot "../../packaging/windows/ffmpeg-sdk-helpers.ps1")
 
 function Assert-Equal {
     param([Parameter(Mandatory=$true)]$Expected,[Parameter(Mandatory=$true)]$Actual,[Parameter(Mandatory=$true)][string]$Message)
@@ -20,6 +21,35 @@ $linkedTarget = Join-Path $testRoot "linked-target"
 $runtimeRoot = Join-Path $testRoot "runtime"
 
 try {
+    $enabledConfiguration = ConvertFrom-FfmpegConfiguration "ffmpeg version 8.1.3 test`nconfiguration: --enable-shared --enable-x86asm --enable-nvenc"
+    Assert-Equal $true $enabledConfiguration.x86asmEnabled "Report actual x86asm build flag"
+    $disabledConfiguration = ConvertFrom-FfmpegConfiguration "ffmpeg version 8.1.3 test`nconfiguration: --enable-shared --disable-x86asm --enable-nvenc"
+    Assert-Equal $false $disabledConfiguration.x86asmEnabled "Report baseline build flag"
+    if ($enabledConfiguration.configurationSha256 -ceq $disabledConfiguration.configurationSha256) { throw "Different SDK configurations need different identities." }
+    foreach ($flags in @('--enable-shared', '--enable-x86asm --disable-x86asm')) {
+        $rejected = $false
+        try { ConvertFrom-FfmpegConfiguration "ffmpeg version test`nconfiguration: $flags" | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw "Ambiguous x86asm configuration must be rejected: $flags" }
+    }
+    $sdkRoot = Join-Path $testRoot "sdk"
+    $sdkRuntime = Join-Path $testRoot "sdk-runtime"
+    Write-TestFile (Join-Path $sdkRoot "bin/swscale-9.dll") "selected SDK bytes"
+    Write-TestFile (Join-Path $sdkRuntime "swscale-9.dll") "selected SDK bytes"
+    $hashes = Assert-FfmpegRuntimeIdentity $sdkRoot $sdkRuntime @('swscale-9.dll')
+    Assert-Equal 64 $hashes['swscale-9.dll'].Length "SDK DLL hash recorded"
+    $unchangedPlan = Get-FfmpegRuntimeRefreshPlan $sdkRoot $sdkRuntime @('swscale-9.dll')
+    Assert-Equal $false $unchangedPlan.files[0].replace "Identical SDK DLL remains reusable"
+    Assert-Equal 0 $unchangedPlan.replacementBytes "Identical SDK DLL needs no additional bytes"
+    Write-TestFile (Join-Path $sdkRuntime "swscale-9.dll") "old baseline bytes"
+    $staleRuntimeRejected = $false
+    try { Assert-FfmpegRuntimeIdentity $sdkRoot $sdkRuntime @('swscale-9.dll') | Out-Null }
+    catch { $staleRuntimeRejected = $_.Exception.Message.Contains('differs from the selected SDK') }
+    if (-not $staleRuntimeRejected) { throw "Old SDK DLLs must never be relabeled as a new build with the same source lock." }
+    $beforeRefreshHash = (Get-FileHash -LiteralPath (Join-Path $sdkRuntime 'swscale-9.dll') -Algorithm SHA256).Hash
+    $refreshPlan = Get-FfmpegRuntimeRefreshPlan $sdkRoot $sdkRuntime @('swscale-9.dll')
+    Assert-Equal $true $refreshPlan.files[0].replace "Configuration refresh identifies a changed DLL"
+    Assert-Equal (Get-Item (Join-Path $sdkRoot 'bin/swscale-9.dll')).Length $refreshPlan.replacementBytes "Configuration refresh reports exact added bytes"
+    Assert-Equal $beforeRefreshHash (Get-FileHash -LiteralPath (Join-Path $sdkRuntime 'swscale-9.dll') -Algorithm SHA256).Hash "Planning never overwrites the source bundle"
     $modelHash = "a" * 64
     $qualification = [pscustomobject]@{
         schemaVersion = 1

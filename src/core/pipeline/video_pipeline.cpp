@@ -229,6 +229,12 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             settings.temporalDenoiseSigma255 > 55.0F || (settings.temporalDenoiseSigma255 > 0.0F && settings.temporalDenoiseSigma255 < 5.0F))
             throw std::invalid_argument("Temporal restoration noise sigma must be zero or a value from 5 to 55");
     }
+    std::optional<restoration::AutomaticDenoiseController> automaticDenoise;
+    if (settings.automaticTemporalDenoise) {
+        if (!temporalBackend)
+            throw std::invalid_argument("Automatic Gaussian denoising requires the FastDVDnet temporal model");
+        automaticDenoise.emplace(*settings.automaticTemporalDenoise);
+    }
     if (outputBackend) {
         outputRateCapabilities = outputBackend->capabilities();
         restoration::validateCapabilities(*outputRateCapabilities);
@@ -403,6 +409,13 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     bool blurBeginsAtSourceStart = true;
     std::optional<restoration::TemporalWindow> temporalWindow;
     if (temporalCapabilities) temporalWindow.emplace(*temporalCapabilities);
+    result.automaticTemporalDenoiseActive = automaticDenoise.has_value();
+    struct SourceNoiseObservation {
+        std::size_t index;
+        restoration::GaussianNoiseEstimate estimate;
+        bool sceneCut;
+    };
+    std::deque<SourceNoiseObservation> sourceNoise;
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
         if (progress) {
             const double seconds = elapsed();
@@ -695,6 +708,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             const auto analysis = quality::analyzePair(adapter.analysisView(*temporalPreviousPrepared),adapter.analysisView(prepared),settings.scene);
             cut = analysis.action == quality::PairAction::sceneCutHold;
         }
+        if (automaticDenoise) {
+            auto estimate = measure(result.timings.sceneAnalysisSeconds,[&] { return restoration::estimateGaussianNoise(prepared,stop); });
+            sourceNoise.push_back({frame.index,estimate,cut});
+            ++result.automaticDenoiseAnalyzedFrames;
+        }
         temporalPreviousPrepared = std::move(prepared);
         return cut;
     };
@@ -702,6 +720,16 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         for (auto& request : requests) {
             request.stop = stop;
             request.denoiseSigma255 = settings.temporalDenoiseSigma255;
+            if (automaticDenoise) {
+                const auto& center = request.context[request.centerIndex];
+                if (sourceNoise.empty() || sourceNoise.front().index != center.index)
+                    throw std::logic_error("Automatic denoise observation does not match the source-frame window");
+                const auto value = automaticDenoise->update(*center.timestamp,sourceNoise.front().estimate,sourceNoise.front().sceneCut);
+                request.denoiseSigma255 = value.sigma255;
+                if (value.confident) ++result.automaticDenoiseConfidentFrames;
+                if (value.sigma255 > 0.0F) ++result.automaticDenoiseAppliedFrames;
+                sourceNoise.pop_front();
+            }
             auto restored = measure(result.timings.restorationSeconds,[&] {
                 return temporalBackend->restore(std::move(request)).get().centerFrame;
             });
@@ -716,7 +744,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         checkStop(stop);
         if (!temporalWindow) processSourceFrame(frame);
         else processTemporalRequests(temporalWindow->push(frame,temporalSceneCutBefore(frame)));
-    },encoding.videoStreamIndex,stop,{media::DecodeAcceleration::preferCuda,device.info().ordinal});
+    // Automatic sigma must replay the identical source samples before a
+    // checkpoint boundary. Bind this software decode policy in job identity
+    // rather than allowing a later NVDEC/software fallback to change samples.
+    // decodeVideo starts at the beginning even when output segments are reused.
+    },encoding.videoStreamIndex,stop,{automaticDenoise ? media::DecodeAcceleration::software : media::DecodeAcceleration::preferCuda,device.info().ordinal});
     const auto decodeWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - decodeStarted).count();
     result.timings.sourceDecodeSeconds = std::max(0.0,decodeWallSeconds - decodeCallbackSeconds);
     result.sourceFrames = decoded.frameCount;
@@ -725,6 +757,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.sourceDecodeAcceleration = decoded.acceleration;
     result.sourceDecodeFallbackReason = decoded.accelerationFallbackReason;
     if (temporalWindow) processTemporalRequests(temporalWindow->finish());
+    if (!sourceNoise.empty()) throw std::logic_error("Automatic denoise observations were not fully drained");
     if (motionBlurActive ? blurFrames.empty() : !left) throw std::runtime_error("Source produced no video frames");
     if (!motionBlurActive && right) pair(*left,*pairAnalysis,*right);
     // Copy the decoder reference: draining/pruning the shutter window below

@@ -38,6 +38,21 @@ NVENC 结果来自 `work/codec-ffmpeg-build/ffmpeg-install`，包含 H.264 NVENC
 
 模型权重仍按本机使用限制处理：清单中的 `redistribution` 为 `local-only-until-license-review`；Real-ESRGAN 权重的再分发授权尚未确认。FastDVDnet 的质量边界见下节，默认关闭。
 
+## 2026-10-31 x86asm 候选 SDK 回归（未覆盖旧包）
+
+当前使用独立 Release 目录 `build/native-sdk-regression-x86asm`，且缓存中的 FFmpeg SDK、FFmpeg 工具和 ffprobe 工具均指向 `work/codec-ffmpeg-build-x86asm/ffmpeg-install`。未替换既有 SDK、正式构建或用户本机包。
+
+- 53 项聚焦媒体、色彩、队列与打包回归通过。随后 153 项扩展 CPU 回归为 151 通过、2 失败：原生 UI 缩放列宽、旧检查点身份恢复；失败需交各自模块修复，不作为媒体像素验证通过的替代品。
+- OpenH264 H.264、Kvazaar HEVC、libaom AV1 8/10-bit 的真实 480×360、12 帧编码，均保留两条 AAC 音轨，独立 FFmpeg 视频与音频解码通过；像素比较 41.4–43.9 dB。
+- 产品 `VideoMuxWriter` 的 7 组已知像素验证通过，覆盖 yuv420p 同格式不缩放/放大/4K→1440p 缩小、NV12 不缩放及缩小、planar 10-bit 与 P010 的 4K→1440p 缩小。独立解码后的色块内部误差全部为 0；只有预期滤波边界被排除。这验证写出器缩放环节，不声称运行真实超分模型。
+- 旧 r11 包与新 SDK 的硬链接复用实测被 DLL 哈希保护拒绝，未生成目标包。配置身份、DLL 哈希与源码锁身份分别记录，不能再用共同源码锁将旧 SDK 冒充新配置。
+
+GPU 时段释放后，CUDA/TensorRT FP32 六组参考、各 36 项契约验证及 6 项 GPU 内存/生命周期测试通过（8 个 CTest 项）；H.264 NVENC、HEVC NVENC 8/10-bit 自然素材短片通过独立解码；产品写出器 NV12/H.264 和 P010/HEVC 的 3840×2160→2560×1440 通过已知像素比较，前者色块内部零误差，后者最大色度误差为 3/2 个 10-bit 码值。
+
+3 条真实 RIFE 应用服务链路（CUDA＋OpenH264、TensorRT＋NVENC/NV12、CUDA＋NVENC/P010）均产生 24 帧、48 FPS、保持 0.5 秒源视频时长，源视频实际 CUDA 硬件解码，无报告的推理后端/编码器回退。独立 FFmpeg 解码全部帧，PTS 对目标网格最大误差 0.5 毫秒，符合 Matroska 1 毫秒时间基；两条 AAC 音轨各 25 包的 payload SHA-256 与 PTS 均逐包保持。10-bit 素材的 42 毫秒非零视频起点得到保留。CUDA 有 cuDNN 卷积算法 fallback 警告，不据此宣称普遍处理速度。
+
+本地证据：`out/native-sdk-regression-20261031/` 下 `cpu-codecs.json`、`writer-cpu.json`、`gpu-codecs.json`、`writer-gpu.json`、`real-rife-independent-validation.json`，以及独立构建的 CPU/GPU JUnit 报告。新本机候选 `out/RifeLoveNative-local-20261031-x86asm-sdkcheck` 已生成，仅独立复制 7 个不同 FFmpeg DLL（33,423,872 字节）及新 EXE/少量元数据，大型模型与推理库保持经校验的硬链接，旧 r11 未改写。此具体 EXE 的 GUI 启动验收仍待完成；这些短片不能推出所有 GPU/素材、长视频、真实超分模型或完整发布已验收。运行库和模型仍受既有本机使用、许可审核边界约束。
+
 ## FastDVDnet 本机实验性限制
 
 `models/fastdvdnet-clipped-five-frame-sdr8-eval` 随隔离本机包提供，但默认关闭。它只表示已经完成的 SDR8 五帧时序降噪实验，不代表通用压缩修复、去模糊、超分辨率或细节增强能力。

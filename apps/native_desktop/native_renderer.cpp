@@ -154,6 +154,7 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     renderTarget_->DrawLine(D2D1::Point2F(px(l.side), 0), D2D1::Point2F(px(l.side), px(l.height)), brush_.get());
     cardAt(18, 24, 32, 32, D2D1::ColorF(0xA2E7CB), 9);
     text(L"R", 27, 25, 24, 30, 18, D2D1::ColorF(0x10241D), true);
+    if (!l.singleColumn) {
     text(L"RifeLove", 61, 23, l.side - 67, 25, 17, white, true);
     text(L"视频增强工作台", 61, 50, l.side - 67, 18, 10, muted);
     text(L"工作空间", 22, 107, l.side - 44, 18, 10, muted);
@@ -183,8 +184,17 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
             22, l.height - 89, l.side - 44, 52, 11, white, false, true);
         text(L"离线处理 · 源文件保持不变", 22, l.height - 29, l.side - 44, 19, 10, muted);
     }
+    } else {
+        text(L"工作", 18, 111, 40, 20, 10, muted);
+        cardAt(8, 140, 48, 34, D2D1::ColorF(0x21352F), 8);
+        text(L"插帧", 18, 148, 36, 22, 11, accent, true);
+        if (l.height > 580) text(L"本地", 18, l.height - 38, 40, 20, 10, accent);
+    }
     text(L"工作室", l.left, 17, 200, 19, 10, muted);
-    text(L"让每一段运动，更流畅。", l.left, 39, l.right - l.left - 150, 36, 23, white, true);
+    text(l.singleColumn ? L"插帧" : L"让每一段运动，更流畅。", l.left, 39, l.right - l.left - 280, 36, l.singleColumn ? 18 : 23, white, true);
+    if (l.contentBottom < l.contentEnd)
+        text(l.scroll < l.contentEnd - l.contentBottom ? L"更多设置 ↓  ·  滚轮滚动 / Tab 自动定位" : L"返回上方 ↑  ·  滚轮 / Shift+Tab 自动定位",
+            l.left, 76, l.right - l.left, 16, 10, blue);
     drawPill(state.processing ? L"●  正在处理" : L"●  完全本地", px(l.right - 126), px(30), px(l.right), px(60), D2D1::ColorF(0x1B2C27), accent);
 
     renderTarget_->PushAxisAlignedClip(D2D1::RectF(px(l.left - 1), px(l.contentTop), px(l.right + 1), px(l.contentBottom)), D2D1_ANTIALIAS_MODE_ALIASED);
@@ -194,6 +204,7 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     const float rw = l.exportCardWidth();
     const float exportLeft = l.exportContentLeft();
     const float exportWidth = l.exportContentWidth();
+    const float ey = y + l.exportOffset;
     cardAt(l.left, y + 104, lw, 176);
     text(L"01", l.left + 20, y + 118, 28, 22, 10, accent, true);
     text(L"源视频", l.left + 53, y + 116, lw - (l.compactImport ? 84 : 190), 26, 14, white, true);
@@ -211,38 +222,37 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     cardAt(l.left, y + 296, lw, 330);
     text(L"02", l.left + 20, y + 311, 28, 22, 10, blue, true);
     text(L"画质与运动", l.left + 53, y + 309, lw - 84, 26, 14, white, true);
-    text(state.restorationSummary.empty() ? L"降噪：关闭 · 超分：关闭" : state.restorationSummary,
-        l.left + 250, y + 310, lw - 270, 22, 10, muted, false, false);
     // The native controls are separate so temporal denoise and spatial
     // super-resolution can be enabled independently. Keep their labels close
     // to the corresponding fields so long model names remain understandable.
-    text(L"可选降噪 · 默认项见模型中心", l.left + 20, y + 331, lw - 40, 20, 11, muted);
+    text(state.denoiseModeSummary.empty() ? L"可选降噪 · 默认项见模型中心" : state.denoiseModeSummary,
+        l.left + 20, y + 331, lw - 40, 20, 11, state.automaticTemporalDenoise ? warning : muted);
     text(L"超分辨率 · 默认项见模型中心", l.left + 20, y + 397, lw - 40, 20, 11, muted);
     text(L"输出尺寸 · 仅超分模型可用", l.left + 20, y + 463, lw - 40, 20, 11, muted);
     line(l.left + 20, y + 524, lw - 40);
     if (state.advancedExpanded) {
         text(L"快门角度", l.left + 20, y + 589, 64, 20, 10, muted);
-        text(L"采样数", l.left + 170, y + 589, 62, 20, 10, muted);
+        text(L"采样数", l.left + (lw - 40 < 280 ? 154 : 170), y + 589, lw - 40 < 280 ? 54 : 62, 20, 10, muted);
     } else {
         text(state.motionBlurSummary, l.left + 20, y + 581, lw - 40, 38, 11, muted, false, true);
     }
     line(l.left + 20, y + 624, lw - 40);
 
-    cardAt(second, y + 104, rw, 522);
-    text(L"03", exportLeft, y + 118, 28, 22, 10, accent, true);
-    text(L"导出设置", second + 53, y + 116, rw - 78, 26, 14, white, true);
-    text(L"导出预设", exportLeft, y + 141, exportWidth, 18, 10, muted);
-    text(L"目标帧率", exportLeft, y + 217, exportWidth, 20, 11, muted);
-    text(L"编码器", exportLeft, y + 295, exportWidth, 20, 11, muted);
-    text(L"输出文件", exportLeft, y + 374, exportWidth, 20, 11, muted);
+    cardAt(second, ey + 104, rw, 522);
+    text(L"03", exportLeft, ey + 118, 28, 22, 10, accent, true);
+    text(L"导出设置", second + 53, ey + 116, rw - 78, 26, 14, white, true);
+    text(L"导出预设", exportLeft, ey + 141, exportWidth, 18, 10, muted);
+    text(L"目标帧率", exportLeft, ey + 217, exportWidth, 20, 11, muted);
+    text(L"编码器", exportLeft, ey + 295, exportWidth, 20, 11, muted);
+    text(L"输出文件", exportLeft, ey + 374, exportWidth, 20, 11, muted);
     if (rw > 360)
-        text(L"悬停或右键查看完整路径", second + rw - 220, y + 375, 200, 20, 10, accent, false, false);
-    cardAt(exportLeft, y + 394, exportWidth, 42, D2D1::ColorF(0x141922), 7);
+        text(L"悬停或右键查看完整路径", second + rw - 220, ey + 375, 200, 20, 10, accent, false, false);
+    cardAt(exportLeft, ey + 394, exportWidth, 42, D2D1::ColorF(0x141922), 7);
     text(state.outputPath.empty() ? L"尚未设置输出文件" : state.outputPath,
-        exportLeft, y + 440, exportWidth, 18, 10, white);
-    line(exportLeft, y + 498, exportWidth);
-    text(state.platformSummary, exportLeft, y + 511, exportWidth, 78, 11, muted, false, true);
-    text(L"仅本地导出 · 不上传 · 不承诺平台播放帧率", exportLeft, y + 594, exportWidth, 23, 10, muted);
+        exportLeft, ey + 440, exportWidth, 18, 10, white);
+    line(exportLeft, ey + 498, exportWidth);
+    text(state.platformSummary, exportLeft, ey + 511, exportWidth, 78, 11, muted, false, true);
+    text(L"仅本地导出 · 不上传 · 不承诺平台播放帧率", exportLeft, ey + 594, exportWidth, 23, 10, muted);
     renderTarget_->PopAxisAlignedClip();
 
     // The primary action dock is never scrolled off-screen.
@@ -250,12 +260,12 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     const auto statusColor = state.stage == L"failed" ? error : state.processing ? blue : state.stage == L"completed" ? accent : muted;
     const bool paused = state.stage == L"已暂停";
     text(paused ? L"已暂停" : state.processing ? L"正在处理" : state.stage == L"completed" ? L"处理完成" : L"任务状态",
-        l.left + 2, l.dock + 19, 140, 22, 11, statusColor, true);
+        l.left + 2, l.dock + (l.singleColumn ? 8 : 19), 140, 22, 11, statusColor, true);
     std::wstring status = state.status.empty() ? L"选择源视频开始检查" : state.status;
     if (state.processing && !paused)
         status = std::to_wstring(state.outputFrames) + L" 帧  ·  " + std::to_wstring(static_cast<int>(state.processingFps * 10.0) / 10.0) + L" 处理 FPS  ·  " + status;
     else if (paused) status = L"已生成 " + std::to_wstring(state.outputFrames) + L" 帧  ·  " + status;
-    text(status, l.left + 2, l.dock + 43, l.right - l.left - 360, 42, 11, statusColor, false, true);
+    text(status, l.left + 2, l.dock + (l.singleColumn ? 32 : 43), l.right - l.left - (l.singleColumn ? 4 : 360), 42, 11, statusColor, false, true);
     const HRESULT result = renderTarget_->EndDraw();
     if (result == D2DERR_RECREATE_TARGET) discardTarget();
     return SUCCEEDED(result);

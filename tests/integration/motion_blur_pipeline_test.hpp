@@ -54,7 +54,8 @@ private:
 // Small, lossless, explicitly tagged SDR inputs. Matroska stores milliseconds;
 // its actual rational decoded PTS (including quantized high-FPS cadence), rather
 // than the nominal rate below, drive the production exposure window.
-void writeExposureSource(const std::filesystem::path& path, int rate, int count, int cutAt = -1) {
+void writeExposureSource(const std::filesystem::path& path, int rate, int count, int cutAt = -1,
+    const std::function<int(int,int,int,int)>& lumaTransform = {}) {
     using rifelove::media::detail::check;
     struct Output {
         AVFormatContext* value = nullptr;
@@ -116,7 +117,7 @@ void writeExposureSource(const std::filesystem::path& path, int rate, int count,
             const bool bar = (x - index % 64 + 64) % 64 < 4;
             const bool after = cutAt >= 0 && index >= cutAt;
             const int luma = cutAt < 0 ? (bar ? 224 : 32) : after ? (bar ? 224 : 192) : (bar ? 64 : 32);
-            frame.value->data[0][y * frame.value->linesize[0] + x] = static_cast<std::uint8_t>(luma);
+            frame.value->data[0][y * frame.value->linesize[0] + x] = static_cast<std::uint8_t>(lumaTransform ? lumaTransform(index,x,y,luma) : luma);
             frame.value->data[1][y * frame.value->linesize[1] + x] = 128;
             frame.value->data[2][y * frame.value->linesize[2] + x] = 128;
         }

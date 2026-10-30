@@ -44,15 +44,35 @@ int wmain(int argc, wchar_t** wide) {
         const bool restorationRecoveryMode = mode == "restoration-recover";
         const bool motionBlurHold = mode == "motion-blur-hold";
         const bool motionBlurRecovery = mode == "motion-blur-recover";
-        require(dualRestorationHold ? argc == 9 : (restorationHold ? argc == 8 : argc == 7),
+        const bool automaticDenoiseHold = mode == "automatic-denoise-hold";
+        const bool automaticDenoiseRun = mode == "automatic-denoise-run";
+        const bool automaticDenoiseRecovery = mode == "automatic-denoise-recover";
+        require(dualRestorationHold ? argc == 9 : ((restorationHold || automaticDenoiseHold || automaticDenoiseRun) ? argc == 8 : argc == 7),
             "Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK] [TEMPORAL_RESTORATION_PACK]");
         require((!dualRestorationRecovery && !motionBlurRecovery) || argc == 7,
             "Dual restoration recovery expects MODE DIRECTORY SOURCE PACK RUNTIME MARKER");
         const auto database = root / "native-queue.sqlite";
-        const bool restorationRecovery = restorationHold || restorationRecoveryMode || dualRestorationHold || dualRestorationRecovery || motionBlurHold || motionBlurRecovery;
+        const bool restorationRecovery = restorationHold || restorationRecoveryMode || dualRestorationHold || dualRestorationRecovery || motionBlurHold || motionBlurRecovery ||
+            automaticDenoiseHold || automaticDenoiseRun || automaticDenoiseRecovery;
         TaskQueue queue(database,restorationRecovery ? 2 : (mode == "hold" || mode == "hold-complete" || mode == "hold-published" ||
             mode == "reject-published" || mode == "reject-proof" || mode == "recover") ? 16 : 256);
         if (mode == "owner") { std::cout << "ownership acquired\n"; return 0; }
+        if (automaticDenoiseRun) {
+            auto task = job(argv[3],root / "automatic-output.mkv",argv[4],argv[5]);
+            task.settings.inferenceBackend = "cuda";
+            task.temporalRestorationModelDirectory = path(argv[7]);
+            task.settings.automaticTemporalDenoise.emplace();
+            (void)queue.enqueue({task}); Events events;
+            require(queue.start([&](QueueEvent event) {
+                if (event.processing.result) { std::ofstream report(path(argv[6])); report << serializeResult(*event.processing.result); }
+                if (event.drained) { std::lock_guard lock(events.mutex); events.error = event.queueError; events.drained = true; events.condition.notify_one(); }
+            }),"Automatic denoise queue did not start");
+            events.waitFor(events.drained); queue.wait();
+            require(events.error.empty(),"Automatic denoise queue aborted");
+            const auto rows = queue.list();
+            require(rows.size() == 1 && rows[0].task.state == TaskState::completed,"Automatic denoise task did not complete");
+            return 0;
+        }
         if (mode == "stress") {
             std::vector<ProcessingJob> jobs;
             for (int index = 0; index < 20; ++index) {
@@ -89,7 +109,7 @@ int wmain(int argc, wchar_t** wide) {
                 "Invalid publication result did not produce a recovery diagnostic");
             return 0;
         }
-        if (mode == "recover" || mode == "restoration-recover" || mode == "dual-restoration-recover" || mode == "motion-blur-recover") {
+        if (mode == "recover" || mode == "restoration-recover" || mode == "dual-restoration-recover" || mode == "motion-blur-recover" || automaticDenoiseRecovery) {
             require(queue.recoveredCount() <= 1,"Recovery changed an unexpected number of queue tasks");
             const auto rows = queue.list(); require(rows.size() == 1,"Crash task is missing");
             if (rows[0].task.state == TaskState::completed) {
@@ -104,15 +124,18 @@ int wmain(int argc, wchar_t** wide) {
             try { queue.resumeCheckpoint(rows[0].task.id); resumedCheckpoint = true; } catch (const std::logic_error&) {}
             require(resumedCheckpoint,"Interrupted task with a committed segment could not be resumed");
             Events events;
-            require(queue.start([&](QueueEvent event) { if (event.drained) { std::lock_guard lock(events.mutex); events.error = event.queueError; events.drained = true; events.condition.notify_one(); } }),"Recovery queue did not start");
+            require(queue.start([&](QueueEvent event) {
+                if (automaticDenoiseRecovery && event.processing.result) { std::ofstream report(path(argv[6])); report << serializeResult(*event.processing.result); }
+                if (event.drained) { std::lock_guard lock(events.mutex); events.error = event.queueError; events.drained = true; events.condition.notify_one(); }
+            }),"Recovery queue did not start");
             events.waitFor(events.drained); queue.wait(); require(events.error.empty(),"Checkpoint recovery queue errored");
             const auto after = queue.list(); require(after.size() == 1 && after[0].task.id == rows[0].task.id && after[0].task.state == TaskState::completed,"Checkpoint resume failed or rewrote task history");
             require(std::filesystem::is_regular_file(path(after[0].task.outputPath)),"Checkpoint resume did not publish the requested output");
             return 0;
         }
-        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published" || mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") {
+        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published" || mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold" || automaticDenoiseHold) {
             auto task = job(argv[3],root / "crash-output.mkv",argv[4],argv[5]);
-            task.settings.targetRate = (mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") ? Rational(60) :
+            task.settings.targetRate = (mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold" || automaticDenoiseHold) ? Rational(60) :
                 (mode == "hold-complete" || mode == "hold-published" ? Rational(64,11) : Rational(6));
             if (mode == "restoration-hold" || mode == "dual-restoration-hold") {
                 task.restorationModelDirectory = path(argv[7]);
@@ -125,14 +148,19 @@ int wmain(int argc, wchar_t** wide) {
                 task.settings.motionBlur.shutterAngleDegrees = 180;
                 task.settings.motionBlur.sampleCount = 4;
             }
+            if (automaticDenoiseHold) {
+                task.settings.inferenceBackend = "cuda";
+                task.temporalRestorationModelDirectory = path(argv[7]);
+                task.settings.automaticTemporalDenoise.emplace();
+            }
             const auto id = queue.enqueue({task}).front();
             Events events;
             require(queue.start([&](QueueEvent event) {
                 if (event.processing.stage == "processing") {
                     std::ofstream status(root / "hold-progress.txt"); status << event.processing.outputFrames;
                 }
-                if ((mode == "hold" || mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") && event.processing.stage == "processing" &&
-                    event.processing.outputFrames >= ((mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") ? 4U : 18U)) {
+                if ((mode == "hold" || mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold" || automaticDenoiseHold) && event.processing.stage == "processing" &&
+                    event.processing.outputFrames >= ((mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold" || automaticDenoiseHold) ? 4U : 18U)) {
                     // Frame 17 is reported only after the first 16-frame
                     // checkpoint is committed; frame 18 has opened the next
                     // live segment writer, so the crash tests both artifacts.

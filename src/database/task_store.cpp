@@ -276,7 +276,8 @@ void TaskStore::finish(const std::string& id, TaskState state, const std::string
     Transaction transaction(db_);
     Statement update(db_, "UPDATE tasks SET state=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state IN ('running','paused') AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
     bindText(db_,update.get(),1,toString(state)); bindText(db_,update.get(),2,error); bindText(db_,update.get(),3,id);
-    if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1) throw std::logic_error("Task is not active/configured");
+    if (sqlite3_step(update.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    if (sqlite3_changes(db_) != 1) throw std::logic_error("Task is not active/configured");
     Statement detail(db_, "UPDATE task_details SET result=? WHERE task_id=?");
     bindText(db_,detail.get(),1,result); bindText(db_,detail.get(),2,id);
     if (sqlite3_step(detail.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
@@ -340,6 +341,14 @@ void TaskStore::setInterruptedRecoveryError(const std::string& id, const std::st
     bindText(db_,update.get(),1,error); bindText(db_,update.get(),2,id);
     if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1)
         throw std::logic_error("Recovery diagnostics require an interrupted configured task");
+}
+bool TaskStore::interruptActive(const std::string& id, const std::string& error) {
+    boundedPayload(error,true);
+    std::lock_guard lock(mutex_); requireWritable();
+    Statement update(db_,"UPDATE tasks SET state='interrupted',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state IN ('running','paused') AND EXISTS(SELECT 1 FROM task_details WHERE task_id=id)");
+    bindText(db_,update.get(),1,error); bindText(db_,update.get(),2,id);
+    if (sqlite3_step(update.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    return sqlite3_changes(db_) == 1;
 }
 std::size_t TaskStore::recoverConfigured() {
     std::lock_guard lock(mutex_); requireWritable();

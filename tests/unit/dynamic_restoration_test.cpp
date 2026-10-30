@@ -1,8 +1,11 @@
 #include "restoration/dynamic_control.hpp"
 #include "restoration/temporal_window.hpp"
+#include "restoration/noise_estimate.hpp"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <limits>
+#include <random>
 
 using namespace rifelove;
 using namespace rifelove::restoration;
@@ -163,4 +166,106 @@ TEST(TemporalRestorationWindow, RejectsBadInputBeforeChangingThePendingWindow) {
     EXPECT_EQ(window.bufferedFrames(),1U);
     EXPECT_TRUE(window.push(frame(1)).empty());
     EXPECT_EQ(window.push(frame(2)).size(),1U);
+}
+
+namespace {
+media::RifeSdrFrame noiseFrame(int width, int height, double sigma255 = 0.0) {
+    const int paddedWidth = ((width + 63) / 64) * 64, paddedHeight = ((height + 63) / 64) * 64;
+    const auto plane = static_cast<std::size_t>(paddedWidth) * static_cast<std::size_t>(paddedHeight);
+    media::RifeSdrFrame result{width,height,paddedWidth,paddedHeight,{},std::vector<float>(plane * 3,0.5F)};
+    std::mt19937 random(87943);
+    std::normal_distribution<float> normal(0.0F,static_cast<float>(sigma255 / 255.0));
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+            const auto offset = channel * plane + static_cast<std::size_t>(y) * static_cast<std::size_t>(paddedWidth) + static_cast<std::size_t>(x);
+            result.pixels[offset] = std::clamp(0.5F + normal(random),0.0F,1.0F);
+        }
+    return result;
+}
+}
+
+TEST(GaussianNoiseAnalysis, RecoversKnownGaussianConditioningWithinOneLevel) {
+    for (const double sigma : {5.0,15.0,25.0}) {
+        const auto estimate = estimateGaussianNoise(noiseFrame(384,256,sigma));
+        EXPECT_NEAR(estimate.sigma255,sigma,1.0);
+        EXPECT_GT(estimate.confidence,0.9);
+        EXPECT_LE(estimate.samplesPerChannel,16384U);
+    }
+}
+
+TEST(GaussianNoiseAnalysis, CleanLinearContentIsNotMistakenForNoiseAndPaddingIsExcluded) {
+    auto image = noiseFrame(191,129);
+    const auto plane = static_cast<std::size_t>(image.paddedWidth) * static_cast<std::size_t>(image.paddedHeight);
+    std::fill(image.pixels.begin(),image.pixels.end(),std::numeric_limits<float>::quiet_NaN());
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (int y = 0; y < image.height; ++y) for (int x = 0; x < image.width; ++x)
+            image.pixels[channel * plane + static_cast<std::size_t>(y) * static_cast<std::size_t>(image.paddedWidth) + static_cast<std::size_t>(x)] =
+                static_cast<float>(0.2 + x * 0.001 + y * 0.002);
+    const auto estimate = estimateGaussianNoise(image);
+    EXPECT_DOUBLE_EQ(estimate.sigma255,0.0);
+    EXPECT_GT(estimate.confidence,0.9);
+}
+
+TEST(GaussianNoiseAnalysis, StructuredPatternsClippingAndInsufficientSamplesStayUntrusted) {
+    auto checker = noiseFrame(192,192);
+    const auto plane = static_cast<std::size_t>(checker.paddedWidth) * static_cast<std::size_t>(checker.paddedHeight);
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (int y = 0; y < checker.height; ++y) for (int x = 0; x < checker.width; ++x)
+            checker.pixels[channel * plane + static_cast<std::size_t>(y) * static_cast<std::size_t>(checker.paddedWidth) + static_cast<std::size_t>(x)] =
+                (x + y) % 2 ? 0.6F : 0.4F;
+    EXPECT_DOUBLE_EQ(estimateGaussianNoise(checker).confidence,0.0);
+    std::fill(checker.pixels.begin(),checker.pixels.end(),0.0F);
+    EXPECT_DOUBLE_EQ(estimateGaussianNoise(checker).confidence,0.0);
+    EXPECT_DOUBLE_EQ(estimateGaussianNoise(noiseFrame(16,16,20)).confidence,0.0);
+}
+
+TEST(GaussianNoiseAnalysis, SamplingStorageIsBoundedAndCancellationAndInvalidTensorsFail) {
+    const auto estimate = estimateGaussianNoise(noiseFrame(1024,768,15));
+    EXPECT_LE(estimate.samplesPerChannel,16384U);
+    EXPECT_NEAR(estimate.sigma255,15.0,1.0);
+    std::stop_source stop; stop.request_stop();
+    EXPECT_THROW((void)estimateGaussianNoise(noiseFrame(64,64),stop.get_token()),std::runtime_error);
+    auto image = noiseFrame(64,64);
+    image.pixels[0] = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_THROW((void)estimateGaussianNoise(image),std::invalid_argument);
+    image = noiseFrame(64,64); image.pixels.pop_back();
+    EXPECT_THROW((void)estimateGaussianNoise(image),std::invalid_argument);
+}
+
+TEST(AutomaticGaussianDenoise, SmoothsInSourceTimeResetsAtCutsAndBypassesAmbiguousFrames) {
+    AutomaticDenoiseSettings settings;
+    settings.maximumSigmaChangePerSecond = 15.0;
+    AutomaticDenoiseController controller(settings);
+    EXPECT_FLOAT_EQ(controller.update(0,{10.0,1.0,1000}).sigma255,10.0F);
+    const auto next = controller.update(Rational(1,30),{40.0,1.0,1000});
+    EXPECT_GT(next.sigma255,10.0F);
+    EXPECT_LE(next.sigma255,10.500001F);
+    const auto uncertain = controller.update(Rational(2,30),{40.0,0.2,1000});
+    EXPECT_FALSE(uncertain.confident);
+    EXPECT_FLOAT_EQ(uncertain.sigma255,0.0F);
+    const auto cut = controller.update(Rational(3,30),{30.0,1.0,1000},true);
+    EXPECT_FLOAT_EQ(cut.sigma255,30.0F);
+    const auto clean = controller.update(Rational(4,30),{0.0,1.0,1000},true);
+    EXPECT_TRUE(clean.confident);
+    EXPECT_FLOAT_EQ(clean.sigma255,0.0F);
+    EXPECT_THROW((void)controller.update(Rational(4,30),{10.0,1.0,1000}),std::invalid_argument);
+}
+
+TEST(AutomaticGaussianDenoise, RelativeControlsAreLimitedToTheActualModelDomain) {
+    AutomaticDenoiseSettings settings; settings.relativeAdjustment = -1.0;
+    AutomaticDenoiseController disabled(settings);
+    EXPECT_FLOAT_EQ(disabled.update(0,{25.0,1.0,1000}).sigma255,0.0F);
+    settings.relativeAdjustment = 1.0;
+    AutomaticDenoiseController strongest(settings);
+    EXPECT_FLOAT_EQ(strongest.update(0,{25.0,1.0,1000}).sigma255,55.0F);
+    EXPECT_FLOAT_EQ(strongest.update(1,{150.0,1.0,1000}).sigma255,0.0F);
+    settings.minimumConfidence = 0.0;
+    AutomaticDenoiseController noFakeEstimate(settings);
+    const auto missing = noFakeEstimate.update(0,{});
+    EXPECT_FALSE(missing.confident);
+    EXPECT_FLOAT_EQ(missing.sigma255,0.0F);
+    settings.relativeAdjustment = 2;
+    EXPECT_THROW((void)AutomaticDenoiseController(settings),std::invalid_argument);
+    settings.relativeAdjustment = 0; settings.minimumConfidence = -0.1;
+    EXPECT_THROW((void)AutomaticDenoiseController(settings),std::invalid_argument);
 }

@@ -156,14 +156,12 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                 if (valid) {
                     auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
                     if (request.platformBitrate != PlatformBitrate::unchanged) {
-                        const auto rate = job.settings.targetRate;
-                        const int fps = rate.denominator() == 1 && rate.numerator() <= std::numeric_limits<int>::max()
-                            ? static_cast<int>(rate.numerator()) : 60;
                         const auto& caps = restorationPack ? restorationPack->capabilities : restoration::Capabilities{};
-                        const int outputHeight = platformOutputHeight(video->height, job.settings.encoding.outputHeight,
-                            caps.scaleNumerator, caps.scaleDenominator);
-                        job.settings.encoding.bitRate = static_cast<std::int64_t>(platformBitrateKbps(request.platformBitrate, outputHeight, fps)) * 1000;
-                        job.settings.encoding.gopSize = fps <= std::numeric_limits<int>::max() / 2 ? fps * 2 : 120;
+                        const auto platform = platformExportSettings(request.platformBitrate,job.settings.targetRate,
+                            video->width,video->height,job.settings.encoding.outputWidth,job.settings.encoding.outputHeight,
+                            caps.scaleNumerator,caps.scaleDenominator);
+                        job.settings.encoding.bitRate = static_cast<std::int64_t>(platform.bitRateKbps) * 1000;
+                        job.settings.encoding.gopSize = platform.gopSizeFrames;
                     }
                     if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;
                     else if (video->declaredEnd && video->start && *video->declaredEnd > *video->start) job.sourceDurationEstimate = *video->declaredEnd - *video->start;
