@@ -1,0 +1,5 @@
+{
+  "retainedDownloads": 0,
+  "releaseStorageBudgetBytes": 0,
+  "notes": "Local-only mode: retain release metadata indefinitely and keep release archives on the local filesystem. Any future Storj backup requires a separate explicit enablement and review."
+}

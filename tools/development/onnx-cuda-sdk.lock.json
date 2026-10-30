@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "usage": "Local native development only. Full NVIDIA/third-party redistribution audit remains required.",
+  "runtime": {
+    "fileName": "onnxruntime-win-x64-gpu-1.22.0.zip",
+    "folderName": "onnxruntime-win-x64-gpu-1.22.0",
+    "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-gpu-1.22.0.zip",
+    "sha256": "5b5241716b2628c1ab5e79ee620be767531021149ee68f30fc46c16263fb94dd",
+    "license": "MIT plus bundled ThirdPartyNotices.txt",
+    "cApiHeaderSha256": "ed5c8a336708866d21e0c3f5374229e6753088046fcbf69f81394fcbfd730609"
+  },
+  "tensorRt": {
+    "version": "10.9.0.34",
+    "fileName": "tensorrt_cu12_libs-10.9.0.34-py2.py3-none-win_amd64.whl",
+    "url": "https://pypi.nvidia.com/tensorrt-cu12-libs/tensorrt_cu12_libs-10.9.0.34-py2.py3-none-win_amd64.whl",
+    "sha256": "e43d38cc380d615bf8afab637c265f01a9452dc23deb9b9dd47b7662edf24531",
+    "license": "NVIDIA Software License Agreement; development workstation only"
+  },
+  "json": {
+    "version": "3.12.0",
+    "url": "https://raw.githubusercontent.com/nlohmann/json/v3.12.0/single_include/nlohmann/json.hpp",
+    "sha256": "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63",
+    "licenseUrl": "https://raw.githubusercontent.com/nlohmann/json/v3.12.0/LICENSE.MIT",
+    "licenseSha256": "46a65cffd1ea955132d95a8dd921640714a8d6b537d2e4e482d31145ae95b603",
+    "license": "MIT"
+  },
+  "nvidia": [
+    {
+      "name": "nvidia-cufft-cu12",
+      "version": "11.3.3.83",
+      "fileName": "nvidia_cufft_cu12-11.3.3.83-py3-none-win_amd64.zip",
+      "url": "https://files.pythonhosted.org/packages/7d/ec/ce1629f1e478bb5ccd208986b5f9e0316a78538dd6ab1d0484f012f8e2a1/nvidia_cufft_cu12-11.3.3.83-py3-none-win_amd64.whl",
+      "sha256": "7a64a98ef2a7c47f905aaf8931b69a3a43f27c55530c698bb2ed7c75c0b42cb7",
+      "license": "NVIDIA Proprietary Software; bundled License.txt"
+    },
+    {
+      "name": "nvidia-cuda-runtime-cu12",
+      "version": "12.8.90",
+      "fileName": "nvidia_cuda_runtime_cu12-12.8.90-py3-none-win_amd64.zip",
+      "url": "https://files.pythonhosted.org/packages/30/a5/a515b7600ad361ea14bfa13fb4d6687abf500adc270f19e89849c0590492/nvidia_cuda_runtime_cu12-12.8.90-py3-none-win_amd64.whl",
+      "sha256": "c0c6027f01505bfed6c3b21ec546f69c687689aad5f1a377554bc6ca4aa993a8",
+      "license": "NVIDIA Proprietary Software; bundled License.txt"
+    },
+    {
+      "name": "nvidia-cublas-cu12",
+      "version": "12.8.4.1",
+      "fileName": "nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.zip",
+      "url": "https://files.pythonhosted.org/packages/70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl",
+      "sha256": "47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af",
+      "license": "NVIDIA Proprietary Software; bundled License.txt"
+    },
+    {
+      "name": "nvidia-cudnn-cu12",
+      "version": "9.8.0.87",
+      "fileName": "nvidia_cudnn_cu12-9.8.0.87-py3-none-win_amd64.zip",
+      "url": "https://files.pythonhosted.org/packages/39/6a/5e9910b2b2c9dcddee9aaef372b3db0f08b9f7eaf1d462f859461a79caf9/nvidia_cudnn_cu12-9.8.0.87-py3-none-win_amd64.whl",
+      "sha256": "b4b5cfddc32aa4180f9d390ee99e9a9f55a89e7087329b41aba4319327e22466",
+      "license": "NVIDIA Proprietary Software; bundled License.txt"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+#pragma once
+
+#define RIFELOVE_NVENC_API_MAJOR @rifelove_nvenc_api_major@
+#define RIFELOVE_NVENC_API_MINOR @rifelove_nvenc_api_minor@
+#define RIFELOVE_NVENC_MINIMUM_WINDOWS_DRIVER "@rifelove_nvenc_minimum_windows_driver@"

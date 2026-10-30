@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "modelId": "rife-4.22-lite",
+  "version": "4.22-lite",
+  "displayName": "RIFE 4.22 Lite",
+  "architecture": "rife-ifnet-hdv3-lite",
+  "scaleList": [8, 4, 2, 1],
+  "upstreamRepository": "https://github.com/hzwer/Practical-RIFE",
+  "upstreamCommit": "bbfd2ea90910789a860ea3e2b32a240cd577b75e",
+  "license": "MIT",
+  "licenseScopeEvidence": "https://github.com/hzwer/Practical-RIFE/blob/bbfd2ea90910789a860ea3e2b32a240cd577b75e/README.md#trained-model",
+  "licenseScopeStatement": "The author states that the listed trained model links are under the same MIT license as the project.",
+  "checksumProvenance": "SHA-256 values were pinned from the author-linked archive and its selected entries on first acquisition; upstream does not publish these checksums.",
+  "archive": {
+    "cacheName": "rife4.22-lite.zip",
+    "url": "https://drive.usercontent.google.com/download?id=1Smy6gY7BkS_RzCjPCbMEy-TsX8Ma5B0R&export=download&authuser=0&confirm=t",
+    "sha256": "5e123e7a9951940e607353906167a903443be4303ac091d6c6a35a43e35cf840",
+    "bytes": 19878007,
+    "upstreamPage": "https://github.com/hzwer/Practical-RIFE/blob/bbfd2ea90910789a860ea3e2b32a240cd577b75e/README.md#trained-model"
+  },
+  "archiveFiles": [
+    {
+      "entry": "train_log/flownet.pkl",
+      "destination": "flownet.pkl",
+      "bytes": 21429303,
+      "sha256": "8f6fb9105ba9e946762ee7190acbca3ca1cf14193eb81ca0955d492fb8558692"
+    },
+    {
+      "entry": "train_log/IFNet_HDv3.py",
+      "destination": "IFNet_HDv3.py",
+      "bytes": 6369,
+      "sha256": "332732739b86b0cafe75c87dc237e6c892b02083d4757186f27cbc48fa64f4e5"
+    }
+  ],
+  "additionalFiles": [
+    {
+      "cacheName": "rife-warplayer.py",
+      "destination": "warplayer.py",
+      "url": "https://raw.githubusercontent.com/hzwer/Practical-RIFE/bbfd2ea90910789a860ea3e2b32a240cd577b75e/model/warplayer.py",
+      "sha256": "feb3af9475b724749b023d1913c3b135431eff13d0045b8efb472a699058385f"
+    },
+    {
+      "cacheName": "rife-LICENSE.txt",
+      "destination": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/hzwer/Practical-RIFE/bbfd2ea90910789a860ea3e2b32a240cd577b75e/LICENSE",
+      "sha256": "7932fb49341512b959b1744a6d9cbb39e5a1ec89da438a34d0454d5d8df9fecd"
+    }
+  ]
+}

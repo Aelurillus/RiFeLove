@@ -1,0 +1,50 @@
+# Local FFmpeg media engine
+
+The C++ media engine calls libavformat, libavcodec, libavutil and libswscale directly. The FFmpeg command-line tools are only used by development probes and the integration suite to generate synthetic fixtures and independently inspect results. No video is uploaded or processed remotely.
+
+## SDK and provenance
+
+The tested local SDK is BtbN's Windows x64 LGPL shared build `n8.1.3-18-g46d899d7a0-20261016`. Its historical release tag, exact file name, URL and SHA-256 are recorded in `tools/development/ffmpeg-sdk.lock.json`. The checksum was compared against the historical release's `checksums.sha256` file. The floating `latest` archive has a different archive checksum and must not be substituted.
+
+FFmpeg's official [download page](https://ffmpeg.org/download.html) links to [BtbN's Windows builds](https://github.com/BtbN/FFmpeg-Builds). The package reports LGPL version 3 or later (`ffmpeg -L`), `--enable-shared`, and neither `--enable-gpl` nor `--enable-nonfree`. This development selection is not a completed redistribution audit. A distributable build still needs the corresponding FFmpeg/dependency sources, configuration, license texts, notices and a verified installation strategy. The build-recipe repository's MIT license is not the binary package's license.
+
+The current machine's SDK is under `C:\itzming\dependences\ffmpeg-8.1.3\`. It is not tracked by Git. To unpack a locally cached, checksum-verified archive elsewhere:
+
+```powershell
+.\tools\development\setup-ffmpeg.ps1
+```
+
+If that archive has not been supplied locally, an explicit `-AllowDownload` performs SDK acquisition. It does not push project data. The script prints the local SDK root to pass to the normal local checker:
+
+```powershell
+.\tools\development\check.ps1 -FFmpegRoot '<local SDK root>'
+.\tools\development\check.ps1 -Preset windows-release -FFmpegRoot '<local SDK root>'
+```
+
+`RIFELOVE_BUILD_MEDIA=ON` enables the engine, and `RIFELOVE_FFMPEG_ROOT` points to the SDK. CMake copies the SDK DLLs next to the local development executables. Header/runtime major versions are checked when opening input. The tested ABI is FFmpeg 8.1; other FFmpeg major versions are not in the validated compatibility matrix.
+
+For the isolated source build with NVIDIA headers, OpenH264, Kvazaar, libaom and NASM x86 assembly, see [FFMPEG_SOURCE_BUILD.md](FFMPEG_SOURCE_BUILD.md). That SDK is a validation artifact until its native DLL regression and performance comparison are complete.
+
+## Current behavior
+
+- `media-probe INPUT`: JSON container and track time bases, average/nominal rates, dimensions, metadata, audio channels/sample format/channel layout, subtitle language/title, default/forced dispositions, chapters, FFmpeg's display-matrix rotation angle, the exact nine display-matrix coefficients, color and available static HDR side data.
+- `media-capabilities INPUT [--fps RATE]`: opens source-profile contexts for H.264 NVENC/software, HEVC and AV1, separating FFmpeg registration from runtime initialization. No frames are encoded; the actual processing job remains the final capability check.
+- `media-scan INPUT [--frames] [--stream INDEX] [--decode software|cuda]`: native decode, decoder reordering/drain, presentation timestamps and observed cadence. Software decode is the default; `--decode cuda` prefers CUDA/NVDEC and falls back to software when the decoder, selected CUDA device or pixel-format negotiation cannot start hardware decoding. The summary reports the decoder, actual acceleration path and fallback reason. Frames transferred from NVDEC retain their actual host pixel layout (commonly NV12); BT.601-family container/VUI tag reconciliation is independent of this layout change. It holds only reference-counted frames requested by a callback and does not convert decoded frames to 8-bit RGB.
+- The Studio's collapsed media-details view is built from the same local `MediaInfo` result. Average and nominal rates are shown separately; only a timestamp scan classifies actual cadence as CFR or VFR.
+- The Comparison Viewer uses `MediaEngine::decodeFrameNearTime` to seek to a key frame, decode in presentation order, select the nearest exact PTS and report adjacent decoded PTS values. Its bounded RGBA conversion uses the explicitly tagged SDR color path; HDR and unknown color are rejected until a display transform is validated. This powers exact paused frame stepping for both CFR and VFR media while normal synchronized playback remains on Qt Multimedia.
+- `remux INPUT OUTPUT`: stream copy into MP4, MOV or MKV; metadata, stream parameters, side data, dispositions and chapters are copied. Incompatible streams are reported instead of silently dropped. Output is written to a unique temporary file, finalized, structurally checked and then published without replacing an existing file.
+- `transcode INPUT OUTPUT`: the selected video is decoded and re-encoded at its original PTS; compatible auxiliary streams are copied. The public frame writer also accepts generated frames at explicit timestamps. See [encoding](ENCODING.md) for supported settings, evidence and limits.
+
+Inputs must be local regular files and libavformat's input protocol whitelist contains only `file`. APIs accept `std::stop_token` and check it around decode, packet I/O and output publication. Cancellation from the CLI's console control handler and interrupted-output recovery remain future work.
+
+## Timestamp and color details
+
+PTS is represented in rational seconds from the input stream time base. Missing timestamps are reported; no synthetic CFR timeline is silently invented. Decoder best-effort timestamps handle presentation reordering. Observed CFR classification permits at most one input time-base tick of quantization around the nominal rate; otherwise differing intervals are reported as VFR. This avoids treating the alternating 41/42 ms Matroska timestamps for 23.976 fps as variable cadence. A full timestamp scan is required for classification; stream rate metadata alone is not conclusive.
+
+Decoded frame storage owns original planes and side data. Shared ownership keeps retained frames valid after the decoder closes. When a hardware transfer returns a different host pixel format, validated BT.601-family conflict handling still uses bit depth, primaries, transfer family and range to decide whether frame tags can be aligned to the container contract; the actual pixel format remains unchanged. HDR metadata reading and stream copy do not constitute a color-managed HDR interpolation pipeline. Future encoding must propagate color properties on frames as well as encoder contexts: the fixture investigation found that output color options alone did not retain primaries/transfer tags, while explicit frame `setparams` did.
+
+## Validation and remaining work
+
+The integration suite generates 10-bit PQ FFV1 video, two AAC tracks, SRT captions, chapter metadata, MPEG-4 B frames, rotated horizontal/vertical display reflections and VFR video. A native fixture builder adds static mastering-display and content-light metadata alongside a rotated reflection. It checks native probe results, exact display-matrix coefficients against ffprobe, reflection/rotation preservation across MP4/MOV/MKV remux and software H.264 transcode, and static HDR metadata preservation through MKV remux and AV1 MP4/MKV transcodes. It also checks frame counts, actual decoded PTS against ffprobe, quantized CFR/VFR classification, compressed packet hashes and timestamps, audio packet timing, metadata retention, Unicode paths, incompatible streams, corrupt input and no-overwrite output behavior. Unit tests cover decoder-buffer lifetime, software fallback for formats without a CUDA decoder, color-tag reconciliation across hardware-transfer layouts and cancellation. On this workstation the native pipeline prefers CUDA/NVDEC, and synthetic H.264 integration verifies output frames and metadata; broader GPU/driver and long-duration decode qualification remains open.
+
+This is not the complete Phase 2 gate. Full HDR color conversion, timestamp recovery for unanchored sources, broader codec/container combinations, disk-full injection and multi-hour A/V validation remain required. Static mastering/content-light metadata preservation has synthetic fixture evidence only; it does not qualify real HDR media or every output encoder. Structural remux validation does not prove all compressed payloads are uncorrupted. The writer accepts real RIFE-generated frames through the integrated pipeline, but this media-engine document's synthetic writer tests still exercise timing and encoding rather than interpolation quality.

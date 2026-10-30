@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "modelId": "rife-4.25",
+  "upstreamRepository": "https://github.com/hzwer/Practical-RIFE",
+  "upstreamCommit": "bbfd2ea90910789a860ea3e2b32a240cd577b75e",
+  "license": "MIT",
+  "licenseScopeEvidence": "https://github.com/hzwer/Practical-RIFE/blob/bbfd2ea90910789a860ea3e2b32a240cd577b75e/README.md#trained-model",
+  "licenseScopeStatement": "The content of these links is under the same MIT license as this project.",
+  "checksumProvenance": "Pinned on first acquisition from the author-linked HTTPS sources; no upstream weight checksum was published in the README.",
+  "archive": {
+    "cacheName": "rife4.25.zip",
+    "url": "https://drive.usercontent.google.com/download?id=1ZKjcbmt1hypiFprJPIKW0Tt0lr_2i7bg&export=download&authuser=0&confirm=t",
+    "sha256": "e63d481b7ae5d4a4e6ad7ac5b410ff78f3bf7be3b51b2e38ca8152747abde5b4"
+  },
+  "archiveFiles": [
+    {
+      "entry": "train_log/flownet.pkl",
+      "destination": "flownet.pkl",
+      "bytes": 24636301,
+      "sha256": "6615790efd627772917205db291f51cd392528a157ecbb2ecaeec3bff8eb6de2"
+    },
+    {
+      "entry": "train_log/IFNet_HDv3.py",
+      "destination": "IFNet_HDv3.py",
+      "bytes": 6433,
+      "sha256": "655b4c772b037967b86c2dd31c8fa3b5323b79dd9a0e0088708d89149bbc8a32"
+    }
+  ],
+  "additionalFiles": [
+    {
+      "cacheName": "rife-warplayer.py",
+      "destination": "warplayer.py",
+      "url": "https://raw.githubusercontent.com/hzwer/Practical-RIFE/bbfd2ea90910789a860ea3e2b32a240cd577b75e/model/warplayer.py",
+      "sha256": "feb3af9475b724749b023d1913c3b135431eff13d0045b8efb472a699058385f"
+    },
+    {
+      "cacheName": "rife-LICENSE.txt",
+      "destination": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/hzwer/Practical-RIFE/bbfd2ea90910789a860ea3e2b32a240cd577b75e/LICENSE",
+      "sha256": "7932fb49341512b959b1744a6d9cbb39e5a1ec89da438a34d0454d5d8df9fecd"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+#include <windows.h>
+
+IDI_RIFELOVE_ICON ICON "resources/rifelove.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 0,1,3,0
+ PRODUCTVERSION 0,1,3,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "080404B0"
+    BEGIN
+      VALUE "CompanyName", "RifeLove Project\0"
+      VALUE "FileDescription", "RifeLove Offline AI Frame Interpolation\0"
+      VALUE "FileVersion", "0.1.3\0"
+      VALUE "InternalName", "RifeLove\0"
+      VALUE "OriginalFilename", "RifeLove.exe\0"
+      VALUE "ProductName", "RifeLove\0"
+      VALUE "ProductVersion", "0.1.3\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0804, 1200
+  END
+END

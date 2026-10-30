@@ -1,0 +1,26 @@
+{
+  "name": "rifelove-updatelog",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../tools/release/build-site.mjs",
+    "build:worker": "node ../tools/release/build-worker-source.mjs",
+    "test": "node --test ../tools/release/*.test.mjs",
+    "publish": "node ../tools/release/oss-disabled.mjs",
+    "upload:preview:oss": "node ../tools/release/oss-disabled.mjs",
+    "configure:oss-updatelog": "node ../tools/release/oss-disabled.mjs",
+    "deploy:oss": "node ../tools/release/oss-disabled.mjs",
+    "deploy": "wrangler pages deploy dist --project-name rifelove-updatelog --branch main"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1156.0",
+    "@aws-sdk/lib-storage": "3.1156.0",
+    "ali-oss": "6.23.0"
+  },
+  "overrides": {
+    "undici": "7.30.1"
+  },
+  "devDependencies": {
+    "wrangler": "4.152.0"
+  }
+}
