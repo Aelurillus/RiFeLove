@@ -2,6 +2,9 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { failAliyunOssDisabled } from "./oss-disabled.mjs";
+
+failAliyunOssDisabled();
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");

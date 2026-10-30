@@ -75,6 +75,10 @@ std::pair<std::string,int> identityAdapter(const Json& identity) {
     return {adapter.at("id").get<std::string>(),version};
 }
 void threshold(double value) { if (!std::isfinite(value) || value < 0 || value > 1) throw std::invalid_argument("Quality thresholds must be finite values from zero to one"); }
+void temporalDenoiseSigma(float value) {
+    if (!std::isfinite(value) || value < 0.0F || value > 55.0F || (value > 0.0F && value < 5.0F))
+        throw std::invalid_argument("Temporal restoration noise sigma must be zero or a value from 5 to 55");
+}
 Json optional(const std::optional<Rational>& value) { return value ? Json(value->toString()) : Json(nullptr); }
 std::optional<Rational> rational(const Json& value) { if (value.is_null()) return {}; return Rational::parse(value.get<std::string>()); }
 Json timingBreakdown(const PipelineTimingBreakdown& value) {
@@ -86,15 +90,43 @@ Json timingBreakdown(const PipelineTimingBreakdown& value) {
         {"outputFinalizeSeconds",value.outputFinalizeSeconds}, {"outputValidationSeconds",value.outputValidationSeconds},
         {"pipelineWallSeconds",value.pipelineWallSeconds} };
 }
+std::pair<std::size_t,std::size_t> processingCounters(const PipelineResult& result) {
+    const auto outputFrames = result.video.framesSubmitted;
+    // Results created by older callers do not have the two attempt counters.
+    // Treat those as a non-resumed run so their serialized meaning remains
+    // unchanged. A complete resume is represented by reusedFrames > 0 and
+    // therefore does not take this compatibility path.
+    auto processed = result.processedFrames;
+    auto reused = result.reusedFrames;
+    if (processed == 0 && reused == 0 && outputFrames != 0) processed = outputFrames;
+    if (processed > outputFrames || reused > outputFrames - processed)
+        throw std::invalid_argument("Processing frame counters exceed the output timeline");
+    return {processed,reused};
+}
+std::pair<std::size_t,std::size_t> processingCounters(const ProcessingEvent& event) {
+    auto processed = event.processedFrames;
+    auto reused = event.reusedFrames;
+    if (processed > event.outputFrames || reused > event.outputFrames - processed)
+        throw std::invalid_argument("Progress frame counters exceed the output timeline");
+    return {processed,reused};
+}
 void validate(const ProcessingJob& job) {
     text(job.source,32768); text(job.output,32768); text(utf8(job.modelDirectory),32768); text(utf8(job.runtimeDirectory),32768);
     text(utf8(job.restorationModelDirectory),32768,false);
+    text(utf8(job.temporalRestorationModelDirectory),32768,false);
     if (job.deviceOrdinal < 0 || job.settings.targetRate <= Rational(0) || !job.settings.hostFloatBufferLimit) throw std::invalid_argument("Invalid target/device/buffer configuration");
     if (job.sourceDurationEstimate && *job.sourceDurationEstimate <= Rational(0)) throw std::invalid_argument("Invalid source duration estimate");
     hash(job.expectedSourceSha256); hash(job.expectedModelSha256);
     hash(job.expectedRestorationDescriptorSha256);
+    hash(job.expectedTemporalRestorationDescriptorSha256);
     if (job.restorationModelDirectory.empty() != job.expectedRestorationDescriptorSha256.empty())
         throw std::invalid_argument("A local restoration model path and pinned descriptor hash must be supplied together");
+    if (job.temporalRestorationModelDirectory.empty() != job.expectedTemporalRestorationDescriptorSha256.empty())
+        throw std::invalid_argument("A temporal restoration model path and pinned descriptor hash must be supplied together");
+    temporalDenoiseSigma(job.settings.temporalDenoiseSigma255);
+    if (job.settings.motionBlur.shutterAngleDegrees < 0 || job.settings.motionBlur.shutterAngleDegrees > 360 ||
+        job.settings.motionBlur.sampleCount < 1 || job.settings.motionBlur.sampleCount > 16)
+        throw std::invalid_argument("Motion blur shutter angle must be 0..360 degrees and sample count must be 1..16");
     text(job.expectedModelId,256,false); text(job.expectedModelVersion,256,false);
     if (job.expectedModelAdapterId.empty()) {
         if (job.expectedModelAdapterVersion != 0) throw std::invalid_argument("An unpinned model adapter must use version zero");
@@ -104,6 +136,8 @@ void validate(const ProcessingJob& job) {
     const auto& e = job.settings.encoding;
     text(e.encoder,256); text(e.pixelFormat,256,false);
     if (e.videoStreamIndex < -1 || e.bitRate < 0 || e.gopSize < 0 || e.maxBFrames < 0 || e.maxBFrames > 16 ||
+        (e.outputWidth == 0) != (e.outputHeight == 0) || e.outputWidth < 0 || e.outputHeight < 0 ||
+        e.outputWidth > 16384 || e.outputHeight > 16384 ||
         (e.timeBase && *e.timeBase <= Rational(0)) || (e.frameRate && *e.frameRate <= Rational(0)) || e.encoderOptions.size() > 128)
         throw std::invalid_argument("Invalid video encoder configuration");
     if (e.frameRate && *e.frameRate != job.settings.targetRate) throw std::invalid_argument("Encoder frame rate must match the processing target rate");
@@ -117,14 +151,18 @@ void validate(const ProcessingJob& job) {
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",4},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",8},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
         {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
+        {"temporalRestorationModelDirectory",utf8(job.temporalRestorationModelDirectory)},
+        {"expectedTemporalRestorationDescriptorSha256",job.expectedTemporalRestorationDescriptorSha256},
         {"runtimeDirectory",utf8(job.runtimeDirectory)},{"deviceOrdinal",job.deviceOrdinal},{"hostFloatBufferLimit",job.settings.hostFloatBufferLimit},
         {"inferenceBackend",job.settings.inferenceBackend},
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
         {"expectedModelAdapterId",job.expectedModelAdapterId},{"expectedModelAdapterVersion",job.expectedModelAdapterVersion},
-        {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
+        {"temporalDenoiseSigma255",job.settings.temporalDenoiseSigma255},
+        {"motionBlur",{{"enabled",job.settings.motionBlur.enabled},{"shutterAngleDegrees",job.settings.motionBlur.shutterAngleDegrees},{"sampleCount",job.settings.motionBlur.sampleCount}}},
+        {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"outputWidth",e.outputWidth},{"outputHeight",e.outputHeight},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
             {"bitRate",e.bitRate},{"gopSize",e.gopSize},{"maxBFrames",e.maxBFrames},{"allowPrecisionLoss",e.allowPrecisionLoss},{"options",e.encoderOptions}}},
         {"scene",{{"cutMeanDifference",s.cutMeanDifference},{"cutHistogramDistance",s.cutHistogramDistance},{"abnormalMeanDifference",s.abnormalMeanDifference},{"duplicateMaximumDifference",s.duplicateMaximumDifference}}}};
     const auto result = json.dump(); if (result.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB"); return result;
@@ -133,7 +171,7 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion != 1 && schemaVersion != 2 && schemaVersion != 3 && schemaVersion != 4) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion < 1 || schemaVersion > 8) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -142,8 +180,19 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
         job.restorationModelDirectory = path(json.at("restorationModelDirectory").get<std::string>());
         job.expectedRestorationDescriptorSha256 = json.at("expectedRestorationDescriptorSha256").get<std::string>();
     }
+    if (schemaVersion >= 8) {
+        job.temporalRestorationModelDirectory = path(json.at("temporalRestorationModelDirectory").get<std::string>());
+        job.expectedTemporalRestorationDescriptorSha256 = json.at("expectedTemporalRestorationDescriptorSha256").get<std::string>();
+    }
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
     if (schemaVersion >= 3) job.settings.inferenceBackend = json.at("inferenceBackend").get<std::string>();
+    if (schemaVersion >= 7) job.settings.temporalDenoiseSigma255 = json.at("temporalDenoiseSigma255").get<float>();
+    if (schemaVersion >= 5) {
+        const auto& blur = json.at("motionBlur");
+        job.settings.motionBlur.enabled = blur.at("enabled").get<bool>();
+        job.settings.motionBlur.shutterAngleDegrees = integer<int>(blur.at("shutterAngleDegrees"));
+        job.settings.motionBlur.sampleCount = integer<int>(blur.at("sampleCount"));
+    }
     job.expectedSourceSha256 = json.at("expectedSourceSha256").get<std::string>(); job.expectedModelSha256 = json.at("expectedModelSha256").get<std::string>();
     job.expectedModelId = json.at("expectedModelId").get<std::string>(); job.expectedModelVersion = json.at("expectedModelVersion").get<std::string>();
     if (schemaVersion >= 2) {
@@ -153,6 +202,10 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     const auto& encoded = json.at("encoding"); auto& e = job.settings.encoding;
     e.encoder = encoded.at("encoder").get<std::string>(); e.pixelFormat = encoded.at("pixelFormat").get<std::string>();
     e.videoStreamIndex = integer<int>(encoded.at("videoStreamIndex")); e.timeBase = rational(encoded.at("timeBase")); e.frameRate = rational(encoded.at("frameRate"));
+    if (schemaVersion >= 6) {
+        e.outputWidth = integer<int>(encoded.at("outputWidth"));
+        e.outputHeight = integer<int>(encoded.at("outputHeight"));
+    }
     e.bitRate = integer<std::int64_t>(encoded.at("bitRate")); e.gopSize = integer<int>(encoded.at("gopSize")); e.maxBFrames = integer<int>(encoded.at("maxBFrames"));
     e.allowPrecisionLoss = encoded.at("allowPrecisionLoss").get<bool>(); e.encoderOptions = encoded.at("options").get<media::Metadata>();
     const auto& scene = json.at("scene"); auto& s = job.settings.scene;
@@ -180,19 +233,36 @@ void pinModelDescriptor(ProcessingJob& job) {
     job.expectedModelAdapterId = adapterId; job.expectedModelAdapterVersion = adapterVersion;
 }
 void pinRestorationModelDescriptor(ProcessingJob& job) {
-    if (job.restorationModelDirectory.empty()) {
-        if (!job.expectedRestorationDescriptorSha256.empty())
-            throw std::invalid_argument("A pinned local restoration model has no directory");
-        return;
-    }
-    const auto model = restoration::loadModelPack(job.restorationModelDirectory);
-    if (!restoration::supportsOnnxCudaOutputRateModel(model))
-        throw std::invalid_argument("The selected local restoration pack is not a supported output-rate deblur or x2/x3/x4 super-resolution model");
-    const auto descriptorHash = inference::sha256File(model.directory / "model.json",256 * 1024);
-    if (!job.expectedRestorationDescriptorSha256.empty() && job.expectedRestorationDescriptorSha256 != descriptorHash)
-        throw std::invalid_argument("Selected restoration model differs from its pinned local descriptor");
-    job.restorationModelDirectory = model.directory;
-    job.expectedRestorationDescriptorSha256 = descriptorHash;
+    const auto pin = [](std::filesystem::path& directory, std::string& expected,
+                        bool temporalOnly, bool imageOnly) {
+        if (directory.empty()) {
+            if (!expected.empty()) throw std::invalid_argument("A pinned local restoration model has no directory");
+            return;
+        }
+        const auto model = restoration::loadModelPack(directory);
+        const bool image = restoration::supportsOnnxCudaOutputRateModel(model);
+        const bool temporal = restoration::supportsOnnxCudaTemporalModel(model);
+        if ((!image && !temporal) || (temporalOnly && !temporal) || (imageOnly && !image))
+            throw std::invalid_argument("The selected local restoration model is incompatible with its pipeline placement");
+        const auto descriptorHash = inference::sha256File(model.directory / "model.json",256 * 1024);
+        if (!expected.empty() && expected != descriptorHash)
+            throw std::invalid_argument("Selected restoration model differs from its pinned local descriptor");
+        directory = model.directory;
+        expected = descriptorHash;
+    };
+    // The legacy field can still contain either kind of model. If a separate
+    // temporal model is selected, the legacy field must be output-rate so the
+    // chain cannot accidentally run two denoisers or two spatial models.
+    auto imageDirectory = job.restorationModelDirectory;
+    auto imageHash = job.expectedRestorationDescriptorSha256;
+    auto temporalDirectory = job.temporalRestorationModelDirectory;
+    auto temporalHash = job.expectedTemporalRestorationDescriptorSha256;
+    pin(imageDirectory,imageHash,false,!temporalDirectory.empty());
+    pin(temporalDirectory,temporalHash,true,false);
+    job.restorationModelDirectory = std::move(imageDirectory);
+    job.expectedRestorationDescriptorSha256 = std::move(imageHash);
+    job.temporalRestorationModelDirectory = std::move(temporalDirectory);
+    job.expectedTemporalRestorationDescriptorSha256 = std::move(temporalHash);
 }
 std::string serializeIdentity(const ProcessingIdentity& i) {
     if (!adapterIdentifier(i.adapterId) || i.adapterVersion <= 0) throw std::invalid_argument("Processing identity has an invalid model adapter");
@@ -221,19 +291,29 @@ void applyStoredIdentity(ProcessingJob& job, const std::string& value) {
     job.expectedModelAdapterId = adapterId; job.expectedModelAdapterVersion = adapterVersion;
 }
 std::string serializeProgress(const ProcessingEvent& event) {
+    const auto [processedFrames,reusedFrames] = processingCounters(event);
     return Json{{"schemaVersion",1},{"stage",event.stage},{"frames",event.outputFrames},{"aiFrames",event.aiFrames},
+        {"processedFrames",processedFrames},{"reusedFrames",reusedFrames},
         {"processingFps",event.processingFps},{"timestamp",optional(event.timestamp)},{"timings",timingBreakdown(event.timings)}}.dump();
 }
 std::string serializeResult(const PipelineResult& r) {
+    const auto [processedFrames,reusedFrames] = processingCounters(r);
+    const auto processingFps = processingFrameRate(processedFrames,r.elapsedSeconds);
     return Json{{"schemaVersion",1},{"modelId",r.modelId},{"backend",r.backend},
-        {"restorationModelId",r.restorationModelId},{"restorationScale",{{"numerator",r.restorationScaleNumerator},{"denominator",r.restorationScaleDenominator}}},
+        {"restorationModelId",r.restorationModelId},{"restorationBackend",r.restorationBackend},
+        {"restorationFallbackReason",r.restorationFallbackReason},
+        {"restorationScale",{{"numerator",r.restorationScaleNumerator},{"denominator",r.restorationScaleDenominator}}},
+        {"temporalRestorationModelId",r.temporalRestorationModelId},{"temporalRestorationBackend",r.temporalRestorationBackend},
+        {"temporalRestorationFallbackReason",r.temporalRestorationFallbackReason},
+        {"temporalRestorationScale",{{"numerator",r.temporalRestorationScaleNumerator},{"denominator",r.temporalRestorationScaleDenominator}}},
         {"modelAdapter",{{"id",r.adapterId},{"version",r.adapterVersion}}},{"inferenceFallbackReason",r.inferenceFallbackReason},
         {"sourceDecoder",r.sourceDecoder},{"sourceDecodeAcceleration",r.sourceDecodeAcceleration},
         {"sourceDecodeFallbackReason",r.sourceDecodeFallbackReason},
         {"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
-        {"aiFrames",r.aiFrames},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
+        {"aiFrames",r.aiFrames},{"processedFrames",processedFrames},{"reusedFrames",reusedFrames},
+        {"inferenceCalls",r.inferenceCalls},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
         {"recoveredTimestamps",r.recoveredTimestamps},
-        {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",r.processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
+        {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
         {"timings",timingBreakdown(r.timings)},
         {"validation",{{"decodedFrames",r.validation.decodedFrames},{"width",r.validation.width},{"height",r.validation.height},
             {"timeBase",r.validation.timeBase.toString()},{"maximumTimestampError",r.validation.maximumTimestampError.toString()},
@@ -245,12 +325,15 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
     if (Rational::parse(context.targetFrameRate) <= Rational(0)) throw std::invalid_argument("Processing report frame rate must be positive");
     if (!std::all_of(context.modelSha256.begin(),context.modelSha256.end(),[](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
         throw std::invalid_argument("Processing report model digest must be lowercase SHA-256");
-    if (!std::isfinite(context.endToEndElapsedSeconds) || context.endToEndElapsedSeconds <= 0 ||
-        !std::isfinite(result.elapsedSeconds) || result.elapsedSeconds <= 0 || !std::isfinite(result.processingFps) || result.processingFps < 0)
+    if (!std::isfinite(context.endToEndElapsedSeconds) || context.endToEndElapsedSeconds < 0 ||
+        !std::isfinite(result.elapsedSeconds) || result.elapsedSeconds < 0)
         throw std::invalid_argument("Processing report contains invalid performance measurements");
 
     const auto& device = context.device;
     const auto& encoding = context.encoding;
+    const auto [processedFrames,reusedFrames] = processingCounters(result);
+    const auto endToEndProcessingFps = processingFrameRate(processedFrames,context.endToEndElapsedSeconds);
+    const auto pipelineProcessingFps = processingFrameRate(processedFrames,result.elapsedSeconds);
     const auto pipeline = Json::parse(serializeResult(result));
     const Json report{
         {"schemaVersion",1},
@@ -269,6 +352,10 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
             {"scale",{{"numerator",result.restorationScaleNumerator},{"denominator",result.restorationScaleDenominator}}},
             {"backend",result.restorationBackend.empty() ? "unknown" : result.restorationBackend},
             {"fallbackReason",result.restorationFallbackReason}}},
+        {"temporalRestoration",result.temporalRestorationModelId.empty() ? Json(nullptr) : Json{{"id",result.temporalRestorationModelId},
+            {"scale",{{"numerator",result.temporalRestorationScaleNumerator},{"denominator",result.temporalRestorationScaleDenominator}}},
+            {"backend",result.temporalRestorationBackend.empty() ? "unknown" : result.temporalRestorationBackend},
+            {"fallbackReason",result.temporalRestorationFallbackReason}}},
         {"gpu",{{"ordinal",device.ordinal},{"name",device.name},{"pciBusId",device.pciBusId},
             {"computeCapability",std::to_string(device.computeMajor) + "." + std::to_string(device.computeMinor)},
             {"driverCudaApiVersion",device.driverCudaApiVersion},{"totalVramBytes",device.totalBytes}}},
@@ -276,9 +363,16 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
             {"bitRate",encoding.bitRate},{"gopSize",encoding.gopSize},{"maxBFrames",encoding.maxBFrames},
             {"options",encoding.encoderOptions},{"fallbackReason",result.encoderFallbackReason}}},
         {"performance",{{"elapsedSeconds",context.endToEndElapsedSeconds},
-            {"endToEndOutputFramesPerSecond",static_cast<double>(result.video.framesSubmitted) / context.endToEndElapsedSeconds},
-            {"pipelineOutputFramesPerSecond",result.processingFps},
-            {"aiFrames",result.aiFrames},{"originalFrames",result.originalFrames},{"heldFrames",result.heldFrames},
+            // Keep the established keys for consumers, but define their
+            // numerator as newly processed frames. The explicit aliases make
+            // the resumed-task semantics discoverable to newer consumers.
+            {"endToEndOutputFramesPerSecond",endToEndProcessingFps},
+            {"pipelineOutputFramesPerSecond",pipelineProcessingFps},
+            {"endToEndProcessedFramesPerSecond",endToEndProcessingFps},
+            {"pipelineProcessedFramesPerSecond",pipelineProcessingFps},
+            {"outputFrames",result.video.framesSubmitted},
+            {"processedFrames",processedFrames},{"reusedFrames",reusedFrames},
+            {"aiFrames",result.aiFrames},{"inferenceCalls",result.inferenceCalls},{"originalFrames",result.originalFrames},{"heldFrames",result.heldFrames},
             {"stageTimings",timingBreakdown(result.timings)}}},
         {"qualityDiagnostics",{{"sceneCuts",result.sceneCuts},{"duplicatePairs",result.duplicatePairs},{"abnormalMotionPairs",result.abnormalPairs},
             {"perceptualMetricsMeasured",false},

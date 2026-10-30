@@ -21,9 +21,9 @@ struct OnnxCudaRestorationConfig {
     inference::ProviderPreference providerPreference = inference::ProviderPreference::preferTensorRt;
 };
 
-// Runs one-frame SDR image restoration ONNX models on the selected CUDA device.
-// The graph adapter contract is one FP32 NCHW RGB tensor in [0,1] and one
-// same-layout output tensor; temporal video models require a separate adapter.
+// Runs SDR restoration models on the selected CUDA device. Image adapters use
+// NCHW RGB. The explicitly named FastDVDnet adapter uses five real RGB frames
+// plus a Gaussian-noise map, packed as 16 channels, and preserves center PTS.
 class OnnxCudaVideoRestorationBackend final : public IVideoRestorationBackend {
 public:
     OnnxCudaVideoRestorationBackend(std::shared_ptr<gpu::CudaDevice> device, OnnxCudaRestorationConfig config);

@@ -1,0 +1,131 @@
+#pragma once
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <d2d1.h>
+#include <dwrite.h>
+
+#include <algorithm>
+#include <string>
+
+namespace rifelove::native_desktop {
+
+struct NativeRenderState {
+    std::wstring sourcePath;
+    std::wstring outputPath;
+    std::wstring mediaSummary;
+    std::wstring modelSummary;
+    std::wstring runtimeSummary;
+    std::wstring status;
+    std::wstring deviceSummary;
+    std::wstring encoderSummary;
+    std::wstring platformSummary;
+    std::wstring restorationSummary;
+    std::wstring outputSizeSummary;
+    std::wstring stage;
+    std::size_t outputFrames = 0;
+    double processingFps = 0.0;
+    bool processing = false;
+    bool processingAvailable = false;
+    bool sourceReady = false;
+    bool modelReady = false;
+    bool runtimeReady = false;
+    bool advancedExpanded = false;
+    float scrollOffset = 0.0F;
+};
+
+// One layout contract is shared by HWND controls and the Direct2D surface.
+// Measurements are device independent; the action dock remains visible while
+// the settings viewport scrolls on small screens or at increased display DPI.
+struct NativeLayout {
+    float width = 1366;
+    float height = 768;
+    float side = 188;
+    float left = 214;
+    float right = 1340;
+    float split = 884;
+    float dock = 660;
+    float contentTop = 92;
+    float contentBottom = 626;
+    float resourceButtonsTop = 410;
+    float scroll = 0;
+    [[nodiscard]] static NativeLayout from(float width, float height, float scroll = 0) {
+        NativeLayout value;
+        value.width = width; value.height = height;
+        value.side = width < 1100 ? 164.0F : 188.0F;
+        value.left = value.side + 24.0F; value.right = width - 24.0F;
+        value.split = value.left + (value.right - value.left - 20.0F) * 0.55F;
+        value.dock = height - 100.0F;
+        value.contentBottom = value.dock - 14.0F;
+        // Keep both resource buttons inside short windows at high DPI.
+        value.resourceButtonsTop = std::min(410.0F, std::max(320.0F, height - 90.0F));
+        value.scroll = std::clamp(scroll, 0.0F, std::max(0.0F, 626.0F - value.contentBottom));
+        return value;
+    }
+};
+
+template <typename T>
+class ComPtr final {
+public:
+    ComPtr() = default;
+    ~ComPtr() { reset(); }
+    ComPtr(const ComPtr&) = delete;
+    ComPtr& operator=(const ComPtr&) = delete;
+    ComPtr(ComPtr&& other) noexcept : value_(other.value_) { other.value_ = nullptr; }
+    ComPtr& operator=(ComPtr&& other) noexcept {
+        if (this != &other) {
+            reset();
+            value_ = other.value_;
+            other.value_ = nullptr;
+        }
+        return *this;
+    }
+    [[nodiscard]] T* get() const noexcept { return value_; }
+    [[nodiscard]] T** put() noexcept { reset(); return &value_; }
+    [[nodiscard]] T* operator->() const noexcept { return value_; }
+    void reset() noexcept {
+        if (value_) {
+            value_->Release();
+            value_ = nullptr;
+        }
+    }
+private:
+    T* value_ = nullptr;
+};
+
+class NativeRenderer final {
+public:
+    NativeRenderer() = default;
+    ~NativeRenderer() = default;
+    NativeRenderer(const NativeRenderer&) = delete;
+    NativeRenderer& operator=(const NativeRenderer&) = delete;
+
+    [[nodiscard]] bool render(HWND window, const NativeRenderState& state);
+    [[nodiscard]] bool renderToDc(HWND window, HDC dc, const NativeRenderState& state);
+    void discardTarget() noexcept;
+
+private:
+    [[nodiscard]] bool ensureResources(HWND window);
+    [[nodiscard]] bool draw(HWND window, const NativeRenderState& state);
+    void drawText(const std::wstring& text, float left, float top, float right, float bottom,
+        float size, D2D1::ColorF color, bool bold = false, bool wrap = false);
+    void fillCard(float left, float top, float right, float bottom, D2D1::ColorF color, float radius = 12.0F);
+    void drawPill(const std::wstring& text, float left, float top, float right, float bottom,
+        D2D1::ColorF fill, D2D1::ColorF textColor);
+
+    ComPtr<ID2D1Factory> d2dFactory_;
+    ComPtr<ID2D1RenderTarget> renderTarget_;
+    ComPtr<ID2D1SolidColorBrush> brush_;
+    ComPtr<IDWriteFactory> writeFactory_;
+    HWND targetWindow_ = nullptr;
+    UINT targetWidth_ = 0;
+    UINT targetHeight_ = 0;
+    float scale_ = 1.0F;
+};
+
+} // namespace rifelove::native_desktop

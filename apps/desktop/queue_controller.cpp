@@ -301,6 +301,7 @@ public:
                 const auto reason = rejected.reason == ImportRejection::unsupportedColor ? tr("视频色彩标签、像素格式或位深不在支持范围内。") :
                     rejected.reason == ImportRejection::unsupportedModelProfile ? tr("当前模型未声明支持这个视频输入配置。") :
                     rejected.reason == ImportRejection::unsupportedRestorationModelProfile ? tr("所选视频修复模型不支持这个色彩配置或分辨率。") :
+                    rejected.reason == ImportRejection::unsupportedOutputDimensions ? tr("目标尺寸超过模型输出或不匹配视频比例。") :
                     rejected.reason == ImportRejection::unsupportedEncoder ? tr("所选视频编码器无法初始化：") + text(rejected.detail) :
                     rejected.reason == ImportRejection::noVideo ? tr("文件中没有视频轨。") : tr("无法读取媒体：") + text(rejected.detail);
                 skipped.push_back(QString::fromStdWString(rejected.path.filename().wstring()) + ": " + reason);

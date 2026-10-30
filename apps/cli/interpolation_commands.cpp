@@ -134,9 +134,10 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             const double seconds = elapsed();
             std::cout << "{\"event\":\"interpolation_progress\",\"stage\":" << jsonString(current.stage)
                 << ",\"output_frames\":" << current.outputFrames << ",\"ai_frames\":" << current.aiFrames
+                << ",\"processed_frames\":" << current.processedFrames << ",\"reused_frames\":" << current.reusedFrames
                 << ",\"pts\":" << (current.timestamp ? jsonString(current.timestamp->toString()) : "null")
                 << ",\"encoder\":" << jsonString(current.encoder)
-                << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << (seconds > 0 ? static_cast<double>(current.outputFrames) / seconds : 0)
+                << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << processingFrameRate(current.processedFrames,seconds)
                 << ",\"detail\":" << jsonString(current.detail) << "}\n" << std::flush;
         }) : std::function<void(const PipelineProgress&)>(),token);
         const auto seconds = elapsed();
@@ -160,6 +161,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             << ",\"source_decode_acceleration\":" << jsonString(result.sourceDecodeAcceleration)
             << ",\"source_decode_fallback_reason\":" << jsonString(result.sourceDecodeFallbackReason)
             << ",\"source_frames\":" << result.sourceFrames << ",\"output_frames\":" << result.video.framesSubmitted << ",\"ai_frames\":" << result.aiFrames
+            << ",\"processed_frames\":" << result.processedFrames << ",\"reused_frames\":" << result.reusedFrames
             << ",\"original_frames\":" << result.originalFrames << ",\"held_frames\":" << result.heldFrames << ",\"scene_cuts\":" << result.sceneCuts
             << ",\"duplicate_pairs\":" << result.duplicatePairs << ",\"abnormal_pairs\":" << result.abnormalPairs
             << ",\"recovered_timestamps\":" << result.recoveredTimestamps
@@ -169,7 +171,7 @@ int runInterpolationCommand(const std::vector<std::string>& args) {
             << ",\"maximum_pts_error\":" << jsonString(result.validation.maximumTimestampError.toString()) << ",\"end_error\":" << jsonString(result.validation.durationError.toString())
             << ",\"declared_end_error\":" << (result.validation.declaredEndError ? jsonString(result.validation.declaredEndError->toString()) : "null")
             << ",\"auxiliary_maximum_end_error\":" << jsonString(result.validation.auxiliaryMaximumEndError.toString())
-            << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << static_cast<double>(result.video.framesSubmitted) / seconds
+            << ",\"elapsed_seconds\":" << seconds << ",\"processing_fps\":" << processingFrameRate(result.processedFrames,seconds)
             << ",\"report_path\":" << (reportPathText ? jsonString(*reportPathText) : "null") << "}\n";
         return 0;
     } catch (const std::exception&) {

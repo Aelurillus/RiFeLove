@@ -11,6 +11,9 @@ import {
 } from "./private-preview-archive.mjs";
 import { validateReleaseArchive } from "./release-archive-safety.mjs";
 import { validateVersion } from "./release-manifest.mjs";
+import { failAliyunOssDisabled } from "./oss-disabled.mjs";
+
+failAliyunOssDisabled();
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");

@@ -14,6 +14,9 @@ struct ProcessingJob {
     std::filesystem::path modelDirectory;
     std::filesystem::path runtimeDirectory;
     std::filesystem::path restorationModelDirectory;
+    // Optional source-rate denoiser alongside the existing output-rate model.
+    // The legacy restorationModelDirectory still accepts a temporal-only job.
+    std::filesystem::path temporalRestorationModelDirectory;
     PipelineSettings settings;
     std::optional<Rational> sourceDurationEstimate;
     int deviceOrdinal = 0;
@@ -28,6 +31,7 @@ struct ProcessingJob {
     // The local restoration descriptor hash pins its graph and all verified
     // sidecar metadata for persistent queue and checkpoint identity.
     std::string expectedRestorationDescriptorSha256;
+    std::string expectedTemporalRestorationDescriptorSha256;
 };
 struct ProcessingIdentity {
     FileIdentity source;
@@ -48,6 +52,11 @@ struct ProcessingEvent {
     std::string sourceInputProfile;
     std::size_t outputFrames = 0;
     std::size_t aiFrames = 0;
+    // outputFrames is the complete output timeline. These counters describe
+    // the current attempt so resumed checkpoint frames are not presented as
+    // newly processed work.
+    std::size_t processedFrames = 0;
+    std::size_t reusedFrames = 0;
     double processingFps = 0;
     PipelineTimingBreakdown timings;
     std::optional<Rational> timestamp;

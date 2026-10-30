@@ -121,22 +121,18 @@
 <context>
     <name>ComparisonPreviewController</name>
     <message>
-        <location filename="../../apps/desktop/comparison_preview.cpp" line="84" />
         <source>请选择本机视频，并输入有效的预览时间。</source>
         <translation>請選擇本機影片並輸入有效的預覽時間。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/comparison_preview.cpp" line="137" />
         <source>只能打开本机文件的位置。</source>
         <translation>只能開啟本機檔案的位置。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/comparison_preview.cpp" line="143" />
         <source>文件不存在，无法打开所在位置。</source>
         <translation>找不到檔案，無法開啟所在位置。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/comparison_preview.cpp" line="149" />
         <source>无法打开此文件的位置。</source>
         <translation>無法開啟此檔案的位置。</translation>
     </message>
@@ -532,23 +528,27 @@
     </message>
     <message>
         <location filename="../Main.qml" line="238" />
-        <source>YouTube 60 FPS SDR 按当前视频分辨率使用官方建议码率；未加载视频时按 1080p 默认。平台仍会转码，300 FPS 以上母版需单独输出。</source>
-        <translation>YouTube 60 FPS SDR 會依目前影片解析度採用官方建議位元率；尚未載入影片時預設為 1080p。平台仍會轉碼，300 FPS 以上母版需另外輸出。</translation>
+        <source>YouTube 60 FPS SDR 按源视频高度使用官方码率参考（未加载时按 1080p）；编码器为 Auto、GOP 为 2 秒，不是完整平台规格。300 FPS 以上母版需单独输出。</source>
+        <translation>YouTube 60 FPS SDR 會依來源影片高度採用官方位元率參考（尚未載入影片時預設為 1080p）；編碼器為 Auto、GOP 為 2 秒，並非完整的平台規格預設。300 FPS 以上母版需另外輸出。</translation>
     </message>
     <message>
         <location filename="../Main.qml" line="240" />
-        <source>抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。</source>
-        <translation>抖音公開上傳 API 未列出影格率上限；此處是本機相容性預設，不代表平台保證。</translation>
+        <source>抖音开放平台上传 API 未列出帧率上限；128 MiB、15 分钟和 4 GB 分片规则只适用于该 API，本地预设不代表普通投稿平台保证。</source>
+        <translation>抖音開放平台上傳 API 未列出影格率上限；128 MiB、15 分鐘和 4 GB 分片規則只適用於該 API，本機預設不代表一般投稿平台保證。</translation>
     </message>
     <message>
         <location filename="../Main.qml" line="242" />
-        <source>Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。</source>
-        <translation>Bilibili 60 FPS 是相容性預設；位元率是本機建議值，目前上傳規則需依帳號驗證。</translation>
+        <source>Bilibili 60 FPS 是兼容性起始预设；码率为本机建议值，编码器保持 Auto，当前上传规则需按账号验证。</source>
+        <translation>Bilibili 60 FPS 是相容性起始預設；位元率是本機建議值，編碼器維持 Auto，目前上傳規則需依帳號驗證。</translation>
+    </message>
+    <message>
+        <source>平台可能重新编码或限制播放帧率。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。</source>
+        <translation>平台可能重新編碼影片或限制播放影格率。300 FPS 以上的本機母版需另外輸出；平台預設會產生相容性副本。</translation>
     </message>
     <message>
         <location filename="../Main.qml" line="243" />
-        <source>平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。</source>
-        <translation>平台會重新編碼影片。300 FPS 以上的本機母版需另外輸出；平台預設會產生相容性副本。</translation>
+        <source>平台可能重新编码或限制播放帧率。平台预设每次仅生成一个文件；300 FPS 以上本机母版需用自定义帧率另行处理。</source>
+        <translation>平台可能重新編碼影片或限制播放影格率。每次平台預設只會產生一個檔案；300 FPS 以上的本機母版需另行使用自訂影格率處理。</translation>
     </message>
     <message>
         <location filename="../Main.qml" line="255" />
@@ -1249,140 +1249,170 @@
         <translation>管理本機的 RIFE 補幀模型與畫質修復模型。模型只會從本機目錄讀取；此頁面不會連線或下載權重。</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="85" />
+        <location filename="../ModelCenterPage.qml" line="86" />
         <source>模型校验失败</source>
         <translation>模型驗證失敗</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="85" />
+        <location filename="../ModelCenterPage.qml" line="86" />
         <source>本地模型</source>
         <translation>本機模型</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="92" />
+        <location filename="../ModelCenterPage.qml" line="93" />
         <source>插帧</source>
         <translation>補幀</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="92" />
+        <location filename="../ModelCenterPage.qml" line="93" />
         <source>画质修复</source>
         <translation>畫質修復</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="96" />
+        <location filename="../ModelCenterPage.qml" line="97" />
         <source>默认模型</source>
         <translation>預設模型</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="97" />
+        <location filename="../ModelCenterPage.qml" line="98" />
         <source>不可用</source>
         <translation>無法使用</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="109" />
+        <location filename="../ModelCenterPage.qml" line="140" />
         <source>ONNX SHA-256  </source>
         <translation>ONNX SHA-256  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="118" />
         <source>许可  </source>
         <translation>授權條款  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="118" />
+        <location filename="../ModelCenterPage.qml" line="121" />
         <source>未声明</source>
         <translation>未宣告</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="119" />
         <source>数值档案  </source>
         <translation>數值設定檔  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="119" />
-        <location filename="../ModelCenterPage.qml" line="149" />
+        <location filename="../ModelCenterPage.qml" line="158" />
         <source>未记录</source>
         <translation>未記錄</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="120" />
         <source>HDR  </source>
         <translation>HDR  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="120" />
+        <location filename="../ModelCenterPage.qml" line="122" />
         <source>已验证</source>
         <translation>已驗證</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="120" />
+        <location filename="../ModelCenterPage.qml" line="122" />
         <source>未验证</source>
         <translation>未驗證</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="129" />
+        <location filename="../ModelCenterPage.qml" line="149" />
         <source>已记录的验证后端  </source>
         <translation>已記錄的驗證後端  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="138" />
+        <location filename="../ModelCenterPage.qml" line="112" />
         <source>修复任务：</source>
         <translation>修復任務：</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="139" />
         <source>；前/后文帧数：</source>
         <translation>；前／後文影格數：</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="140" />
+        <location filename="../ModelCenterPage.qml" line="113" />
         <source>；空间倍率：</source>
         <translation>；空間倍率：</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="149" />
+        <location filename="../ModelCenterPage.qml" line="121" />
+        <source>许可：</source>
+        <translation>授權：</translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="122" />
+        <source>HDR：</source>
+        <translation>HDR：</translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="123" />
+        <source>模型包校验通过</source>
+        <translation>模型套件驗證通過</translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="123" />
+        <source>旧版清单</source>
+        <translation>舊版清單</translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="131" />
+        <source>完整目录  </source>
+        <translation>完整目錄  </translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="158" />
         <source>上游来源声明  </source>
         <translation>上游來源聲明  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="159" />
+        <location filename="../ModelCenterPage.qml" line="168" />
         <source>许可范围依据  </source>
         <translation>授權範圍依據  </translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="169" />
+        <location filename="../ModelCenterPage.qml" line="178" />
         <source>完整性校验通过：权重、许可证、来源清单和验证报告的 SHA-256 均匹配。此校验不代表作者签名或画质保证。</source>
         <translation>完整性檢查通過：權重、授權條款、來源清單與驗證報告的 SHA-256 均相符。此檢查不代表作者簽章或畫質保證。</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="170" />
+        <location filename="../ModelCenterPage.qml" line="179" />
         <source>旧版清单：权重 SHA-256 已校验；许可证、来源清单和验证报告未绑定 SHA-256。</source>
         <translation>舊版清單：權重 SHA-256 已驗證；授權條款、來源清單與驗證報告未綁定 SHA-256。</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="179" />
+        <location filename="../ModelCenterPage.qml" line="188" />
         <source>模型包无法读取。</source>
         <translation>無法讀取模型套件。</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="191" />
+        <location filename="../ModelCenterPage.qml" line="198" />
+        <source>收起详情</source>
+        <translation>收起詳情</translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="198" />
+        <source>技术与许可详情</source>
+        <translation>技術與授權詳情</translation>
+    </message>
+    <message>
+        <location filename="../ModelCenterPage.qml" line="206" />
         <source>设为默认模型</source>
         <translation>設為預設模型</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="201" />
+        <location filename="../ModelCenterPage.qml" line="216" />
         <source>从目录列表移除</source>
         <translation>從清單移除</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="212" />
+        <location filename="../ModelCenterPage.qml" line="227" />
         <source>尚未登记本地模型
 添加包含 model.json 的 RIFE 或画质修复模型包</source>
         <translation>尚未登記本機模型
 新增包含 model.json 的 RIFE 或畫質修復模型套件</translation>
     </message>
     <message>
-        <location filename="../ModelCenterPage.qml" line="220" />
+        <location filename="../ModelCenterPage.qml" line="235" />
         <source>目录校验会检查模型权重、许可、来源、能力和本地验证记录的文件哈希。哈希一致不代表作者身份或画质排名；未完成独立色彩与模型测试的路径不会标记为 HDR。移除只会从目录列表中取消登记，不会删除本机模型文件。</source>
         <translation>目錄驗證會檢查模型權重、授權、來源、能力與本機驗證記錄的檔案雜湊。雜湊一致不代表作者身分或畫質排名；未通過獨立色彩與模型測試的路徑不會標示為 HDR。移除只會取消目錄登記，不會刪除本機模型檔案。</translation>
     </message>
@@ -1423,57 +1453,46 @@
 <context>
     <name>QueueController</name>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="591" />
         <source>队列忙碌或尚未连接，请等待当前操作结束。</source>
         <translation>佇列忙碌或尚未連線，請等待目前作業完成。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="607" />
         <source>本地任务队列尚未连接，无法导出报告。</source>
         <translation>本機任務佇列尚未連線，無法匯出報告。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="656" />
         <source>正在校验本地模型及 SHA-256…</source>
         <translation>正在驗證本機模型與 SHA-256…</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="660" />
         <source>队列忙碌或本地模型校验正在运行。</source>
         <translation>佇列忙碌或本機模型正在驗證。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="661" />
         <source>只能添加本机目录中的模型包。</source>
         <translation>只能新增本機資料夾中的模型套件。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="662" />
         <source>正在验证模型描述、许可证和 ONNX SHA-256…</source>
         <translation>正在驗證模型描述檔、授權條款與 ONNX SHA-256…</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="667" />
         <source>正在更新本地模型列表…</source>
         <translation>正在更新本機模型清單…</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="671" />
         <source>默认模型必须位于本机目录。</source>
         <translation>預設模型必須位於本機資料夾。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="678" />
         <source>请先校验该模型包，再将其设为默认模型。</source>
         <translation>請先驗證此模型套件，再設為預設模型。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="689" />
         <source>视频修复模型必须位于本机目录。</source>
         <translation>影片修復模型必須位於本機資料夾。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="708" />
         <source>请先在本地模型中心校验兼容的去模糊或 x2、x3、x4 超分模型。</source>
         <translation>請先在本機模型中心驗證相容的去模糊或 x2、x3、x4 超解析度模型。</translation>
     </message>
@@ -1502,23 +1521,27 @@
     </message>
     <message>
         <location filename="../QueuePage.qml" line="111" />
-        <source>YouTube 60 FPS SDR 队列使用官方 1080p 建议码率；混合分辨率请在高级编码中调整。平台仍会转码，300 FPS 以上母版需单独输出。</source>
-        <translation>YouTube 60 FPS SDR 佇列預設使用官方 1080p 建議位元率；混合解析度請在進階編碼中調整。平台仍會轉碼，300 FPS 以上母版需另外輸出。</translation>
+        <source>YouTube 60 FPS SDR 队列统一使用官方 1080p 码率参考；混合分辨率需调整。编码器为 Auto、GOP 为 2 秒；300 FPS 以上母版需单独输出。</source>
+        <translation>YouTube 60 FPS SDR 佇列對所有影片統一使用官方 1080p 位元率參考；解析度混合時請調整。編碼器為 Auto、GOP 為 2 秒；300 FPS 以上母版需另外輸出。</translation>
     </message>
     <message>
         <location filename="../QueuePage.qml" line="113" />
-        <source>抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。</source>
-        <translation>抖音公開上傳 API 未列出影格率上限；此處是本機相容性預設，不代表平台保證。</translation>
+        <source>抖音开放平台上传 API 未列出帧率上限；128 MiB、15 分钟和 4 GB 分片规则只适用于该 API，本地预设不代表普通投稿平台保证。</source>
+        <translation>抖音開放平台上傳 API 未列出影格率上限；128 MiB、15 分鐘和 4 GB 分片規則只適用於該 API，本機預設不代表一般投稿平台保證。</translation>
     </message>
     <message>
-        <location filename="../QueuePage.qml" line="115" />
         <source>Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。</source>
         <translation>Bilibili 60 FPS 是相容性預設；位元率是本機建議值，目前上傳規則需依帳號驗證。</translation>
     </message>
     <message>
+        <location filename="../QueuePage.qml" line="115" />
+        <source>Bilibili 60 FPS 是兼容性起始预设；码率为本机建议值，编码器保持 Auto，当前上传规则需按账号验证。</source>
+        <translation>Bilibili 60 FPS 是相容性起始預設；位元率是本機建議值，編碼器維持 Auto，目前上傳規則需依帳號驗證。</translation>
+    </message>
+    <message>
         <location filename="../QueuePage.qml" line="116" />
-        <source>平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。</source>
-        <translation>平台會重新編碼影片。300 FPS 以上的本機母版需另外輸出；平台預設會產生相容性副本。</translation>
+        <source>平台可能重新编码或限制播放帧率。平台预设每次仅生成一个文件；300 FPS 以上本机母版需用自定义帧率另行处理。</source>
+        <translation>平台可能重新編碼影片或限制播放影格率。每次平台預設只會產生一個檔案；300 FPS 以上的本機母版需另行使用自訂影格率處理。</translation>
     </message>
     <message>
         <location filename="../QueuePage.qml" line="151" />
@@ -2052,94 +2075,76 @@
 <context>
     <name>QueueWorker</name>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="87" />
         <source>已校验并自动恢复 %1 个已发布结果。此处的恢复不需要重新补帧。</source>
         <translation>已驗證並自動復原 %1 個已發布結果。此次復原不需要重新補幀。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="89" />
         <source>发现 %1 个仍中断的任务。可校验已完成片段后继续，也可选择新文件名从头生成。</source>
         <translation>發現 %1 個仍中斷的任務。可驗證已完成片段後繼續，或選擇新檔名從頭產生。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="95" />
         <source>任务库暂不可用：</source>
         <translation>任務資料庫目前無法使用：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="113" />
         <source>任务已重新加入队列。</source>
         <translation>任務已重新加入佇列。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="114" />
         <source>已校验检查点并加入队列。开始后会从未完成片段继续。</source>
         <translation>已驗證檢查點並加入佇列。開始後會從未完成片段繼續。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="124" />
         <source>已加入从头生成的任务：</source>
         <translation>已加入從頭產生的任務：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="144" />
         <source>队列报告已保存：</source>
         <translation>佇列報告已儲存：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="246" />
         <source>已校验并加入本地模型：</source>
         <translation>已驗證並加入本機模型：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="296" />
         <source>正在检查视频 %1 / %2</source>
         <translation>正在檢查影片 %1 / %2</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="301" />
         <source>视频色彩标签、像素格式或位深不在支持范围内。</source>
         <translation>影片色彩標籤、像素格式或位元深度不在支援範圍內。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="302" />
         <source>当前模型未声明支持这个视频输入配置。</source>
         <translation>目前模型未宣告支援此影片輸入設定檔。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="303" />
         <source>所选视频修复模型不支持这个色彩配置或分辨率。</source>
         <translation>所選影片修復模型不支援此色彩設定或解析度。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="304" />
         <source>所选视频编码器无法初始化：</source>
         <translation>所選影片編碼器無法初始化：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="305" />
         <source>文件中没有视频轨。</source>
         <translation>檔案中沒有影片軌。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="305" />
         <source>无法读取媒体：</source>
         <translation>無法讀取媒體：</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="308" />
         <source>没有找到当前模型可处理的视频。
 </source>
         <translation>找不到目前模型可處理的影片。
 </translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="313" />
         <source>已加入 %1 个任务。输出使用新文件名。</source>
         <translation>已加入 %1 個任務。輸出會使用新檔名。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="314" />
         <source>
 跳过 %1 个不支持的文件：
 </source>
@@ -2148,49 +2153,40 @@
 </translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="315" />
         <source>
 仅显示前 50 条详情。</source>
         <translation>
 僅顯示前 50 筆詳細資料。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="321" />
         <source>导入已取消，未加入部分任务。</source>
         <translation>匯入已取消，未加入部分任務。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="475" />
         <source>队列已停止。已排队但未运行的任务会保留；中断任务可校验片段后继续或从头重启。</source>
         <translation>佇列已停止。已排隊但尚未執行的任務會保留；中斷的任務可在驗證片段後繼續，或從頭重啟。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="535" />
         <source>默认设置未保存。</source>
         <translation>預設設定未儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="537" />
         <source>高级编码参数超出范围或与当前编码器不兼容，默认设置未保存。</source>
         <translation>進階編碼參數超出範圍或與目前編碼器不相容，預設設定未儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="540" />
         <source>镜头切换阈值必须介于 0 和 1 之间，默认设置未保存。</source>
         <translation>鏡頭切換閾值必須介於 0 和 1 之間，預設設定未儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="542" />
         <source>平台导出预设无效，默认设置未保存。</source>
         <translation>平台輸出預設無效，未儲存預設值。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="550" />
         <source>任务可继续使用，但默认设置未能保存。</source>
         <translation>任務可繼續使用，但預設設定未能儲存。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/queue_controller.cpp" line="538" />
         <source>推理后端选择无效，默认设置未保存。</source>
         <translation>推論後端選擇無效，預設設定未儲存。</translation>
     </message>
@@ -2198,259 +2194,202 @@
 <context>
     <name>StudioController</name>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="262" />
         <source>%1 秒</source>
         <translation>%1 秒</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="263" />
         <source>%1 kb/s</source>
         <translation>%1 kb/s</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="264" />
         <source>容器 %1 · 时长 %2 · 总码率 %3 · %4 条轨道 · %5 个章节</source>
         <translation>容器 %1 · 時長 %2 · 總位元率 %3 · %4 條軌道 · %5 個章節</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="271" />
         <source>视频</source>
         <translation>影片</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="272" />
         <source>音频</source>
         <translation>音訊</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="273" />
         <source>字幕</source>
         <translation>字幕</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="274" />
         <source>数据</source>
         <translation>資料</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="275" />
         <source>附件</source>
         <translation>附件</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="276" />
         <source>其他</source>
         <translation>其他</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="277" />
         <source>轨道 %1 · %2 · %3</source>
         <translation>軌道 %1 · %2 · %3</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="278" />
         <source>默认</source>
         <translation>預設</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="279" />
         <source>强制</source>
         <translation>強制</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="286" />
         <source>%1 × %2 · 平均 %3 FPS · 标称 %4 FPS · %5 · %6-bit</source>
         <translation>%1 × %2 · 平均 %3 FPS · 標稱 %4 FPS · %5 · %6-bit</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="289" />
         <source>色彩：%1 / %2 / %3 / %4</source>
         <translation>色彩：%1 / %2 / %3 / %4</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="291" />
         <source>HDR 传递函数</source>
         <translation>HDR 傳遞函數</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="295" />
         <source>峰值亮度 %1 cd/m²</source>
         <translation>峰值亮度 %1 cd/m²</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="297" />
         <source>最低亮度 %1 cd/m²</source>
         <translation>最低亮度 %1 cd/m²</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="298" />
         <source>显示器元数据：%1</source>
         <translation>顯示器中繼資料：%1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="301" />
         <source>内容亮度 MaxCLL %1 / MaxFALL %2 cd/m²</source>
         <translation>內容亮度 MaxCLL %1 / MaxFALL %2 cd/m²</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="304" />
         <source>显示旋转 %1°</source>
         <translation>顯示旋轉 %1°</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="305" />
         <source>含显示变换矩阵</source>
         <translation>包含顯示轉換矩陣</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="307" />
         <source>%1 Hz · %2 声道 · %3 · %4</source>
         <translation>%1 Hz · %2 聲道 · %3 · %4</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="310" />
         <source>声道布局未知</source>
         <translation>聲道配置未知</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="311" />
         <source>采样格式未知</source>
         <translation>取樣格式未知</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="313" />
         <source>码率 %1 kb/s</source>
         <translation>位元率 %1 kb/s</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="316" />
         <source>语言：%1</source>
         <translation>語言：%1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="318" />
         <source>标题：%1</source>
         <translation>標題：%1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="28" />
         <source>软件 H.264</source>
         <translation>軟體 H.264</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="29" />
         <source>软件 HEVC</source>
         <translation>軟體 HEVC</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="30" />
         <source>软件 AV1</source>
         <translation>軟體 AV1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="31" />
         <source>兼容的软件编码器</source>
         <translation>相容的軟體編碼器</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="41" />
         <source>NVENC 驱动接口不兼容：当前提供 API %1，FFmpeg 需要 API %2（驱动 %3 或更新）。现在由 CPU 使用%4编码，RIFE 仍由 CUDA 插帧。</source>
         <translation>NVENC 驅動 API 不相容：目前提供 API %1，FFmpeg 需要 API %2（驅動程式 %3 或更新版本）。現在由 CPU 使用%4編碼，RIFE 仍由 CUDA 補幀。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="46" />
         <source>当前 NVIDIA 驱动无法初始化此 FFmpeg 的 NVENC 接口。现在由 CPU 使用%1编码，RIFE 仍由 CUDA 插帧。</source>
         <translation>目前 NVIDIA 驅動程式無法初始化此 FFmpeg 的 NVENC 介面。現在由 CPU 使用%1編碼，RIFE 仍由 CUDA 補幀。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="49" />
         <source>NVENC 未能启动，现在由 CPU 使用%1编码；RIFE 插帧仍由 CUDA 运行。</source>
         <translation>NVENC 無法啟動，目前由 CPU 使用%1編碼；RIFE 補幀仍由 CUDA 執行。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="106" />
         <source>请选择本机视频文件。</source>
         <translation>請選擇本機影片檔案。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="113" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="223" />
         <source>请等待当前操作结束。</source>
         <translation>請等待目前作業完成。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="118" />
         <source>请选择本机输出位置。</source>
         <translation>請選擇本機輸出位置。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="248" />
         <source>TensorRT 当前不可用，已回退到 ONNX Runtime CUDA 推理。</source>
         <translation>TensorRT 目前無法使用，已回退至 ONNX Runtime CUDA 推論。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="262" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="263" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="284" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="285" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="308" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="309" />
-        <location filename="../../apps/desktop/studio_controller.cpp" line="352" />
         <source>未知</source>
         <translation>未知</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="363" />
         <source>NVIDIA GPU 不可用</source>
         <translation>NVIDIA GPU 無法使用</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="374" />
         <source>NVENC 当前无法初始化；自动编码将使用%1，RIFE 插帧仍使用 GPU。</source>
         <translation>NVENC 目前無法初始化；自動編碼會使用%1，RIFE 補幀仍使用 GPU。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="377" />
         <source>NVENC 和兼容的软件编码器均未能初始化；请检查本机视频编码运行环境。</source>
         <translation>NVENC 與相容的軟體編碼器皆無法初始化；請檢查本機影片編碼執行環境。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="384" />
         <source>HEVC</source>
         <translation>HEVC</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="385" />
         <source>AV1</source>
         <translation>AV1</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="386" />
         <source>当前视频配置无法初始化：%1。选择这些编码器时不可开始。</source>
         <translation>目前影片設定無法初始化：%1。選擇此編碼器時無法開始處理。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="390" />
         <source>当前模型路径支持明确标记的 BT.709 或 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位深和未标记色彩需要单独验证。</source>
         <translation>目前模型路徑支援明確標記的 BT.709 或 BT.470BG/SMPTE 170M 8/10-bit SDR；HDR、其他位元深度及未標記色彩都需要獨立驗證。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="392" />
         <source>文件中没有可处理的视频轨。 </source>
         <translation>檔案中沒有可處理的影片軌。 </translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="405" />
         <source>已生成 %1 帧，其中 %2 帧由 RIFE 生成。输出已通过解码和时间轴检查。</source>
         <translation>已產生 %1 格，其中 %2 格由 RIFE 產生。輸出已通過解碼與時間軸檢查。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="416" />
         <source>TensorRT 未能启动，已使用 ONNX Runtime CUDA 完成推理。</source>
         <translation>TensorRT 無法啟動，已使用 ONNX Runtime CUDA 完成推論。</translation>
     </message>
     <message>
-        <location filename="../../apps/desktop/studio_controller.cpp" line="418" />
         <source>操作已取消，未发布部分视频。</source>
         <translation>作業已取消，未發布部分影片。</translation>
     </message>

@@ -1,0 +1,21 @@
+diff --git a/ffbuild/library.mak b/ffbuild/library.mak
+index 91daa9c..379a039 100644
+--- a/ffbuild/library.mak
++++ b/ffbuild/library.mak
+@@ -75,9 +75,9 @@ $(SUBDIR)$(SLIBNAME): $(SUBDIR)$(SLIBNAME_WITH_MAJOR)
+ 	$(Q)cd ./$(SUBDIR) && $(LN_S) $(SLIBNAME_WITH_MAJOR) $(SLIBNAME)
+ 
+ $(SUBDIR)$(SLIBNAME_WITH_MAJOR): $(OBJS) $(SHLIBOBJS) $(SUBDIR)lib$(NAME).ver
+-	$(SLIB_CREATE_DEF_CMD)
+ ifeq ($(RESPONSE_FILES),yes)
+-	$(Q)echo $$(filter %.o,$$^) > $$@.objs
++	$$(file >$$@.objs,$$(filter %.o,$$^))
++	EXTERN_PREFIX="$(EXTERN_PREFIX)" AR="$(AR_CMD)" NM="$(NM_CMD)" $(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver @$$@.objs > $$(@:$(SLIBSUF)=.def)
+ 	$$(call LINK,$$(call $(NAME)LINK_SO_ARGS) $$(LD_O) @$$@.objs $$(call $(NAME)LINK_EXTRA))
+ else
+ 	$$(call LINK,$$(call $(NAME)LINK_SO_ARGS) $$(LD_O) $$(filter %.o,$$^) $$(call $(NAME)LINK_EXTRA))
+@@ -137,3 +137,4 @@ $(TOOLS):     $(DEP_LIBS) $(SUBDIR)$($(CONFIG_SHARED:yes=S)LIBNAME)
+ $(TESTPROGS): $(DEP_LIBS) $(SUBDIR)$(LIBNAME)
+ 
+ testprogs: $(TESTPROGS)
++

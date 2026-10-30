@@ -73,13 +73,29 @@ def main():
     if result["aiFrames"] + result["originalFrames"] + result["heldFrames"] != result["outputFrames"]:
         raise RuntimeError("Recovered task frame classification does not cover the complete output")
     output = root / "crash-output.mkv"
-    info = json.loads(run(args.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_streams", "-show_frames",
-                          "-show_entries", "stream=time_base:frame=best_effort_timestamp", "-of", "json", output))
-    frames = info["frames"]
-    time_base = Fraction(info["streams"][0]["time_base"])
-    if len(frames) != 6 or any(abs(int(frame["best_effort_timestamp"]) * time_base - Fraction(i, 60)) > time_base / 2
-                               for i, frame in enumerate(frames)):
-        raise RuntimeError("Recovered frame count or timestamps differ from the 60 FPS fixture")
+    def timestamps(path):
+        info = json.loads(run(args.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_streams", "-show_frames",
+                              "-show_entries", "stream=time_base:frame=best_effort_timestamp", "-of", "json", path))
+        if len(info.get("streams", [])) != 1:
+            raise RuntimeError(f"Expected one video stream in {path}")
+        time_base = Fraction(info["streams"][0]["time_base"])
+        if time_base <= 0:
+            raise RuntimeError(f"Invalid video time base in {path}")
+        values = [int(frame["best_effort_timestamp"]) * time_base for frame in info.get("frames", [])]
+        return values, time_base
+    frames, time_base = timestamps(output)
+    reference_frames, reference_base = timestamps(args.reference)
+    if len(frames) < 5 or len(frames) != len(reference_frames) or len(frames) != result["outputFrames"]:
+        raise RuntimeError("Recovered frame count differs from the uninterrupted reference or queue result")
+    # This isolated fixture and its queue job start at zero and target 60 FPS.
+    # Verify each container's quantization independently, then the corresponding
+    # timestamps between the resumed and uninterrupted outputs.
+    for index, (actual_time, expected_time) in enumerate(zip(frames, reference_frames)):
+        scheduled = Fraction(index, 60)
+        if (abs(actual_time - scheduled) > time_base / 2 or
+                abs(expected_time - scheduled) > reference_base / 2 or
+                abs(actual_time - expected_time) > (time_base + reference_base) / 2):
+            raise RuntimeError(f"Recovered frame {index} PTS differs from the 60 FPS reference")
     def decoded(path):
         return run(args.ffmpeg, "-v", "error", "-nostdin", "-i", path, "-map", "0:v:0", "-pix_fmt", "yuv420p", "-f", "rawvideo", "-")
     actual, reference = decoded(output), decoded(args.reference)
@@ -92,6 +108,22 @@ def main():
     psnr = 999.0 if mse == 0 else 10 * math.log10(255 * 255 / mse)
     if maximum > 1 or changed_fraction > 0.0001 or psnr < 90:
         raise RuntimeError(f"Resumed frames exceed the 1-level/0.01%/90 dB comparison gate: max={maximum}, changed={changed_fraction}, PSNR={psnr}")
+    def has_audio(path):
+        data = json.loads(run(args.ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries",
+                              "stream=index", "-of", "json", path))
+        return bool(data.get("streams"))
+    audio = None
+    if has_audio(args.source):
+        if not has_audio(output) or not has_audio(args.reference):
+            raise RuntimeError("Recovered output or uninterrupted reference lost the source audio")
+        def pcm(path):
+            return run(args.ffmpeg, "-v", "error", "-nostdin", "-i", path, "-map", "0:a:0", "-f", "s16le", "-")
+        source_audio, actual_audio, reference_audio = map(pcm, (args.source, output, args.reference))
+        if not source_audio or actual_audio != source_audio or reference_audio != source_audio:
+            raise RuntimeError("Recovered or reference audio samples differ from the source")
+        audio = {"decoded_bytes": len(actual_audio), "decoded_sha256": hashlib.sha256(actual_audio).hexdigest()}
+    elif has_audio(output) or has_audio(args.reference):
+        raise RuntimeError("Recovered output or uninterrupted reference contains unexpected audio")
     if digest(args.source) != source_hash:
         raise RuntimeError("Source fixture changed during recovery")
     report = {"status": "passed", "frames": len(frames), "committed_segments_before_interrupt": segments,
@@ -99,7 +131,7 @@ def main():
               "frame_classification": {"ai": result["aiFrames"], "original": result["originalFrames"], "held": result["heldFrames"]},
               "decoded_comparison": {"max_abs_8bit": maximum, "changed_fraction": changed_fraction, "psnr_db": psnr,
                                      "gate": "max 1 level, at most 0.01% changed, PSNR at least 90 dB"},
-              "decoded_sha256": hashlib.sha256(actual).hexdigest()}
+              "decoded_sha256": hashlib.sha256(actual).hexdigest(), "audio": audio}
     (root / "recovery-check.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
 

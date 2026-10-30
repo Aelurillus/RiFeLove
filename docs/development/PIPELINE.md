@@ -9,7 +9,7 @@ Enable `RIFELOVE_BUILD_MEDIA` and `RIFELOVE_BUILD_ONNX_CUDA` with the pinned loc
 ```powershell
 .\build\windows-release\rifelove-cli.exe interpolate input.mkv output.mkv `
   --fps 60000/1001 `
-  --model-dir models/cache/rife-4.25-fp32-sdr8-v2 `
+  --model-dir models/cache/rife-4.25-fp32-sdr8-v3 `
   --runtime-dir C:/itzming/dependences/rifelove-tensorrt-10.9.0.34/onnxruntime-win-x64-gpu-1.22.0/lib `
   --encoder auto --progress --report output-report.json
 ```

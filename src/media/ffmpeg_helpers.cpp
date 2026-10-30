@@ -40,20 +40,29 @@ std::optional<Rational> durationTag(const std::string& text) {
 }
 }
 std::optional<Rational> declaredEnd(const AVFormatContext* input, const AVStream* stream) {
+    if (input->iformat && std::string_view(input->iformat->name).find("matroska") != std::string_view::npos) {
+        // Matroska has no per-track AVStream duration. During stream-info
+        // probing FFmpeg may fill it from the *container* duration (notably
+        // for short H.264 tracks). A longer audio tail/CodecDelay must never
+        // become the video boundary. Use the muxer's absolute track-end tag;
+        // without one, the caller must verify decoded/packet boundaries.
+        const auto* tag = av_dict_get(stream->metadata,"DURATION",nullptr,0);
+        if (!tag) return {};
+        auto end = durationTag(tag->value);
+        if (end && stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+            stream->codecpar->initial_padding > 0 && stream->codecpar->sample_rate > 0) {
+            // The tag uses block timestamps, which include CodecDelay. The
+            // demuxer subtracts its tick-rounded value from audio packet PTS.
+            const auto delay = av_rescale_q(stream->codecpar->initial_padding,AVRational{1,stream->codecpar->sample_rate},stream->time_base);
+            end = *end - Rational(delay) * rational(stream->time_base);
+        }
+        return end;
+    }
     if (stream->duration != AV_NOPTS_VALUE && stream->duration > 0) {
         const auto start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
         return Rational(start) * rational(stream->time_base) + Rational(stream->duration) * rational(stream->time_base);
     }
-    if (!input->iformat || std::string_view(input->iformat->name).find("matroska") == std::string_view::npos) return {};
-    const auto* tag = av_dict_get(stream->metadata,"DURATION",nullptr,0);
-    if (!tag) return {};
-    auto end = durationTag(tag->value);
-    if (end && stream->codecpar->initial_padding > 0 && stream->codecpar->sample_rate > 0) {
-        // Matroska's track duration includes the timestamp offset for CodecDelay.
-        const auto delay = av_rescale_q(stream->codecpar->initial_padding,AVRational{1,stream->codecpar->sample_rate},stream->time_base);
-        end = *end - Rational(delay) * rational(stream->time_base);
-    }
-    return end;
+    return {};
 }
 void normalizeCopiedAudioDuration(AVPacket* packet, const AVStream* source, std::optional<Rational> end) {
     if (!end || source->codecpar->codec_type != AVMEDIA_TYPE_AUDIO || packet->pts == AV_NOPTS_VALUE || packet->duration <= 0) return;

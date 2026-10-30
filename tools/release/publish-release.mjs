@@ -8,6 +8,9 @@ import { mergePublishedRelease, validateVersion } from "./release-manifest.mjs";
 import { assertPublicObjectAccessAllowed } from "./oss-public-access.mjs";
 import { verifyAnonymousObject } from "./anonymous-object-verification.mjs";
 import { validateReleaseArchive } from "./release-archive-safety.mjs";
+import { failAliyunOssDisabled } from "./oss-disabled.mjs";
+
+failAliyunOssDisabled();
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");

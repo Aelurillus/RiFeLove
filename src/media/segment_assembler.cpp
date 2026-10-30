@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <numeric>
 
 namespace rifelove::media {
 namespace {
@@ -14,6 +15,72 @@ Rational absolute(Rational value) {
 
 bool withinTick(Rational actual, Rational expected, Rational timeBase) {
     return absolute(actual - expected) <= timeBase;
+}
+
+AVRational exactAssemblyTimeBase(const std::vector<VideoSegmentInput>& segments) {
+    std::int64_t denominator = 1;
+    const auto include = [&](Rational value) {
+        const auto factor = value.denominator() / std::gcd(denominator,value.denominator());
+        if (factor > std::numeric_limits<int>::max() / denominator)
+            throw std::runtime_error("checkpoint timeline cannot be represented by a 32-bit container time base");
+        denominator *= factor;
+    };
+    for (const auto& segment : segments) {
+        include(segment.contract.firstTimestamp);
+        include(segment.contract.frameDuration);
+        if (segment.contract.endExclusive) include(*segment.contract.endExclusive);
+    }
+    return {1,static_cast<int>(denominator)};
+}
+
+std::int64_t exactTicks(Rational value, AVRational timeBase) {
+    const auto scaled = value / detail::rational(timeBase);
+    if (scaled.denominator() != 1)
+        throw std::runtime_error("output container time base cannot exactly represent the checkpoint timeline");
+    return scaled.numerator();
+}
+
+// Matroska checkpoints use millisecond timestamps. Once a segment has passed
+// decoded-frame verification, its contract is the exact CFR clock; rescaling
+// the rounded MKV timestamps into MP4's finer clock would retain that rounding
+// and shorten 30 frames at 60 FPS to 499 ms. Recover only timestamps that can
+// be unambiguously identified on the verified contract's frame grid.
+Rational contractTimestamp(std::int64_t timestamp, AVRational sourceTimeBase,
+    const VideoSegmentContract& contract, bool decodeTimestamp = false) {
+    const auto actual = Rational(timestamp) * detail::rational(sourceTimeBase);
+    const auto frameOffset = (actual - contract.firstTimestamp) / contract.frameDuration;
+    const auto nearest = av_rescale_rnd(frameOffset.numerator(),1,frameOffset.denominator(),AV_ROUND_NEAR_INF);
+    const auto expected = contract.firstTimestamp + Rational(nearest) * contract.frameDuration;
+    // Matroska may infer the initial DTS from a rounded PTS minus a truncated
+    // frame duration, adding at most one more container tick of uncertainty.
+    // A reordered DTS is recoverable only while that interval identifies a
+    // single point on the contract clock.
+    const auto tolerance = detail::rational(sourceTimeBase) * Rational(decodeTimestamp ? 3 : 1,2);
+    if (detail::rational(sourceTimeBase) > contract.frameDuration ||
+        (decodeTimestamp && tolerance * Rational(2) >= contract.frameDuration) ||
+        absolute(actual - expected) > tolerance)
+        throw std::runtime_error("checkpoint packet timestamp cannot be uniquely restored to its verified frame timeline");
+    return expected;
+}
+
+void restorePacketTimeline(AVPacket* packet, AVRational sourceTimeBase, AVRational destinationTimeBase,
+    const VideoSegmentContract& contract, std::vector<bool>& seen) {
+    if (packet->pts == AV_NOPTS_VALUE)
+        throw std::runtime_error("checkpoint packet has no presentation timestamp for exact timeline assembly");
+    const auto presentation = contractTimestamp(packet->pts,sourceTimeBase,contract);
+    const auto frameIndex = (presentation - contract.firstTimestamp) / contract.frameDuration;
+    if (frameIndex.numerator() < 0 || static_cast<std::uint64_t>(frameIndex.numerator()) >= contract.frameCount ||
+        seen[static_cast<std::size_t>(frameIndex.numerator())])
+        throw std::runtime_error("checkpoint packet presentation timestamps do not uniquely cover its verified frames");
+    const auto index = static_cast<std::size_t>(frameIndex.numerator());
+    seen[index] = true;
+    const auto nominalEnd = contract.firstTimestamp + contract.frameDuration * Rational(static_cast<std::int64_t>(contract.frameCount));
+    const auto duration = index + 1 == contract.frameCount ? contract.endExclusive.value_or(nominalEnd) - presentation : contract.frameDuration;
+    if (packet->dts != AV_NOPTS_VALUE)
+        packet->dts = exactTicks(packet->dts == packet->pts ? presentation :
+            contractTimestamp(packet->dts,sourceTimeBase,contract,true),destinationTimeBase);
+    packet->pts = exactTicks(presentation,destinationTimeBase);
+    packet->duration = exactTicks(duration,destinationTimeBase);
 }
 
 void requireOptionalMatch(const std::optional<std::string>& expected, const std::string& actual, const char* field) {
@@ -154,6 +221,8 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
 
     const auto destinationPath = detail::pathFromUtf8(destination);
     const auto extension = detail::outputExtension(destinationPath);
+    const bool restoreExactTimeline = extension == ".mp4" || extension == ".mov";
+    const auto assemblyTimeBase = restoreExactTimeline ? exactAssemblyTimeBase(segments) : AVRational{0,1};
     detail::Input sourceInput(source,stop);
     if (static_cast<unsigned>(videoStreamIndex) >= sourceInput.context->nb_streams ||
         sourceInput.context->streams[videoStreamIndex]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
@@ -184,7 +253,8 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
         if (!outgoing) throw std::bad_alloc();
         detail::check(avcodec_parameters_copy(outgoing->codecpar,parameters),"copy segment assembly stream parameters");
         outgoing->codecpar->codec_tag = 0;
-        outgoing->time_base = static_cast<int>(i) == videoStreamIndex ? firstSegmentStream->time_base : sourceStream->time_base;
+        outgoing->time_base = static_cast<int>(i) == videoStreamIndex ?
+            (restoreExactTimeline ? assemblyTimeBase : firstSegmentStream->time_base) : sourceStream->time_base;
         outgoing->avg_frame_rate = static_cast<int>(i) == videoStreamIndex ? firstSegmentStream->avg_frame_rate : sourceStream->avg_frame_rate;
         outgoing->sample_aspect_ratio = static_cast<int>(i) == videoStreamIndex ? firstSegmentStream->sample_aspect_ratio : sourceStream->sample_aspect_ratio;
         outgoing->disposition = sourceStream->disposition;
@@ -216,10 +286,35 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
             throw std::runtime_error("checkpoint segment stream layout changed during assembly");
         if (!sameVideoParameters(firstSegmentStream->codecpar,segmentContext->streams[0]->codecpar))
             throw std::runtime_error("checkpoint segment codec parameters or extradata differ; stream-copy assembly is unsafe");
+        std::vector<bool> seen(restoreExactTimeline ? segments[i].contract.frameCount : 0,false);
+        bool finalPacketFound = false;
         for (;;) {
             av_packet_unref(packet.get());
             if (!readVideoPacket(segmentContext,packet.get(),stop)) break;
-            av_packet_rescale_ts(packet.get(),segmentContext->streams[0]->time_base,outputVideo->time_base);
+            if (restoreExactTimeline)
+                restorePacketTimeline(packet.get(),segmentContext->streams[0]->time_base,outputVideo->time_base,segments[i].contract,seen);
+            else {
+                av_packet_rescale_ts(packet.get(),segmentContext->streams[0]->time_base,outputVideo->time_base);
+                // Matroska's demuxer may truncate an inferred packet duration
+                // independently of its rounded PTS. Restore the final packet's
+                // duration to the nearest representable contract boundary so
+                // the muxed track does not silently lose a millisecond.
+                if (packet->pts != AV_NOPTS_VALUE) {
+                    const auto& contract = segments[i].contract;
+                    const auto lastStart = contract.firstTimestamp + contract.frameDuration * Rational(static_cast<std::int64_t>(contract.frameCount - 1));
+                    const auto tick = detail::rational(outputVideo->time_base);
+                    const auto presentation = Rational(packet->pts) * tick;
+                    if (absolute(presentation - lastStart) <= tick / Rational(2)) {
+                        if (finalPacketFound) throw std::runtime_error("checkpoint contains ambiguous final packet timestamps");
+                        const auto nominalEnd = contract.firstTimestamp + contract.frameDuration * Rational(static_cast<std::int64_t>(contract.frameCount));
+                        const auto endTicks = contract.endExclusive.value_or(nominalEnd) / tick;
+                        const auto roundedEnd = av_rescale_rnd(endTicks.numerator(),1,endTicks.denominator(),AV_ROUND_NEAR_INF);
+                        if (roundedEnd <= packet->pts) throw std::runtime_error("checkpoint final frame cannot be represented in the output time base");
+                        packet->duration = roundedEnd - packet->pts;
+                        finalPacketFound = true;
+                    }
+                }
+            }
             packet->stream_index = videoStreamIndex;
             packet->pos = -1;
             const auto videoTimestamp = packet->dts != AV_NOPTS_VALUE ? packet->dts : packet->pts;
@@ -235,6 +330,10 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
             ++videoPackets;
             av_packet_unref(packet.get());
         }
+        if (restoreExactTimeline && std::find(seen.begin(),seen.end(),false) != seen.end())
+            throw std::runtime_error("checkpoint packets do not cover every verified frame");
+        if (!restoreExactTimeline && !finalPacketFound)
+            throw std::runtime_error("checkpoint final frame packet cannot be identified for output");
     }
     while (auxiliary.available()) {
         auxiliary.write();
@@ -276,7 +375,7 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
     std::size_t currentSegment = 0;
     std::size_t frameInSegment = 0;
     std::size_t decodedFrames = 0;
-    std::optional<Rational> finalFrameEnd;
+    std::optional<Rational> finalFrameDuration;
     const auto decoded = decodeVideo(temporaryPath,[&](const DecodedFrame& frame) {
         if (!frame.timestamp || frame.timestampRecovered || currentSegment >= segments.size())
             throw std::runtime_error("assembled video has missing timestamps or unexpected frames");
@@ -286,14 +385,17 @@ VideoSegmentAssemblyResult MediaEngine::assembleVideoSegments(const std::string&
             throw std::runtime_error("assembled frame timestamp differs from its global segment timeline");
         ++frameInSegment;
         ++decodedFrames;
-        if (frame.duration && *frame.duration > Rational(0)) finalFrameEnd = *frame.timestamp + *frame.duration;
+        if (frame.duration && *frame.duration > Rational(0)) finalFrameDuration = frame.duration;
+        else finalFrameDuration.reset();
         if (frameInSegment == contract.frameCount) { ++currentSegment; frameInSegment = 0; }
     },videoStreamIndex,stop);
     if (decoded.missingTimestamps || decoded.nonIncreasingTimestamps || decodedFrames != expectedFrameCount || currentSegment != segments.size())
         throw std::runtime_error("assembled output frame count or timestamp ordering differs from its checkpoint segments");
-    if (finalFrameEnd && absolute(*finalFrameEnd - expectedEnd) > outputVideoInfo.timeBase)
+    const auto& finalContract = segments.back().contract;
+    const auto finalStart = finalContract.firstTimestamp + finalContract.frameDuration * Rational(static_cast<std::int64_t>(finalContract.frameCount - 1));
+    if (finalFrameDuration && absolute(*finalFrameDuration - (expectedEnd - finalStart)) > outputVideoInfo.timeBase)
         throw std::runtime_error("assembled output final frame boundary differs from its checkpoint timeline");
-    if (!finalFrameEnd && (!outputVideoInfo.declaredEnd || absolute(*outputVideoInfo.declaredEnd - expectedEnd) > outputVideoInfo.timeBase))
+    if (!finalFrameDuration && (!outputVideoInfo.declaredEnd || absolute(*outputVideoInfo.declaredEnd - expectedEnd) > outputVideoInfo.timeBase))
         throw std::runtime_error("assembled output final frame boundary cannot be verified");
     if (validate) validate(temporaryPath);
     const VideoSegmentAssemblyResult result{segments.size(),videoPackets,auxiliary.written(),firstTimestamp,expectedEnd};

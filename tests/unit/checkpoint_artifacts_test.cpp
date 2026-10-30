@@ -118,6 +118,67 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
     current["identity"]["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
     EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
 
+    auto currentV5 = current;
+    currentV5["job"]["schemaVersion"] = 5;
+    currentV5["job"]["motionBlur"] = {{"enabled",false},{"shutterAngleDegrees",180},{"sampleCount",4}};
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(current.dump(),currentV5.dump()));
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(legacy.dump(),currentV5.dump()));
+    auto changedMotionBlur = currentV5;
+    changedMotionBlur["job"]["motionBlur"]["enabled"] = true;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(current.dump(),changedMotionBlur.dump()));
+    changedMotionBlur = currentV5;
+    changedMotionBlur["job"]["motionBlur"]["sampleCount"] = 8;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(current.dump(),changedMotionBlur.dump()));
+
+    auto currentV6 = currentV5;
+    currentV6["job"]["schemaVersion"] = 6;
+    currentV6["job"]["encoding"] = {{"outputWidth",0},{"outputHeight",0}};
+    auto savedV5 = currentV6;
+    savedV5["job"]["schemaVersion"] = 5;
+    savedV5["job"]["encoding"].erase("outputWidth");
+    savedV5["job"]["encoding"].erase("outputHeight");
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(savedV5.dump(),currentV6.dump()));
+    auto savedV4 = savedV5;
+    savedV4["job"]["schemaVersion"] = 4;
+    savedV4["job"].erase("motionBlur");
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(savedV4.dump(),currentV6.dump()));
+    auto changedTarget = currentV6;
+    changedTarget["job"]["encoding"]["outputWidth"] = 3840;
+    changedTarget["job"]["encoding"]["outputHeight"] = 2160;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(currentV6.dump(),changedTarget.dump()));
+
+    auto currentV7 = currentV6;
+    currentV7["job"]["schemaVersion"] = 7;
+    currentV7["job"]["temporalDenoiseSigma255"] = 25.0F;
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(currentV6.dump(),currentV7.dump()));
+    auto changedSigma = currentV7;
+    changedSigma["job"]["temporalDenoiseSigma255"] = 17.5F;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(currentV6.dump(),changedSigma.dump()));
+    auto savedV5ForV7 = currentV7;
+    savedV5ForV7["job"]["schemaVersion"] = 5;
+    savedV5ForV7["job"].erase("temporalDenoiseSigma255");
+    savedV5ForV7["job"]["encoding"].erase("outputWidth");
+    savedV5ForV7["job"]["encoding"].erase("outputHeight");
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(savedV5ForV7.dump(),currentV7.dump()));
+    auto savedV4ForV7 = savedV5ForV7;
+    savedV4ForV7["job"]["schemaVersion"] = 4;
+    savedV4ForV7["job"].erase("motionBlur");
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(savedV4ForV7.dump(),currentV7.dump()));
+
+    auto currentV8 = currentV7;
+    currentV8["job"]["schemaVersion"] = 8;
+    currentV8["job"]["temporalRestorationModelDirectory"] = "";
+    currentV8["job"]["expectedTemporalRestorationDescriptorSha256"] = "";
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(currentV7.dump(),currentV8.dump()));
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(savedV4ForV7.dump(),currentV8.dump()));
+    auto changedTemporalModel = currentV8;
+    changedTemporalModel["job"]["temporalRestorationModelDirectory"] = "C:/model/denoise";
+    changedTemporalModel["job"]["expectedTemporalRestorationDescriptorSha256"] = std::string(64,'a');
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(currentV7.dump(),changedTemporalModel.dump()));
+    auto changedRuntime = currentV8;
+    changedRuntime["temporalRestorationRuntime"] = {{"modelId","denoise"}};
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(currentV7.dump(),changedRuntime.dump()));
+
     Json versionTwo = current;
     versionTwo["schemaVersion"] = 2;
     versionTwo["job"]["schemaVersion"] = 2;
@@ -186,6 +247,8 @@ TEST(CheckpointArtifacts, TaskQueueResumesLegacyManifestWithoutRewritingIt) {
     oldConfiguration.erase("expectedModelAdapterVersion");
     oldConfiguration.erase("restorationModelDirectory");
     oldConfiguration.erase("expectedRestorationDescriptorSha256");
+    oldConfiguration.erase("temporalRestorationModelDirectory");
+    oldConfiguration.erase("expectedTemporalRestorationDescriptorSha256");
     auto manifestJob = oldConfiguration;
     manifestJob["expectedSourceSha256"] = sourceIdentity.sha256;
     const nlohmann::json identity{

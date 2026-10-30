@@ -151,7 +151,8 @@ function New-PackageChecksumManifest {
     param(
         [Parameter(Mandatory=$true)][string]$PackageRoot,
         [Parameter(Mandatory=$true)][string]$RuntimeRoot,
-        [Parameter(Mandatory=$true)][string]$QualificationEvidencePath)
+        [Parameter(Mandatory=$true)][string]$QualificationEvidencePath,
+        [string[]]$AdditionalEvidencePaths = @())
 
     $packageRootFull = [IO.Path]::GetFullPath($PackageRoot)
     $runtimeRootFull = [IO.Path]::GetFullPath($RuntimeRoot)
@@ -175,6 +176,16 @@ function New-PackageChecksumManifest {
     if (-not (Test-Path -LiteralPath $evidenceFull -PathType Leaf)) { throw "Qualification evidence is missing: $evidenceFull" }
     $evidenceRelative = $evidenceFull.Substring($packageRootFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace([IO.Path]::DirectorySeparatorChar, '/')
     $checksums[$evidenceRelative] = (Get-FileHash -LiteralPath $evidenceFull -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    foreach ($additionalPath in $AdditionalEvidencePaths) {
+        $additionalFull = [IO.Path]::GetFullPath($additionalPath)
+        if (-not $additionalFull.StartsWith($packageRootFull.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Additional checksum evidence must be inside the package: $additionalFull"
+        }
+        if (-not (Test-Path -LiteralPath $additionalFull -PathType Leaf)) { throw "Additional checksum evidence is missing: $additionalFull" }
+        $additionalRelative = $additionalFull.Substring($packageRootFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace([IO.Path]::DirectorySeparatorChar, '/')
+        $checksums[$additionalRelative] = (Get-FileHash -LiteralPath $additionalFull -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
 
     foreach ($file in @(Get-PackageTreeItemsWithoutFollowingLinks -Path $runtimeRootFull | Where-Object { -not $_.PSIsContainer -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) })) {
         $relative = $file.FullName.Substring($runtimeRootFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)

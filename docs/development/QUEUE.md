@@ -9,7 +9,7 @@ The desktop database defaults to `QStandardPaths::AppLocalDataLocation/queue.sql
 ```powershell
 .\build\windows-dev\rifelove-cli.exe queue-add work/jobs.sqlite input.mkv output.mkv `
   --fps 60000/1001 `
-  --model-dir models/cache/rife-4.25-fp32-sdr8-v2 `
+  --model-dir models/cache/rife-4.25-fp32-sdr8-v3 `
   --runtime-dir C:/itzming/dependences/onnxruntime-win-x64-gpu-1.22.0/lib `
   --encoder auto
 

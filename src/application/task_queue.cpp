@@ -42,7 +42,8 @@ const ConfiguredTask& find(const std::vector<ConfiguredTask>& rows, const std::s
 }
 bool ownsOutput(TaskState state) { return state == TaskState::queued || state == TaskState::running || state == TaskState::paused || state == TaskState::interrupted; }
 std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment,
-    const std::optional<restoration::Capabilities>& restorationRuntime = std::nullopt) {
+    const std::optional<restoration::Capabilities>& restorationRuntime = std::nullopt,
+    const std::optional<restoration::Capabilities>& temporalRestorationRuntime = std::nullopt) {
     auto identity = Json::parse(identityText);
     if (identity.value("schemaVersion",0) != 1 && identity.value("schemaVersion",0) != 2)
         throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
@@ -56,14 +57,18 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
         {"job",Json::parse(serializeJob(job))},{"identity",identity},
         {"mediaRuntime",media::MediaEngine::runtimeVersion()},
         {"framesPerSegment",framesPerSegment}};
-    if (restorationRuntime) {
-        const auto& caps = *restorationRuntime;
-        if (job.restorationModelDirectory.empty() || caps.modelId.empty() || caps.runtimeBackend.empty() || caps.runtimeSignature.empty())
+    const auto recordRuntime = [&](const char* name, const std::optional<restoration::Capabilities>& runtime,
+                                   const std::filesystem::path& modelDirectory) {
+        if (!runtime) return;
+        const auto& caps = *runtime;
+        if (modelDirectory.empty() || caps.modelId.empty() || caps.runtimeBackend.empty() || caps.runtimeSignature.empty())
             throw std::invalid_argument("Restoration checkpoint identity is incomplete");
-        manifest["restorationRuntime"] = {{"modelId",caps.modelId},{"adapterId",caps.adapterId},
+        manifest[name] = {{"modelId",caps.modelId},{"adapterId",caps.adapterId},
             {"adapterVersion",caps.adapterVersion},{"backend",caps.runtimeBackend},{"signature",caps.runtimeSignature},
             {"scaleNumerator",caps.scaleNumerator},{"scaleDenominator",caps.scaleDenominator}};
-    }
+    };
+    recordRuntime("restorationRuntime",restorationRuntime,job.restorationModelDirectory);
+    recordRuntime("temporalRestorationRuntime",temporalRestorationRuntime,job.temporalRestorationModelDirectory);
     return manifest.dump();
 }
 void validatePublishedResult(const std::string& serialized) {
@@ -144,6 +149,8 @@ std::vector<std::string> TaskQueue::enqueue(std::vector<ProcessingJob> jobs, std
         job.runtimeDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.runtimeDirectory));
         if (!job.restorationModelDirectory.empty())
             job.restorationModelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.restorationModelDirectory));
+        if (!job.temporalRestorationModelDirectory.empty())
+            job.temporalRestorationModelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.temporalRestorationModelDirectory));
         if (!std::filesystem::is_regular_file(path(job.source)) || std::filesystem::exists(path(job.output)) || !std::filesystem::is_directory(path(job.output).parent_path()))
             throw std::invalid_argument("Source must exist and output must be a new file in an existing local directory");
         if (!outputs.insert(path(job.output).wstring()).second) throw std::invalid_argument("Another pending/interrupted task or this batch owns this output path");
@@ -205,16 +212,21 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     auto job = parseJob(task.task.sourcePath,task.task.outputPath,task.configuration);
     applyStoredIdentity(job,task.identity);
     auto expectedManifest = Json::parse(checkpointManifest(job,task.identity,checkpointFramesPerSegment_));
-    if (!job.restorationModelDirectory.empty()) {
+    if (!job.restorationModelDirectory.empty() || !job.temporalRestorationModelDirectory.empty()) {
         const auto saved = Json::parse(manifest);
-        if (!saved.contains("restorationRuntime") || !saved.at("restorationRuntime").is_object() ||
-            saved.at("restorationRuntime").value("modelId",std::string()).empty() ||
-            saved.at("restorationRuntime").value("backend",std::string()).empty() ||
-            saved.at("restorationRuntime").value("signature",std::string()).empty())
-            throw std::logic_error("This checkpoint has no verified restoration runtime identity; restart with a new output");
-        // The selected runtime is checked again after the model is loaded by
-        // the worker, before any saved segment can be reused.
-        expectedManifest["restorationRuntime"] = saved.at("restorationRuntime");
+        const auto restoreRuntime = [&](const char* name, const std::filesystem::path& modelDirectory) {
+            if (modelDirectory.empty()) return;
+            if (!saved.contains(name) || !saved.at(name).is_object() ||
+                saved.at(name).value("modelId",std::string()).empty() ||
+                saved.at(name).value("backend",std::string()).empty() ||
+                saved.at(name).value("signature",std::string()).empty())
+                throw std::logic_error("This checkpoint has no verified restoration runtime identity; restart with a new output");
+            // The selected runtime is checked again after the model is loaded
+            // by the worker, before any saved segment can be reused.
+            expectedManifest[name] = saved.at(name);
+        };
+        restoreRuntime("restorationRuntime",job.restorationModelDirectory);
+        restoreRuntime("temporalRestorationRuntime",job.temporalRestorationModelDirectory);
     }
     if (!CheckpointArtifacts::manifestMatches(manifest,expectedManifest.dump()))
         throw std::logic_error("Task settings, model identity or local media runtime changed; restart with a new output");
@@ -281,7 +293,11 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (settings.restorationBackend) restorationRuntime = settings.restorationBackend->capabilities();
                 if (job.restorationModelDirectory.empty() == restorationRuntime.has_value())
                     throw std::logic_error("Restoration model and runtime identity do not match");
-                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime);
+                std::optional<restoration::Capabilities> temporalRestorationRuntime;
+                if (settings.temporalRestorationBackend) temporalRestorationRuntime = settings.temporalRestorationBackend->capabilities();
+                if (job.temporalRestorationModelDirectory.empty() == temporalRestorationRuntime.has_value())
+                    throw std::logic_error("Temporal restoration model and runtime identity do not match");
+                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime,temporalRestorationRuntime);
                 const auto previousManifest = artifacts.manifest();
                 if (!previousManifest.empty() && !CheckpointArtifacts::manifestMatches(previousManifest,manifest))
                     throw std::logic_error("Checkpoint identity or runtime changed; refusing to reuse prior segments");
@@ -289,7 +305,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (previousManifest.empty()) artifacts.setManifest(manifest);
                 PipelineCheckpoint checkpoint;
                 checkpoint.framesPerSegment = checkpointFramesPerSegment_;
-                checkpoint.restorationIdentityVerified = restorationRuntime.has_value();
+                checkpoint.restorationIdentityVerified = restorationRuntime.has_value() || temporalRestorationRuntime.has_value();
                 checkpoint.completedSegments = artifacts.verifyCommitted(cancellation.get_token());
                 checkpoint.segmentPath = [&artifacts](std::uint64_t index) { return utf8(artifacts.segmentPath(index)); };
                 checkpoint.commitSegment = [&artifacts,token = cancellation.get_token()](std::uint64_t index,std::uint64_t first,
@@ -311,6 +327,8 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                             event.detail = std::to_string(currentBytes) + " / " + std::to_string(totalBytes) + " bytes";
                             event.outputFrames = result.video.framesSubmitted;
                             event.aiFrames = result.aiFrames;
+                            event.processedFrames = result.processedFrames;
+                            event.reusedFrames = result.reusedFrames;
                             event.processingFps = result.processingFps;
                             event.timings = result.timings;
                             store_.saveProgress(id,serializeProgress(event));
@@ -322,8 +340,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                     }
                     auto publicationResult = result;
                     publicationResult.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-                    publicationResult.processingFps = publicationResult.elapsedSeconds > 0
-                        ? static_cast<double>(publicationResult.video.framesSubmitted) / publicationResult.elapsedSeconds : 0;
+                    publicationResult.processingFps = processingFrameRate(publicationResult.processedFrames,publicationResult.elapsedSeconds);
                     store_.saveOutputPublicationIntent(id,identity.sha256,identity.size,serializeResult(publicationResult));
                 };
                 settings.checkpoint = std::move(checkpoint);
@@ -333,6 +350,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (event.stage == "paused" || event.stage == "resumed") {
                     store_.transition(current->task.id,event.stage == "paused" ? TaskState::paused : TaskState::running);
                     event.outputFrames = lastProgress.outputFrames; event.aiFrames = lastProgress.aiFrames;
+                    event.processedFrames = lastProgress.processedFrames; event.reusedFrames = lastProgress.reusedFrames;
                     event.timestamp = lastProgress.timestamp; event.processingFps = lastProgress.processingFps;
                 }
                 if (now - lastSaved >= std::chrono::seconds(1) || event.stage == "paused" || event.stage == "resumed" || event.kind == ProcessingEvent::Kind::prepared) {
@@ -342,7 +360,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 callback({current->task.id,std::move(event),false,{}});
             },cancellation.get_token(),pause_,configurePipeline);
             result.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
+            result.processingFps = processingFrameRate(result.processedFrames,result.elapsedSeconds);
             store_.finish(current->task.id,TaskState::completed,serializeResult(result));
             logging::write(logging::Level::info,"queue","task.completed","Queued output passed media and timeline validation",
                 {{"task_id",current->task.id},{"encoder",result.video.encoder},

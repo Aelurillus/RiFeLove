@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Reproducible isolated FFmpeg SDK for native Windows validation; no binaries, model weights or credentials are stored here.",
+  "target": {
+    "platform": "windows-x64",
+    "shell": "MSYS2 UCRT64 (isolated under work/)",
+    "compiler": "MinGW-w64 toolchain from the local development environment",
+    "nasm": {
+      "version": "3.02",
+      "url": "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip",
+      "sha256": "161D0BFAFF53C2F9E9F3E69FD0672323EBABAFD1268976A5CEC11BE92A19AEE7"
+    },
+    "msys2": {
+      "version": "2026-09-27",
+      "url": "https://repo.msys2.org/distrib/x86_64/msys2-base-x86_64-20260927.sfx.exe",
+      "sha256": "AD336CCCFDA47758B5E15CDA993FBBA421115CB0B126697DAEF1EE4DFE37209F"
+    }
+  },
+  "sources": {
+    "ffmpeg": {
+      "version": "8.1.3",
+      "url": "https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz",
+      "sha256": "7138D28C96D9D3E3AF4EE3D8CAD72741F8FFB40DA90C1112235DEA3ECD3178A3"
+    },
+    "nvCodecHeaders": {
+      "version": "n12.2.72.0",
+      "url": "https://github.com/FFmpeg/nv-codec-headers/releases/download/n12.2.72.0/nv-codec-headers-12.2.72.0.tar.gz",
+      "sha256": "DBEAEC433D93B850714760282F1D0992B1254FC3B5A6CB7D76FC1340A1E47563"
+    },
+    "libaom": {
+      "version": "3.15.2",
+      "url": "https://aomedia.googlesource.com/aom/+archive/af3dc9aadc793c1b00edc003e3fc19a44fdeb574.tar.gz",
+      "sha256": "83E98A745AAAB739C038671158DB6A74FCC998B0C2FCD2D2F8AC46EA403A1325"
+    },
+    "openH264": {
+      "version": "2.7.0",
+      "url": "https://github.com/cisco/openh264/archive/refs/tags/v2.7.0.tar.gz",
+      "sha256": "5178775C8B440073E70920E97D195EFFF721C0E56D0A78CC82C919E95D54924D"
+    },
+    "kvazaar": {
+      "version": "2.3.2",
+      "url": "https://github.com/ultravideo/kvazaar/archive/refs/tags/v2.3.2.tar.gz",
+      "sha256": "DDD0038696631CA5368D8E40EFEE36D2BBB805854B9B1DDA8B12EA9B397EA951"
+    }
+  },
+  "localInputs": {
+    "codecPrefix": "work/codec-deps/installed/x64-mingw-dynamic",
+    "pkgConfigShim": "work/codec-ffmpeg-build/pkg-config-codecs.sh",
+    "nvCodecHeadersPrefix": "work/nvenc-build/ffnvcodec-prefix",
+    "nasmDirectory": "work/nasm-3.02-win64/nasm-3.02",
+    "msys2Directory": "work/msys64"
+  },
+  "configure": {
+    "args": [
+      "--enable-shared",
+      "--disable-static",
+      "--disable-doc",
+      "--disable-debug",
+      "--enable-x86asm",
+      "--enable-nvenc",
+      "--enable-libopenh264",
+      "--enable-libkvazaar",
+      "--enable-libaom",
+      "--pkg-config=<repo>/work/codec-ffmpeg-build/pkg-config-codecs.sh",
+      "--extra-cflags=-I<repo>/work/nvenc-build/ffnvcodec-prefix/include"
+    ],
+    "externalEncoders": ["h264_nvenc", "hevc_nvenc", "libopenh264", "libkvazaar", "libaom-av1"],
+    "cudaFeatures": ["cuda", "nvdec", "nvenc"],
+    "patches": [
+      "tools/development/patches/ffmpeg/0001-response-files.patch",
+      "tools/development/patches/ffmpeg/0002-makedef-mri.patch"
+    ]
+  },
+  "outputs": {
+    "root": "work/codec-ffmpeg-build-x86asm/ffmpeg-install",
+    "comparisonBaseline": "work/codec-ffmpeg-build/ffmpeg-install",
+    "cpuAssembly": "enabled",
+    "distribution": "validation-only until native regression and A/B checks pass"
+  },
+  "licenseReview": {
+    "ffmpeg": "https://www.ffmpeg.org/legal.html",
+    "nvCodecHeaders": "https://github.com/FFmpeg/nv-codec-headers",
+    "nvidiaVideoCodecSdk": "https://developer.nvidia.com/video-codec-sdk",
+    "openH264": "https://github.com/cisco/openh264",
+    "kvazaar": "https://github.com/ultravideo/kvazaar",
+    "libaom": "https://aomedia.googlesource.com/aom/"
+  }
+}

@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
             const auto completed = writer.createConfigured({{"source.mp4","output.mkv","{\"targetRate\":\"60\"}"}}).front();
             writer.transition(completed,rifelove::TaskState::running);
             writer.finish(completed,rifelove::TaskState::completed,
-                "{\"outputFrames\":4,\"aiFrames\":2,\"elapsedSeconds\":2.0,\"processingFps\":2.0,\"sceneCuts\":1}");
+                "{\"outputFrames\":4,\"aiFrames\":2,\"processedFrames\":1,\"reusedFrames\":3,\"elapsedSeconds\":2.0,\"processingFps\":0.5,\"sceneCuts\":1}");
             const auto failed = writer.create("failed-source.mp4","failed-output.mkv");
             writer.transition(failed,rifelove::TaskState::running);
             writer.transition(failed,rifelove::TaskState::failed,"synthetic task failure");
@@ -64,6 +64,9 @@ int main(int argc, char** argv) {
             require(report.at("summary").at("states").at("completed") == 1,"Completed task count is wrong");
             require(report.at("summary").at("states").at("failed") == 1,"Failed task count is wrong");
             require(report.at("summary").at("completedOutputFrames") == 4,"Completed output frame total is wrong");
+            require(report.at("summary").at("completedProcessedFrames") == 1,"Completed processed frame total is wrong");
+            require(report.at("summary").at("completedReusedFrames") == 3,"Completed reused frame total is wrong");
+            require(report.at("summary").at("aggregateCompletedProcessedFps") == 0.5,"Completed processed FPS is wrong");
             require(!report.at("qualityDiagnostics").at("perceptualMetricsMeasured").get<bool>(),
                 "Report claimed unmeasured perceptual scores");
         }

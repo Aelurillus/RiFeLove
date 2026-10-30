@@ -73,12 +73,17 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     send(std::move(prepared));
     auto pipelineSettings = job.settings;
     std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> restorationBackend;
-    if (!job.restorationModelDirectory.empty()) {
+    std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> temporalRestorationBackend;
+    const auto loadRestoration = [&](const std::filesystem::path& directory, const std::string& expectedHash,
+                                     bool requireTemporal, bool requireImage) {
         ProcessingEvent restorationLoading; restorationLoading.stage = "loading_restoration_model";
-        restorationLoading.detail = "Loading the selected local restoration model"; send(std::move(restorationLoading));
-        const auto restorationPack = restoration::loadModelPack(job.restorationModelDirectory);
+        send(std::move(restorationLoading));
+        const auto restorationPack = restoration::loadModelPack(directory);
+        if ((requireTemporal && !restoration::supportsOnnxCudaTemporalModel(restorationPack)) ||
+            (requireImage && !restoration::supportsOnnxCudaOutputRateModel(restorationPack)))
+            throw std::runtime_error("Selected restoration model is incompatible with its pipeline placement");
         const auto descriptorHash = inference::sha256File(restorationPack.directory / "model.json",256 * 1024);
-        if (job.expectedRestorationDescriptorSha256.empty() || descriptorHash != job.expectedRestorationDescriptorSha256)
+        if (expectedHash.empty() || descriptorHash != expectedHash)
             throw std::runtime_error("Selected local restoration model changed after this task was configured");
         restoration::OnnxCudaRestorationConfig restorationConfig;
         restorationConfig.runtimeDirectory = job.runtimeDirectory;
@@ -86,9 +91,19 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         if (job.settings.inferenceBackend == "cuda") restorationConfig.providerPreference = inference::ProviderPreference::cudaOnly;
         else if (job.settings.inferenceBackend == "tensorrt") restorationConfig.providerPreference = inference::ProviderPreference::requireTensorRt;
         else if (job.settings.inferenceBackend != "auto") throw std::invalid_argument("Unsupported restoration backend preference");
-        restorationBackend = std::make_shared<restoration::OnnxCudaVideoRestorationBackend>(device,std::move(restorationConfig));
-        restorationBackend->loadModel(restorationPack);
+        auto loaded = std::make_shared<restoration::OnnxCudaVideoRestorationBackend>(device,std::move(restorationConfig));
+        loaded->loadModel(restorationPack);
+        return loaded;
+    };
+    if (!job.restorationModelDirectory.empty()) {
+        restorationBackend = loadRestoration(job.restorationModelDirectory,job.expectedRestorationDescriptorSha256,
+            false,!job.temporalRestorationModelDirectory.empty());
         pipelineSettings.restorationBackend = restorationBackend;
+    }
+    if (!job.temporalRestorationModelDirectory.empty()) {
+        temporalRestorationBackend = loadRestoration(job.temporalRestorationModelDirectory,
+            job.expectedTemporalRestorationDescriptorSha256,true,false);
+        pipelineSettings.temporalRestorationBackend = temporalRestorationBackend;
     }
     if (configurePipeline) configurePipeline(processingIdentity,pipelineSettings);
     checkpoint();
@@ -99,11 +114,13 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         if (value.stage == "processing" && now - lastProgressLog >= std::chrono::seconds(15)) {
             lastProgressLog = now;
             const double elapsedSeconds = std::chrono::duration<double>(now - started).count();
-            const double processingFps = elapsedSeconds > 0 ? static_cast<double>(value.outputFrames) / elapsedSeconds : 0;
+            const double processingFps = processingFrameRate(value.processedFrames,elapsedSeconds);
             logging::write(logging::Level::info,"processing","processing.progress",
                 "Local video processing is continuing",
                 {{"output_frames",static_cast<std::uint64_t>(value.outputFrames)},
                     {"ai_frames",static_cast<std::uint64_t>(value.aiFrames)},
+                    {"processed_frames",static_cast<std::uint64_t>(value.processedFrames)},
+                    {"reused_frames",static_cast<std::uint64_t>(value.reusedFrames)},
                     {"processing_fps",processingFps},{"elapsed_seconds",elapsedSeconds},
                     {"encoder",value.encoder},{"inference_wait_seconds",value.timings.inferenceWaitSeconds},
                     {"frame_encode_seconds",value.timings.frameEncodeSeconds}});
@@ -111,10 +128,12 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         if (value.stage != lastStage || now - lastUpdate >= std::chrono::milliseconds(100)) {
             lastUpdate = now; lastStage = value.stage;
             ProcessingEvent event; event.stage = value.stage; event.detail = value.detail; event.encoder = value.encoder;
-            event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames; event.timestamp = value.timestamp;
+            event.outputFrames = value.outputFrames; event.aiFrames = value.aiFrames;
+            event.processedFrames = value.processedFrames; event.reusedFrames = value.reusedFrames;
+            event.timestamp = value.timestamp;
             event.timings = value.timings;
             const auto seconds = std::chrono::duration<double>(now - started).count();
-            event.processingFps = seconds > 0 ? static_cast<double>(value.outputFrames) / seconds : 0;
+            event.processingFps = processingFrameRate(value.processedFrames,seconds);
             send(std::move(event));
         }
         // Honor a pause/cancel requested by the observer at the just-reported
@@ -153,7 +172,7 @@ bool ProcessingService::launch(std::function<void(std::stop_token, const Callbac
                 // throughput. The UI must not present inference-only speed.
                 auto& result = *terminal.result;
                 result.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-                result.processingFps = static_cast<double>(result.video.framesSubmitted) / result.elapsedSeconds;
+                result.processingFps = processingFrameRate(result.processedFrames,result.elapsedSeconds);
             }
             busy_.store(false);
             callback(std::move(terminal));

@@ -6,6 +6,8 @@
 #include "restoration/video_restoration_backend.hpp"
 
 #include <functional>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -21,6 +23,13 @@ struct PipelineCheckpoint {
     std::function<void(std::uint64_t,std::uint64_t,std::uint64_t,const media::VideoSegmentInput&)> commitSegment;
     std::function<void(const std::string&,const PipelineResult&)> prepareOutputPublication;
 };
+struct MotionBlurSettings {
+    // Temporal exposure synthesis is opt-in. It produces one output frame at
+    // the requested target rate from several RIFE sample times.
+    bool enabled = false;
+    int shutterAngleDegrees = 180;
+    int sampleCount = 4;
+};
 struct PipelineSettings {
     PipelineSettings() { encoding.encoder = "auto"; }
     Rational targetRate{60};
@@ -29,11 +38,26 @@ struct PipelineSettings {
     std::string inferenceBackend = "auto";
     media::VideoEncodingSettings encoding;
     quality::SceneSettings scene;
+    MotionBlurSettings motionBlur;
     // Runtime-only extension registry; omitted from serialized user settings.
     std::shared_ptr<const interpolation::ModelAdapterRegistry> modelAdapters;
-    // Optional one-frame output-rate restoration. The selected backend/model
-    // remains local and is not serialized into ordinary user job settings.
+    // Optional local restoration. Output-rate image models run after RIFE;
+    // temporal source-rate models run before interpolation through their
+    // declared bounded window. The selected backend/model remains local and
+    // is not serialized into ordinary user job settings. When
+    // temporalRestorationBackend is empty, a temporal-only legacy backend is
+    // inferred from this field for backward compatibility.
     std::shared_ptr<restoration::IVideoRestorationBackend> restorationBackend;
+    // Optional source-rate temporal restoration. This is runtime-only and is
+    // supplied by the application after validating the temporal model pack.
+    // The pipeline deliberately keeps this separate from restorationBackend so
+    // temporal denoising and output-rate restoration can run in one task.
+    std::shared_ptr<restoration::IVideoRestorationBackend> temporalRestorationBackend;
+    // FastDVDnet-style temporal denoisers require an explicit Gaussian-noise
+    // conditioning level. It is persisted with queue jobs so a checkpoint is
+    // reused only with the same conditioning; it is not a generic quality or
+    // compression-restoration setting.
+    float temporalDenoiseSigma255 = 25.0F;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     // Runtime-only queue integration. It is intentionally omitted from the
     // serialized user job configuration.
@@ -59,6 +83,11 @@ struct PipelineProgress {
     std::string stage;
     std::size_t outputFrames = 0;
     std::size_t aiFrames = 0;
+    // outputFrames is the complete output timeline. processedFrames counts
+    // frames produced by this execution, while reusedFrames counts verified
+    // checkpoint frames that were only carried into the final assembly.
+    std::size_t processedFrames = 0;
+    std::size_t reusedFrames = 0;
     std::optional<Rational> timestamp;
     double processingFps = 0;
     std::string detail;
@@ -81,6 +110,15 @@ struct PipelineResult {
     OutputTimingValidation validation;
     std::size_t sourceFrames;
     std::size_t aiFrames;
+    // outputFrames is the complete output timeline. These two counters make
+    // resume throughput explicit: processedFrames is work done by this run;
+    // reusedFrames is output already present in verified checkpoint segments.
+    std::size_t processedFrames = 0;
+    std::size_t reusedFrames = 0;
+    // Number of actual RIFE invocations in this execution. Motion-blur
+    // exposure sampling can make this larger than the AI output-frame count;
+    // after checkpoint resume it counts only work performed by this run.
+    std::size_t inferenceCalls = 0;
     std::size_t originalFrames;
     std::size_t heldFrames;
     std::size_t sceneCuts;
@@ -99,13 +137,31 @@ struct PipelineResult {
     std::string restorationFallbackReason;
     int restorationScaleNumerator = 1;
     int restorationScaleDenominator = 1;
+    std::string temporalRestorationModelId;
+    std::string temporalRestorationBackend;
+    std::string temporalRestorationFallbackReason;
+    int temporalRestorationScaleNumerator = 1;
+    int temporalRestorationScaleDenominator = 1;
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;
     PipelineTimingBreakdown timings;
-    double elapsedSeconds;
-    double processingFps;
+    double elapsedSeconds = 0;
+    double processingFps = 0;
 };
+
+// Return a finite, zero-safe throughput for frames produced by this run.
+// A fully resumed task therefore reports 0 FPS instead of claiming that all
+// reused output was processed during the current attempt. Saturate rather
+// than returning infinity when synthetic or corrupted timing data overflows
+// the representable double range.
+[[nodiscard]] inline double processingFrameRate(std::size_t processedFrames, double elapsedSeconds) noexcept {
+    if (processedFrames == 0 || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) return 0.0;
+    const auto ratio = static_cast<long double>(processedFrames) / static_cast<long double>(elapsedSeconds);
+    if (!std::isfinite(ratio)) return std::numeric_limits<double>::max();
+    const auto maximum = static_cast<long double>(std::numeric_limits<double>::max());
+    return static_cast<double>(ratio > maximum ? maximum : ratio);
+}
 // Services own the selected device/backend. The pipeline owns no UI or vendor
 // contexts and retains only adjacent source frames and one pending output.
 [[nodiscard]] PipelineResult interpolateVideo(const std::string& source, const std::string& destination,

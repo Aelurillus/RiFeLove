@@ -121,6 +121,23 @@ void makeDeblurPack(const std::filesystem::path& root) {
     descriptor["validation"]["reportSha256"] = inference::sha256File(root / "validation.json",1024 * 1024);
     writeJson(root / "model.json",descriptor);
 }
+void makeTemporalPack(const std::filesystem::path& root) {
+    makePack(root);
+    auto report = readJson(root / "validation.json");
+    report["model_adapter"] = {{"id","fastdvdnet-rgb-f32-nchw16-v1"},{"version",1}};
+    report["numerical_profile"] = "sdr8-fp32-pytorch-reference";
+    report["validated_backends"] = Json::array({"pytorch_cpu_source","onnxruntime_cpu_derived"});
+    report["capabilities"]["temporalFramesBefore"] = 2;
+    report["capabilities"]["temporalFramesAfter"] = 2;
+    writeJson(root / "validation.json",report);
+    auto descriptor = readJson(root / "model.json");
+    descriptor["adapter"] = report["model_adapter"];
+    descriptor["capabilities"] = report["capabilities"];
+    descriptor["validation"]["numericalProfile"] = report["numerical_profile"];
+    descriptor["validation"]["validatedBackends"] = report["validated_backends"];
+    descriptor["validation"]["reportSha256"] = inference::sha256File(root / "validation.json",1024 * 1024);
+    writeJson(root / "model.json",descriptor);
+}
 }
 
 TEST(RestorationModelPack, LoadsLocalWeightsAndHashBoundSidecars) {
@@ -179,7 +196,7 @@ TEST(ProcessingConfiguration, PinsLocalSuperResolutionDescriptorForQueuedTasks) 
 
     const auto encoded = application::serializeJob(job);
     const auto json = Json::parse(encoded);
-    EXPECT_EQ(json.at("schemaVersion"),4);
+    EXPECT_EQ(json.at("schemaVersion"),8);
     EXPECT_FALSE(json.at("restorationModelDirectory").get<std::string>().empty());
     auto restored = application::parseJob(job.source,job.output,encoded);
     EXPECT_EQ(restored.restorationModelDirectory,job.restorationModelDirectory);
@@ -190,6 +207,35 @@ TEST(ProcessingConfiguration, PinsLocalSuperResolutionDescriptorForQueuedTasks) 
     descriptor["displayName"] = "Changed after queue import";
     writeJson(temporary.value / "model.json",descriptor);
     EXPECT_THROW(application::pinRestorationModelDescriptor(restored),std::invalid_argument);
+}
+
+TEST(ProcessingConfiguration, PinsIndependentTemporalAndOutputRestorationModels) {
+    TemporaryDirectory image, temporal;
+    makeSuperResolutionPack(image.value);
+    makeTemporalPack(temporal.value);
+    application::ProcessingJob job;
+    job.source = "C:/recordings/source.mkv"; job.output = "C:/exports/result.mkv";
+    job.modelDirectory = image.value / "rife"; job.runtimeDirectory = image.value / "runtime";
+    job.restorationModelDirectory = image.value; job.temporalRestorationModelDirectory = temporal.value;
+    ASSERT_NO_THROW(application::pinRestorationModelDescriptor(job));
+    EXPECT_EQ(job.expectedRestorationDescriptorSha256,inference::sha256File(image.value / "model.json",256 * 1024));
+    EXPECT_EQ(job.expectedTemporalRestorationDescriptorSha256,inference::sha256File(temporal.value / "model.json",256 * 1024));
+    const auto encoded = application::serializeJob(job);
+    const auto restored = application::parseJob(job.source,job.output,encoded);
+    EXPECT_EQ(restored.restorationModelDirectory,job.restorationModelDirectory);
+    EXPECT_EQ(restored.temporalRestorationModelDirectory,job.temporalRestorationModelDirectory);
+    EXPECT_EQ(application::serializeJob(restored),encoded);
+    auto wrongPlacement = job;
+    wrongPlacement.restorationModelDirectory = temporal.value;
+    wrongPlacement.temporalRestorationModelDirectory = image.value;
+    wrongPlacement.expectedRestorationDescriptorSha256.clear();
+    wrongPlacement.expectedTemporalRestorationDescriptorSha256.clear();
+    EXPECT_THROW(application::pinRestorationModelDescriptor(wrongPlacement),std::invalid_argument);
+    auto descriptor = readJson(temporal.value / "model.json");
+    descriptor["displayName"] = "Changed after queue import";
+    writeJson(temporal.value / "model.json",descriptor);
+    auto stale = job;
+    EXPECT_THROW(application::pinRestorationModelDescriptor(stale),std::invalid_argument);
 }
 
 TEST(RestorationModelPack, RejectsChangedGraphAndSidecars) {

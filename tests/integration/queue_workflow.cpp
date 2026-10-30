@@ -36,11 +36,20 @@ int wmain(int argc, wchar_t** wide) {
     for (const auto& value : values) pointers.push_back(value.c_str());
     const auto argv = pointers.data();
     try {
-        require(argc >= 3,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK]");
+        require(argc >= 3,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK] [TEMPORAL_RESTORATION_PACK]");
         const std::string mode = argv[1]; const auto root = path(argv[2]);
-        require(mode == "restoration-hold" ? argc == 8 : argc == 7,"Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK]");
+        const bool dualRestorationHold = mode == "dual-restoration-hold";
+        const bool dualRestorationRecovery = mode == "dual-restoration-recover";
+        const bool restorationHold = mode == "restoration-hold";
+        const bool restorationRecoveryMode = mode == "restoration-recover";
+        const bool motionBlurHold = mode == "motion-blur-hold";
+        const bool motionBlurRecovery = mode == "motion-blur-recover";
+        require(dualRestorationHold ? argc == 9 : (restorationHold ? argc == 8 : argc == 7),
+            "Expected MODE DIRECTORY SOURCE PACK RUNTIME MARKER [RESTORATION_PACK] [TEMPORAL_RESTORATION_PACK]");
+        require((!dualRestorationRecovery && !motionBlurRecovery) || argc == 7,
+            "Dual restoration recovery expects MODE DIRECTORY SOURCE PACK RUNTIME MARKER");
         const auto database = root / "native-queue.sqlite";
-        const bool restorationRecovery = mode == "restoration-hold" || mode == "restoration-recover";
+        const bool restorationRecovery = restorationHold || restorationRecoveryMode || dualRestorationHold || dualRestorationRecovery || motionBlurHold || motionBlurRecovery;
         TaskQueue queue(database,restorationRecovery ? 2 : (mode == "hold" || mode == "hold-complete" || mode == "hold-published" ||
             mode == "reject-published" || mode == "reject-proof" || mode == "recover") ? 16 : 256);
         if (mode == "owner") { std::cout << "ownership acquired\n"; return 0; }
@@ -80,7 +89,7 @@ int wmain(int argc, wchar_t** wide) {
                 "Invalid publication result did not produce a recovery diagnostic");
             return 0;
         }
-        if (mode == "recover" || mode == "restoration-recover") {
+        if (mode == "recover" || mode == "restoration-recover" || mode == "dual-restoration-recover" || mode == "motion-blur-recover") {
             require(queue.recoveredCount() <= 1,"Recovery changed an unexpected number of queue tasks");
             const auto rows = queue.list(); require(rows.size() == 1,"Crash task is missing");
             if (rows[0].task.state == TaskState::completed) {
@@ -101,13 +110,20 @@ int wmain(int argc, wchar_t** wide) {
             require(std::filesystem::is_regular_file(path(after[0].task.outputPath)),"Checkpoint resume did not publish the requested output");
             return 0;
         }
-        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published" || mode == "restoration-hold") {
+        if (mode == "hold" || mode == "hold-complete" || mode == "hold-published" || mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") {
             auto task = job(argv[3],root / "crash-output.mkv",argv[4],argv[5]);
-            task.settings.targetRate = mode == "restoration-hold" ? Rational(60) :
+            task.settings.targetRate = (mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") ? Rational(60) :
                 (mode == "hold-complete" || mode == "hold-published" ? Rational(64,11) : Rational(6));
-            if (mode == "restoration-hold") {
+            if (mode == "restoration-hold" || mode == "dual-restoration-hold") {
                 task.restorationModelDirectory = path(argv[7]);
+                if (mode == "dual-restoration-hold") task.temporalRestorationModelDirectory = path(argv[8]);
                 task.settings.inferenceBackend = "cuda";
+            }
+            if (mode == "motion-blur-hold") {
+                task.settings.inferenceBackend = "cuda";
+                task.settings.motionBlur.enabled = true;
+                task.settings.motionBlur.shutterAngleDegrees = 180;
+                task.settings.motionBlur.sampleCount = 4;
             }
             const auto id = queue.enqueue({task}).front();
             Events events;
@@ -115,8 +131,8 @@ int wmain(int argc, wchar_t** wide) {
                 if (event.processing.stage == "processing") {
                     std::ofstream status(root / "hold-progress.txt"); status << event.processing.outputFrames;
                 }
-                if ((mode == "hold" || mode == "restoration-hold") && event.processing.stage == "processing" &&
-                    event.processing.outputFrames >= (mode == "restoration-hold" ? 4U : 18U)) {
+                if ((mode == "hold" || mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") && event.processing.stage == "processing" &&
+                    event.processing.outputFrames >= ((mode == "restoration-hold" || mode == "dual-restoration-hold" || mode == "motion-blur-hold") ? 4U : 18U)) {
                     // Frame 17 is reported only after the first 16-frame
                     // checkpoint is committed; frame 18 has opened the next
                     // live segment writer, so the crash tests both artifacts.

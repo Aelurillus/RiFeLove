@@ -49,6 +49,9 @@ struct Request {
     std::size_t missingFramesAfter = 0;
     std::string inputProfile;
     std::stop_token stop;
+    // FastDVDnet's explicit Gaussian-noise conditioning, in 8-bit levels.
+    // It is not a deblock/detail/deblur control. Required by that adapter only.
+    std::optional<float> denoiseSigma255;
 };
 
 struct Result {

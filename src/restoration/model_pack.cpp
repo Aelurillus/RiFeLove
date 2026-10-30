@@ -214,6 +214,22 @@ bool supportsOnnxCudaOutputRateModel(const ModelPack& model) {
         std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"onnxruntime_cpu_derived") != model.validatedBackends.end();
 }
 
+bool supportsOnnxCudaTemporalAdapter(const Capabilities& caps) {
+    return caps.adapterId == "fastdvdnet-rgb-f32-nchw16-v1" && caps.adapterVersion == 1 &&
+        caps.tasks == std::vector<Task>{Task::denoise} &&
+        caps.placements == std::vector<Placement>{Placement::sourceRateBeforeInterpolation} &&
+        caps.temporalFramesBefore == 2 && caps.temporalFramesAfter == 2 && caps.supportsBoundaryPadding &&
+        caps.scaleNumerator == 1 && caps.scaleDenominator == 1 &&
+        caps.supportedInputProfiles == std::vector<std::string>{"bt709-sdr8"};
+}
+
+bool supportsOnnxCudaTemporalModel(const ModelPack& model) {
+    return model.metadataIntegrityVerified && supportsOnnxCudaTemporalAdapter(model.capabilities) &&
+        model.numericalProfile == "sdr8-fp32-pytorch-reference" &&
+        std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"pytorch_cpu_source") != model.validatedBackends.end() &&
+        std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"onnxruntime_cpu_derived") != model.validatedBackends.end();
+}
+
 ModelPack loadModelPack(const std::filesystem::path& directory) {
     const auto root = std::filesystem::canonical(directory);
     const auto descriptorBytes = inference::readLocalFile(root / "model.json", 256 * 1024);

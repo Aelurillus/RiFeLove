@@ -90,6 +90,9 @@ public:
         codec_->height = settings.outputHeight > 0 ? settings.outputHeight : parameters->height;
         if (codec_->width <= 0 || codec_->height <= 0 || codec_->width > 16384 || codec_->height > 16384)
             throw std::invalid_argument("output video dimensions are unknown or exceed the supported encoding limit");
+        if (static_cast<std::int64_t>(codec_->width) * parameters->height !=
+            static_cast<std::int64_t>(codec_->height) * parameters->width)
+            throw std::invalid_argument("output dimensions would change the source display aspect ratio");
         codec_->pix_fmt = settings.pixelFormat.empty() ? static_cast<AVPixelFormat>(parameters->format) : av_get_pix_fmt(settings.pixelFormat.c_str());
         if (!av_pix_fmt_desc_get(codec_->pix_fmt)) throw std::invalid_argument("output pixel format is unknown");
         const void* supported = nullptr;
@@ -186,7 +189,11 @@ public:
 
     void write(const DecodedFrame& input, Rational timestamp, Rational duration) {
         detail::checkStopped(stop_);
-        if (!input.storage || input.width != codec_->width || input.height != codec_->height) throw std::invalid_argument("generated frame storage or dimensions are invalid");
+        if (!input.storage || input.width <= 0 || input.height <= 0 || input.width > 16384 || input.height > 16384)
+            throw std::invalid_argument("generated frame storage or dimensions are invalid");
+        if (static_cast<std::int64_t>(input.width) * codec_->height !=
+            static_cast<std::int64_t>(input.height) * codec_->width)
+            throw std::invalid_argument("generated frame dimensions would change the output display aspect ratio");
         if (!sameColor(input.color, referenceColor_)) {
             const auto describe = [](const ColorInfo& color) {
                 return color.primaries + "/" + color.transfer + "/" + color.matrix + "/" + color.range;
@@ -236,10 +243,12 @@ public:
         frame->chroma_location = codec_->chroma_sample_location;
         frame->sample_aspect_ratio = codec_->sample_aspect_ratio;
         detail::check(av_frame_get_buffer(frame.get(), 32), "allocate encoding frame");
-        if (sourceFormat == codec_->pix_fmt) av_image_copy(frame->data, frame->linesize, sourceData.data(), sourceStrides.data(), sourceFormat, input.width, input.height);
+        const bool spatialResize = input.width != codec_->width || input.height != codec_->height;
+        if (sourceFormat == codec_->pix_fmt && !spatialResize) av_image_copy(frame->data, frame->linesize, sourceData.data(), sourceStrides.data(), sourceFormat, input.width, input.height);
         else {
+            const int flags = spatialResize ? SWS_LANCZOS : SWS_BICUBIC;
             scale_.reset(sws_getCachedContext(scale_.release(), input.width, input.height, sourceFormat,
-                input.width, input.height, codec_->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
+                codec_->width, codec_->height, codec_->pix_fmt, flags, nullptr, nullptr, nullptr));
             if (!scale_) throw std::runtime_error("pixel layout conversion is unsupported");
             if (!(sourceDescription->flags & AV_PIX_FMT_FLAG_RGB)) {
                 int matrix = static_cast<int>(codec_->colorspace);
@@ -254,7 +263,7 @@ public:
                 detail::check(sws_setColorspaceDetails(scale_.get(), coefficients, fullRange, coefficients, fullRange, 0, 1 << 16, 1 << 16), "configure pixel layout color preservation");
             }
             const int rows = sws_scale(scale_.get(), sourceData.data(), sourceStrides.data(), 0, input.height, frame->data, frame->linesize);
-            if (rows != input.height) throw std::runtime_error("pixel layout conversion returned an incomplete frame");
+            if (rows != codec_->height) throw std::runtime_error("pixel layout or spatial conversion returned an incomplete frame");
         }
         addFrameHdr(frame.get(), input.color);
         durationByPts_.emplace(pts, length);

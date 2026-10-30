@@ -3,6 +3,7 @@
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
 #include <algorithm>
+#include <limits>
 #include <set>
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -40,6 +41,17 @@ fs::path outputPath(const fs::path& directory, const fs::path& source, const std
     throw std::runtime_error("Could not select a new output filename");
 }
 }
+bool supportsImportOutputDimensions(int sourceWidth, int sourceHeight,
+    int targetWidth, int targetHeight, int scaleNumerator, int scaleDenominator) {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || scaleNumerator <= 0 || scaleDenominator <= 0) return false;
+    if (targetWidth == 0 && targetHeight == 0) return true;
+    if (targetWidth <= 0 || targetHeight <= 0 || targetWidth > 16384 || targetHeight > 16384) return false;
+    const auto width = static_cast<std::int64_t>(sourceWidth) * scaleNumerator;
+    const auto height = static_cast<std::int64_t>(sourceHeight) * scaleNumerator;
+    return static_cast<std::int64_t>(targetWidth) * scaleDenominator <= width &&
+        static_cast<std::int64_t>(targetHeight) * scaleDenominator <= height &&
+        static_cast<std::int64_t>(targetWidth) * sourceHeight == static_cast<std::int64_t>(targetHeight) * sourceWidth;
+}
 ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::stop_token stop,
     const std::function<void(std::size_t,std::size_t)>& progress) {
     checkStop(stop);
@@ -52,6 +64,8 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
         throw std::invalid_argument("Selected model differs from the verified local model pack");
     std::optional<restoration::ModelPack> restorationPack;
     if (!settings.restorationModelDirectory.empty()) restorationPack = restoration::loadModelPack(settings.restorationModelDirectory);
+    std::optional<restoration::ModelPack> temporalRestorationPack;
+    if (!settings.temporalRestorationModelDirectory.empty()) temporalRestorationPack = restoration::loadModelPack(settings.temporalRestorationModelDirectory);
     const auto first = normalized(request.inputs.front());
     ImportResult result; result.outputDirectory = request.outputDirectory.empty() ? (fs::is_directory(first) ? first : first.parent_path()) : normalized(request.outputDirectory);
     if (!fs::is_directory(result.outputDirectory)) throw std::invalid_argument("Output directory does not exist");
@@ -97,15 +111,22 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         "Selected model does not declare support for input profile " + profile});
                     valid = false;
                 }
-                if (valid && restorationPack && !restoration::supportsOnnxCudaOutputRateModel(*restorationPack)) {
+                if (valid && restorationPack && !restoration::supportsOnnxCudaOutputRateModel(*restorationPack) &&
+                    !restoration::supportsOnnxCudaTemporalModel(*restorationPack)) {
                     result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
-                        "Selected local restoration model is not supported for output-rate deblurring or super-resolution"});
+                        "Selected local restoration model has no verified compatible image or temporal adapter"});
                     valid = false;
                 }
                 if (valid && restorationPack && std::find(restorationPack->capabilities.supportedInputProfiles.begin(),
                     restorationPack->capabilities.supportedInputProfiles.end(),profile) == restorationPack->capabilities.supportedInputProfiles.end()) {
                     result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
                         "Selected restoration model does not declare support for input profile " + profile});
+                    valid = false;
+                }
+                if (valid && temporalRestorationPack && std::find(temporalRestorationPack->capabilities.supportedInputProfiles.begin(),
+                    temporalRestorationPack->capabilities.supportedInputProfiles.end(),profile) == temporalRestorationPack->capabilities.supportedInputProfiles.end()) {
+                    result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                        "Selected temporal denoiser does not declare support for input profile " + profile});
                     valid = false;
                 }
                 if (valid && restorationPack) {
@@ -115,6 +136,14 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                             "Selected restoration model would exceed the 8192-pixel output limit"});
                         valid = false;
                     }
+                }
+                if (valid && !supportsImportOutputDimensions(video->width, video->height,
+                    settings.settings.encoding.outputWidth, settings.settings.encoding.outputHeight,
+                    restorationPack ? restorationPack->capabilities.scaleNumerator : 1,
+                    restorationPack ? restorationPack->capabilities.scaleDenominator : 1)) {
+                    result.rejected.push_back({source,ImportRejection::unsupportedOutputDimensions,
+                        "Output dimensions exceed the generated frame or do not match this source aspect ratio"});
+                    valid = false;
                 }
                 if (valid && settings.settings.encoding.encoder != "auto") {
                     const auto capability = media::MediaEngine::probeEncoder(settings.settings.encoding.encoder,*video,
@@ -126,6 +155,16 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                 }
                 if (valid) {
                     auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
+                    if (request.platformBitrate != PlatformBitrate::unchanged) {
+                        const auto rate = job.settings.targetRate;
+                        const int fps = rate.denominator() == 1 && rate.numerator() <= std::numeric_limits<int>::max()
+                            ? static_cast<int>(rate.numerator()) : 60;
+                        const auto& caps = restorationPack ? restorationPack->capabilities : restoration::Capabilities{};
+                        const int outputHeight = platformOutputHeight(video->height, job.settings.encoding.outputHeight,
+                            caps.scaleNumerator, caps.scaleDenominator);
+                        job.settings.encoding.bitRate = static_cast<std::int64_t>(platformBitrateKbps(request.platformBitrate, outputHeight, fps)) * 1000;
+                        job.settings.encoding.gopSize = fps <= std::numeric_limits<int>::max() / 2 ? fps * 2 : 120;
+                    }
                     if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;
                     else if (video->declaredEnd && video->start && *video->declaredEnd > *video->start) job.sourceDurationEstimate = *video->declaredEnd - *video->start;
                     else if (info.duration && *info.duration > Rational(0)) job.sourceDurationEstimate = info.duration;

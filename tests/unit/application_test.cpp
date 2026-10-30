@@ -1,13 +1,39 @@
 #include "application/job_serialization.hpp"
 #include "application/local_lease.hpp"
+#include "application/import_service.hpp"
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <cmath>
 #include <fstream>
+#include <limits>
 #include <random>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+TEST(BatchImportDimensions, ValidatesEachSourceAgainstTargetAndModelScale) {
+    using rifelove::application::supportsImportOutputDimensions;
+    EXPECT_TRUE(supportsImportOutputDimensions(1920, 1080, 0, 0, 2, 1));
+    EXPECT_TRUE(supportsImportOutputDimensions(1920, 1080, 2560, 1440, 2, 1));
+    EXPECT_FALSE(supportsImportOutputDimensions(1920, 1080, 3840, 2160, 1, 1));
+    EXPECT_FALSE(supportsImportOutputDimensions(1080, 1920, 2560, 1440, 2, 1));
+    EXPECT_FALSE(supportsImportOutputDimensions(1920, 1080, 2560, 0, 2, 1));
+    EXPECT_FALSE(supportsImportOutputDimensions(0, 1080, 0, 0, 2, 1));
+    EXPECT_FALSE(supportsImportOutputDimensions(1920, 1080, 2560, 1440, 0, 1));
+}
+
+TEST(BatchPlatformBitrate, UsesEachSourceHeightAndTargetRate) {
+    using namespace rifelove::application;
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 720, 60), 7500);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 1080, 60), 12000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::localQuality, 1080, 60), 20000);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::localQuality, 1080, 120), 40000);
+    EXPECT_EQ(platformOutputHeight(1080, 0, 2, 1), 2160);
+    EXPECT_EQ(platformOutputHeight(1080, 1440, 2, 1), 1440);
+    EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, platformOutputHeight(1080, 0, 2, 1), 60), 68000);
+    EXPECT_THROW(platformOutputHeight(1080, 0, 2, 0), std::invalid_argument);
+}
 
 namespace {
 using namespace rifelove;
@@ -19,8 +45,15 @@ ProcessingJob configuredJob() {
     job.sourceDurationEstimate = Rational(1001,24000);
     job.settings.hostFloatBufferLimit = 256 * 1024 * 1024;
     job.settings.inferenceBackend = "cuda";
+    job.settings.temporalDenoiseSigma255 = 17.5F;
+    job.temporalRestorationModelDirectory = L"C:/local/denoiser";
+    job.expectedTemporalRestorationDescriptorSha256 = std::string(64,'c');
+    job.settings.motionBlur.enabled = true;
+    job.settings.motionBlur.shutterAngleDegrees = 180;
+    job.settings.motionBlur.sampleCount = 4;
     job.expectedModelId = "rife-4.25"; job.expectedModelVersion = "4.25"; job.expectedModelSha256 = std::string(64,'a'); job.expectedSourceSha256 = std::string(64,'b');
     auto& e = job.settings.encoding; e.encoder = "hevc_nvenc"; e.pixelFormat = "p010le"; e.videoStreamIndex = 2;
+    e.outputWidth = 2560; e.outputHeight = 1440;
     e.timeBase = Rational(1,120000); e.frameRate = job.settings.targetRate; e.bitRate = 12345678; e.gopSize = 48; e.maxBFrames = 3;
     e.encoderOptions = {{"cq","20"},{"preset","p5"}};
     job.settings.scene = {0.2,0.3,0.6,1e-4}; return job;
@@ -33,7 +66,15 @@ TEST(ProcessingConfiguration, RoundTripsAllAdvancedSettingsAndPinnedIdentity) {
     EXPECT_EQ(serializeJob(restored),encoded);
     EXPECT_EQ(restored.settings.targetRate,Rational(60000,1001)); EXPECT_EQ(restored.settings.encoding.timeBase,Rational(1,120000));
     EXPECT_EQ(restored.settings.inferenceBackend,"cuda");
+    EXPECT_FLOAT_EQ(restored.settings.temporalDenoiseSigma255,17.5F);
+    EXPECT_EQ(restored.temporalRestorationModelDirectory,job.temporalRestorationModelDirectory);
+    EXPECT_EQ(restored.expectedTemporalRestorationDescriptorSha256,job.expectedTemporalRestorationDescriptorSha256);
+    EXPECT_TRUE(restored.settings.motionBlur.enabled);
+    EXPECT_EQ(restored.settings.motionBlur.shutterAngleDegrees,180);
+    EXPECT_EQ(restored.settings.motionBlur.sampleCount,4);
     EXPECT_EQ(restored.sourceDurationEstimate,job.sourceDurationEstimate);
+    EXPECT_EQ(restored.settings.encoding.outputWidth,2560);
+    EXPECT_EQ(restored.settings.encoding.outputHeight,1440);
     EXPECT_EQ(restored.settings.encoding.encoderOptions.at("preset"),"p5"); EXPECT_EQ(restored.settings.encoding.maxBFrames,3);
 }
 TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThresholds) {
@@ -50,7 +91,15 @@ TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThreshold
     auto bad = job; bad.expectedSourceSha256 = "unverified"; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.scene.cutMeanDifference = -0.1; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.inferenceBackend = "fp16"; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.motionBlur.shutterAngleDegrees = 361; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.motionBlur.sampleCount = 17; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.temporalDenoiseSigma255 = 4.9F; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.temporalDenoiseSigma255 = 55.1F; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.expectedTemporalRestorationDescriptorSha256.clear(); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.temporalRestorationModelDirectory.clear(); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.encoding.frameRate = Rational(24); EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.encoding.outputWidth = 2560; bad.settings.encoding.outputHeight = 0; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
+    bad = job; bad.settings.encoding.outputWidth = 16385; bad.settings.encoding.outputHeight = 9216; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.expectedModelAdapterId = "bad/id"; bad.expectedModelAdapterVersion = 1;
     EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.expectedModelAdapterVersion = 1;
@@ -63,9 +112,12 @@ TEST(ProcessingConfiguration, ReadsLegacyVersionOneJobsWithoutAnAdapterPin) {
     legacy.erase("expectedModelAdapterId");
     legacy.erase("expectedModelAdapterVersion");
     legacy.erase("inferenceBackend");
+    legacy.erase("motionBlur");
     const auto restored = parseJob(job.source,job.output,legacy.dump());
     EXPECT_TRUE(restored.expectedModelAdapterId.empty());
     EXPECT_EQ(restored.expectedModelAdapterVersion,0);
+    EXPECT_FALSE(restored.settings.motionBlur.enabled);
+    EXPECT_FLOAT_EQ(restored.settings.temporalDenoiseSigma255,25.0F);
 }
 TEST(ProcessingConfiguration, ReadsLegacyVersionTwoJobsWithAutomaticBackendDefault) {
     const auto job = configuredJob();
@@ -74,6 +126,18 @@ TEST(ProcessingConfiguration, ReadsLegacyVersionTwoJobsWithAutomaticBackendDefau
     legacy.erase("inferenceBackend");
     const auto restored = parseJob(job.source,job.output,legacy.dump());
     EXPECT_EQ(restored.settings.inferenceBackend,"auto");
+    auto schemaSix = nlohmann::json::parse(serializeJob(job));
+    schemaSix["schemaVersion"] = 6;
+    schemaSix.erase("temporalDenoiseSigma255");
+    const auto restoredSix = parseJob(job.source,job.output,schemaSix.dump());
+    EXPECT_FLOAT_EQ(restoredSix.settings.temporalDenoiseSigma255,25.0F);
+    auto schemaSeven = nlohmann::json::parse(serializeJob(job));
+    schemaSeven["schemaVersion"] = 7;
+    schemaSeven.erase("temporalRestorationModelDirectory");
+    schemaSeven.erase("expectedTemporalRestorationDescriptorSha256");
+    const auto restoredSeven = parseJob(job.source,job.output,schemaSeven.dump());
+    EXPECT_TRUE(restoredSeven.temporalRestorationModelDirectory.empty());
+    EXPECT_TRUE(restoredSeven.expectedTemporalRestorationDescriptorSha256.empty());
 }
 TEST(ProcessingConfiguration, PinsVersionTwoModelDescriptorForPersistentJobs) {
     const auto directory = std::filesystem::temp_directory_path() /
@@ -143,9 +207,13 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     PipelineResult result{};
     result.video.encoder = "libopenh264"; result.video.framesSubmitted = 120; result.video.videoPackets = 120; result.video.copiedPackets = 48;
     result.video.firstTimestamp = Rational(3,2); result.video.endExclusive = Rational(7,2);
-    result.sourceFrames = 60; result.aiFrames = 60; result.originalFrames = 60; result.heldFrames = 0;
+    result.sourceFrames = 60; result.aiFrames = 60; result.processedFrames = 120; result.reusedFrames = 0;
+    result.inferenceCalls = 240; result.originalFrames = 60; result.heldFrames = 0;
     result.sceneCuts = 1; result.duplicatePairs = 2; result.abnormalPairs = 3; result.recoveredTimestamps = 4;
     result.modelId = "rife-4.25-fp32-sdr8"; result.backend = "onnxruntime_tensorrt_cuda";
+    result.restorationModelId = "realesrgan-x2"; result.restorationBackend = "onnxruntime_cuda";
+    result.restorationFallbackReason = "TensorRT provider unavailable";
+    result.temporalRestorationModelId = "fastdvdnet"; result.temporalRestorationBackend = "onnxruntime_tensorrt_cuda";
     result.inferenceFallbackReason.clear(); result.encoderFallbackReason = "NVENC API unavailable"; result.sourceEndEvidence = "declared_stream_end";
     result.elapsedSeconds = 10.0; result.processingFps = 12.0;
     result.timings.sourceDecodeSeconds = 1.25; result.timings.inferenceWaitSeconds = 4.5;
@@ -172,6 +240,9 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     EXPECT_EQ(report.at("encoding").at("fallbackReason"),"NVENC API unavailable");
     EXPECT_EQ(report.at("performance").at("endToEndOutputFramesPerSecond"),10.0);
     EXPECT_EQ(report.at("performance").at("pipelineOutputFramesPerSecond"),12.0);
+    EXPECT_EQ(report.at("performance").at("processedFrames"),120);
+    EXPECT_EQ(report.at("performance").at("reusedFrames"),0);
+    EXPECT_EQ(report.at("performance").at("pipelineProcessedFramesPerSecond"),12.0);
     EXPECT_EQ(report.at("performance").at("stageTimings").at("inferenceWaitSeconds"),4.5);
     EXPECT_EQ(report.at("performance").at("stageTimings").at("frameEncodeSeconds"),0.75);
     EXPECT_EQ(report.at("qualityDiagnostics").at("sceneCuts"),1);
@@ -179,8 +250,39 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     EXPECT_EQ(report.at("source").at("recoveredTimestamps"),4);
     EXPECT_EQ(report.at("timingValidation").at("timeBase"),"1/120");
     EXPECT_EQ(report.at("pipelineResult").at("abnormalPairs"),3);
+    EXPECT_EQ(report.at("pipelineResult").at("restorationBackend"),"onnxruntime_cuda");
+    EXPECT_EQ(report.at("pipelineResult").at("restorationFallbackReason"),"TensorRT provider unavailable");
+    EXPECT_EQ(report.at("temporalRestoration").at("id"),"fastdvdnet");
+    EXPECT_EQ(report.at("pipelineResult").at("temporalRestorationBackend"),"onnxruntime_tensorrt_cuda");
+    EXPECT_EQ(report.at("performance").at("inferenceCalls"),240);
     EXPECT_EQ(report.at("pipelineResult").at("timings").at("sourceDecodeSeconds"),1.25);
     EXPECT_EQ(report.at("pipelineResult").at("recoveredTimestamps"),4);
+}
+TEST(ProcessingMetrics, ResumeSpeedCountsOnlyCurrentFramesAndHandlesZeroAndOverflow) {
+    using namespace rifelove;
+    EXPECT_DOUBLE_EQ(processingFrameRate(12,6.0),2.0);
+    EXPECT_DOUBLE_EQ(processingFrameRate(0,6.0),0.0);
+    EXPECT_DOUBLE_EQ(processingFrameRate(12,0.0),0.0);
+    EXPECT_DOUBLE_EQ(processingFrameRate(12,-1.0),0.0);
+    EXPECT_TRUE(std::isfinite(processingFrameRate(std::numeric_limits<std::size_t>::max(),std::numeric_limits<double>::denorm_min())));
+    EXPECT_DOUBLE_EQ(processingFrameRate(std::numeric_limits<std::size_t>::max(),std::numeric_limits<double>::denorm_min()),
+        std::numeric_limits<double>::max());
+
+    application::ProcessingEvent progress;
+    progress.outputFrames = 120; progress.processedFrames = 12; progress.reusedFrames = 108; progress.processingFps = 2.0;
+    const auto progressJson = nlohmann::json::parse(application::serializeProgress(progress));
+    EXPECT_EQ(progressJson.at("frames"),120);
+    EXPECT_EQ(progressJson.at("processedFrames"),12);
+    EXPECT_EQ(progressJson.at("reusedFrames"),108);
+
+    PipelineResult result{};
+    result.video.framesSubmitted = 120; result.processedFrames = 0; result.reusedFrames = 120;
+    result.elapsedSeconds = 4.0; result.processingFps = 999.0;
+    const auto resultJson = nlohmann::json::parse(application::serializeResult(result));
+    EXPECT_EQ(resultJson.at("outputFrames"),120);
+    EXPECT_EQ(resultJson.at("processedFrames"),0);
+    EXPECT_EQ(resultJson.at("reusedFrames"),120);
+    EXPECT_EQ(resultJson.at("processingFps"),0.0);
 }
 TEST(ProcessingReport, PublishesUnicodeJsonWithoutReplacingExistingFiles) {
     const auto directory = std::filesystem::temp_directory_path() / ("rifelove-report-" + std::to_string(std::random_device{}()));

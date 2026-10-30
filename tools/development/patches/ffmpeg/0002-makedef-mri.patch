@@ -1,0 +1,86 @@
+diff --git a/compat/windows/makedef b/compat/windows/makedef
+index af42f08..5843542 100644
+--- a/compat/windows/makedef
++++ b/compat/windows/makedef
+@@ -32,12 +32,24 @@ if [ ! -f "$vscript" ]; then
+     exit 1
+ fi
+ 
+-for object in "$@"; do
+-    if [ ! -f "$object" ]; then
+-        echo "Object does not exist: ${object}" >&2
++# Shared-library link rules use response files on Windows.  Keep the object
++# list out of the process command line so large FFmpeg libraries do not get
++# truncated by CreateProcess before this script sees it.
++object_file=""
++if [ "$#" = 1 ] && [ "${1#@}" != "$1" ]; then
++    object_file=${1#@}
++    if [ ! -f "$object_file" ]; then
++        echo "Object list does not exist: ${object_file}" >&2
+         exit 1
+     fi
+-done
++else
++    for object in "$@"; do
++        if [ ! -f "$object" ]; then
++            echo "Object does not exist: ${object}" >&2
++            exit 1
++        fi
++    done
++fi
+ 
+ # Create a lib temporarily to dump symbols from.
+ # It's just much easier to do it this way
+@@ -46,7 +58,30 @@ libname=$(mktemp -u "library").lib
+ trap 'rm -f -- $libname' EXIT
+ 
+ if [ -n "$AR" ]; then
+-    $AR rcs ${libname} $@ >/dev/null
++    if [ -n "$object_file" ]; then
++        rm -f -- "$libname"
++        # Use GNU ar's MRI input so duplicate basenames (for example cpu.o
++        # from libavutil and libavutil/x86) remain separate archive members.
++        # Repeated `ar rcs` calls replace same-named members on MinGW.
++        mri_file="${libname}.mri"
++        {
++            echo "create $libname"
++            for object in $(cat "$object_file"); do
++                [ -n "$object" ] || continue
++                if [ ! -f "$object" ]; then
++                    echo "Object does not exist: ${object}" >&2
++                    exit 1
++                fi
++                echo "addmod $object"
++            done
++            echo "save"
++            echo "end"
++        } > "$mri_file"
++        $AR -M < "$mri_file" >/dev/null || exit 1
++        rm -f -- "$mri_file"
++    else
++        $AR rcs ${libname} $@ >/dev/null
++    fi
+ else
+     machine_flag=""
+     case "$LDFLAGS" in
+@@ -54,7 +89,14 @@ else
+         machine_flag="-machine:arm64ec"
+         ;;
+     esac
+-    lib.exe ${machine_flag} -out:${libname} $@ >/dev/null
++        if [ -n "$object_file" ]; then
++            for object in $(cat "$object_file"); do
++                [ -n "$object" ] || continue
++                lib.exe ${machine_flag} -out:${libname} "$object" >/dev/null || exit 1
++            done
++        else
++            lib.exe ${machine_flag} -out:${libname} $@ >/dev/null
++        fi
+ fi
+ if [ $? != 0 ]; then
+     echo "Could not create temporary library." >&2
+@@ -142,3 +184,4 @@ done
+ 
+ echo "EXPORTS"
+ echo "${list}" | sort | uniq | tail -n +2
++

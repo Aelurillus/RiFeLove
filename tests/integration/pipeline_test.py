@@ -81,7 +81,7 @@ class NativeRifePipeline(unittest.TestCase):
         events = [json.loads(line) for line in response.stdout.splitlines()]
         return events[-1] if events else None, events
 
-    def verify_timing(self, output, result):
+    def verify_timing(self, output, result, allow_quantized_declared_end=False):
         records = probe(output,"-select_streams","v:0","-show_frames","-show_entries","frame=best_effort_timestamp")
         stream = probe(output,"-select_streams","v:0","-show_streams")["streams"][0]
         base, origin, rate, end = map(Fraction,(stream["time_base"],result["first_pts"],result["target_fps"],result["end_exclusive"]))
@@ -92,7 +92,10 @@ class NativeRifePipeline(unittest.TestCase):
         for index,time in enumerate(times): self.assertLessEqual(abs(time-origin-Fraction(index)/rate),base/2)
         self.assertTrue(all(b>a for a,b in zip(times,times[1:])))
         self.assertLessEqual(abs(Fraction(result["end_error"])),base)
-        self.assertEqual(Fraction(result["declared_end_error"]),0)
+        if allow_quantized_declared_end:
+            self.assertLessEqual(abs(Fraction(result["declared_end_error"])),base/2)
+        else:
+            self.assertEqual(Fraction(result["declared_end_error"]),0)
         self.assertEqual(result["ai_frames"]+result["original_frames"]+result["held_frames"],expected_count)
 
     def test_fractional_rate_preserves_multiaudio_subtitle_chapter_and_samples(self):
@@ -159,6 +162,22 @@ class NativeRifePipeline(unittest.TestCase):
         self.assertGreater(result["output_frames"],70)
         self.assertGreater(result["ai_frames"],0)
         self.verify_timing(output,result)
+
+    def test_480fps_short_video_preserves_aac_and_rounded_final_boundary(self):
+        source = self.root / "high-fps-short-with-audio.mp4"
+        output = self.root / "high-fps-short-with-audio.mkv"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i",
+               "testsrc2=size=96x64:rate=32:duration=0.0625",
+               "-f","lavfi","-i","sine=frequency=440:sample_rate=48000:duration=0.0625",
+               "-c:v","libopenh264","-pix_fmt","yuv420p",
+               "-bsf:v","h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+               "-c:a","aac",source)
+        result,_ = self.run_job(source,output,"480","--encoder","ffv1","--backend","cuda")
+        self.assertEqual(result["output_frames"],30)
+        self.assertEqual(Fraction(result["end_exclusive"]),Fraction(1,16))
+        self.assertGreater(result["ai_frames"],0)
+        self.verify_timing(output,result,allow_quantized_declared_end=True)
+        self.assert_audio_samples_equal(source,output)
 
     def test_cut_and_duplicate_protection_never_generates_a_crossfade(self):
         output = self.root / "cut-8.mkv"
@@ -278,6 +297,70 @@ class NativeRifePipeline(unittest.TestCase):
         remuxed = self.root / "priming-copy.mkv"
         invoke(CLI,"remux",self.bframes,remuxed)
         self.assert_audio_samples_equal(self.bframes,remuxed)
+
+    def test_short_h264_aac_track_ends_do_not_inherit_container_duration(self):
+        # With only three H.264 frames FFmpeg may populate AVStream.duration
+        # from the longer container duration. The Matroska video DURATION tag
+        # and decoded final frame still end at exactly 3/4 s.
+        for source_extension in ("mp4","mkv"):
+            for audio_duration in ("0.75","0.9"):
+                source = self.root / f"short-{source_extension}-{audio_duration}.{source_extension}"
+                invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i",
+                       "color=black:size=192x128:rate=4:duration=0.75",
+                       "-f","lavfi","-i",f"sine=frequency=440:sample_rate=48000:duration={audio_duration}",
+                       "-vf",self.color,"-c:v","libopenh264","-pix_fmt","yuv420p","-c:a","aac",
+                       "-avoid_negative_ts","disabled",source)
+                for target_extension in ("mkv","mp4","mov"):
+                    with self.subTest(source=source_extension,audio_duration=audio_duration,target=target_extension):
+                        output = self.root / f"short-{source_extension}-{audio_duration}-4.{target_extension}"
+                        result,_ = self.run_job(source,output,"4","--encoder","libopenh264","--backend","cuda")
+                        self.verify_timing(output,result)
+                        self.assertEqual(result["output_frames"],3)
+                        self.assertEqual(Fraction(result["end_exclusive"]),Fraction(3,4))
+                        self.assert_audio_samples_equal(source,output)
+                        before = probe(source,"-select_streams","a:0","-show_packets","-show_data_hash","sha256",
+                                       "-show_entries","packet=data_hash")["packets"]
+                        after = probe(output,"-select_streams","a:0","-show_packets","-show_data_hash","sha256",
+                                      "-show_entries","packet=data_hash")["packets"]
+                        # ffprobe also emits container-derived skip-sample side data,
+                        # even when only data_hash was requested. MP4 and Matroska
+                        # can represent priming differently; decoded PCM equality
+                        # above checks the audible result independently.
+                        self.assertEqual([packet["data_hash"] for packet in before],
+                                         [packet["data_hash"] for packet in after])
+
+    def test_fractional_h264_aac_tail_keeps_separate_audio_and_video_boundaries(self):
+        source = self.root / "fractional-h264-aac-tail-source.mkv"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i",
+               "testsrc2=size=96x64:rate=24000/1001:duration=0.25",
+               "-f","lavfi","-i","sine=frequency=440:sample_rate=48000:duration=0.4",
+               "-vf",self.color,"-c:v","libopenh264","-pix_fmt","yuv420p","-c:a","aac",
+               "-avoid_negative_ts","disabled",source)
+        source_video = probe(source,"-select_streams","v:0","-show_streams")["streams"][0]
+        source_end = Fraction(source_video["tags"]["DURATION"].split(":")[-1])
+        for extension in ("mkv","mp4","mov"):
+            with self.subTest(container=extension):
+                output = self.root / f"fractional-h264-aac-tail.{extension}"
+                result,_ = self.run_job(source,output,"60000/1001","--encoder","libopenh264","--backend","cuda")
+                self.verify_timing(output,result)
+                self.assertEqual(Fraction(result["end_exclusive"]),source_end)
+                self.assertGreater(result["ai_frames"],0)
+                self.assert_audio_samples_equal(source,output)
+
+    def test_contradictory_matroska_video_track_end_still_rejects_publication(self):
+        source = self.root / "contradictory-video-end.mkv"
+        invoke(FFMPEG,"-v","error","-nostdin","-f","lavfi","-i",
+               "color=black:size=192x128:rate=4:duration=0.75",
+               "-vf",self.color,"-c:v","libopenh264",source)
+        original = source.read_bytes()
+        self.assertIn(b"00:00:00.750000000",original)
+        source.write_bytes(original.replace(b"00:00:00.750000000",b"00:00:00.650000000"))
+        output = self.root / "rejected-contradictory-end.mkv"
+        response = invoke(CLI,"interpolate",source,output,"--fps","4","--model-dir",PACK,
+                          "--runtime-dir",RUNTIME,"--encoder","libopenh264","--backend","cuda",expected=2)
+        self.assertIn("Declared video end contradicts",response.stderr)
+        self.assertFalse(output.exists())
+        self.assertEqual(list(self.root.glob("*.partial")),[])
 
     def test_bframe_source_decodes_and_writes_h264_mov(self):
         output = self.root / "reordered.mov"

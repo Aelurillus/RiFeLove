@@ -76,6 +76,7 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
     std::size_t decodedFrames = 0;
     std::optional<Rational> actualFirst;
     std::optional<Rational> actualEnd;
+    std::optional<Rational> finalDuration;
     const auto decoded = decodeVideo(path, [&](const DecodedFrame& frame) {
         if (!frame.timestamp || frame.timestampRecovered)
             throw std::runtime_error("checkpoint segment contains a missing or reconstructed frame timestamp");
@@ -92,7 +93,13 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
         if (!withinTick(*frame.timestamp, expectedTimestamp, tick))
             throw std::runtime_error("checkpoint segment frame timestamp does not match the global timeline");
         if (!actualFirst) actualFirst = frame.timestamp;
-        if (frame.duration && *frame.duration > Rational(0)) actualEnd = *frame.timestamp + *frame.duration;
+        if (frame.duration && *frame.duration > Rational(0)) {
+            finalDuration = frame.duration;
+            actualEnd = *frame.timestamp + *frame.duration;
+        } else {
+            finalDuration.reset();
+            actualEnd.reset();
+        }
         ++decodedFrames;
     }, stream.index, stop);
 
@@ -100,7 +107,11 @@ VideoSegmentVerification MediaEngine::verifyVideoSegment(const std::string& path
         throw std::runtime_error("checkpoint segment frame count does not match its contract");
     if (!actualFirst || !withinTick(*actualFirst, contract.firstTimestamp, tick))
         throw std::runtime_error("checkpoint segment first timestamp does not match its contract");
-    if (actualEnd && absolute(*actualEnd - expectedEnd) > tick)
+    // Matroska rounds the presentation timestamp and may truncate the frame
+    // duration independently. Checking their sum against a single tick can
+    // reject a valid final boundary. Each component has its own quantization
+    // bound; the timestamp was checked above against half a tick.
+    if (finalDuration && absolute(*finalDuration - (expectedEnd - lastFrameStart)) > tick)
         throw std::runtime_error("checkpoint segment final frame duration " + actualEnd->toString() +
             " does not match its contract boundary " + expectedEnd.toString() + " (container tick " + tick.toString() + ")");
     if (stream.declaredEnd && absolute(*stream.declaredEnd - expectedEnd) > tick)

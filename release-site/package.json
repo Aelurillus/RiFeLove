@@ -6,10 +6,10 @@
     "build": "node ../tools/release/build-site.mjs",
     "build:worker": "node ../tools/release/build-worker-source.mjs",
     "test": "node --test ../tools/release/*.test.mjs",
-    "publish": "node ../tools/release/publish-release.mjs",
-    "upload:preview:oss": "node ../tools/release/upload-private-preview.mjs",
-    "configure:oss-updatelog": "node ../tools/release/configure-oss-updatelog-access.mjs",
-    "deploy:oss": "node ../tools/release/deploy-update-log.mjs",
+    "publish": "node ../tools/release/oss-disabled.mjs",
+    "upload:preview:oss": "node ../tools/release/oss-disabled.mjs",
+    "configure:oss-updatelog": "node ../tools/release/oss-disabled.mjs",
+    "deploy:oss": "node ../tools/release/oss-disabled.mjs",
     "deploy": "wrangler pages deploy dist --project-name rifelove-updatelog --branch main"
   },
   "dependencies": {

@@ -23,6 +23,8 @@ If that archive has not been supplied locally, an explicit `-AllowDownload` perf
 
 `RIFELOVE_BUILD_MEDIA=ON` enables the engine, and `RIFELOVE_FFMPEG_ROOT` points to the SDK. CMake copies the SDK DLLs next to the local development executables. Header/runtime major versions are checked when opening input. The tested ABI is FFmpeg 8.1; other FFmpeg major versions are not in the validated compatibility matrix.
 
+For the isolated source build with NVIDIA headers, OpenH264, Kvazaar, libaom and NASM x86 assembly, see [FFMPEG_SOURCE_BUILD.md](FFMPEG_SOURCE_BUILD.md). That SDK is a validation artifact until its native DLL regression and performance comparison are complete.
+
 ## Current behavior
 
 - `media-probe INPUT`: JSON container and track time bases, average/nominal rates, dimensions, metadata, audio channels/sample format/channel layout, subtitle language/title, default/forced dispositions, chapters, FFmpeg's display-matrix rotation angle, the exact nine display-matrix coefficients, color and available static HDR side data.

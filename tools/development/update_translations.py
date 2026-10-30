@@ -31,11 +31,11 @@ Bilibili · 120 FPS 实验|Bilibili · 120 FPS experimental|Bilibili · 120 FPS 
 抖音 · 30 FPS 上传副本|Douyin · 30 FPS upload copy|抖音 · 30 FPS 上傳副本|Douyin · 30 FPS アップロード用コピー
 抖音 · 60 FPS 上传副本|Douyin · 60 FPS upload copy|抖音 · 60 FPS 上傳副本|Douyin · 60 FPS アップロード用コピー
 Bilibili 的 120 FPS 依据历史官方活动信息；当前账号与转码行为仍需实测。|The 120 FPS option is based on a historical official Bilibili event; current account access and transcoding still need testing.|Bilibili 的 120 FPS 依據歷史官方活動資訊；目前帳號權限與轉碼行為仍需實測。|120 FPS は Bilibili の過去の公式イベント情報に基づきます。現在のアカウント権限とトランスコード動作は実測が必要です。
-YouTube 60 FPS SDR 按当前视频分辨率使用官方建议码率；未加载视频时按 1080p 默认。平台仍会转码，300 FPS 以上母版需单独输出。|YouTube 60 FPS SDR uses the official recommended bitrate for the current video's resolution; it defaults to 1080p when no video is loaded. The platform still transcodes, so export a 300+ FPS master separately.|YouTube 60 FPS SDR 會依目前影片解析度採用官方建議位元率；尚未載入影片時預設為 1080p。平台仍會轉碼，300 FPS 以上母版需另外輸出。|YouTube 60 FPS SDR は現在の動画解像度に応じた公式推奨ビットレートを使用します。動画未読込時は 1080p が既定です。プラットフォームで再エンコードされるため、300 FPS 以上のマスターは別途出力してください。
-YouTube 60 FPS SDR 队列使用官方 1080p 建议码率；混合分辨率请在高级编码中调整。平台仍会转码，300 FPS 以上母版需单独输出。|The YouTube 60 FPS SDR queue preset uses the official 1080p recommended bitrate; adjust it in Advanced Encoding for mixed resolutions. The platform still transcodes, so export a 300+ FPS master separately.|YouTube 60 FPS SDR 佇列預設使用官方 1080p 建議位元率；混合解析度請在進階編碼中調整。平台仍會轉碼，300 FPS 以上母版需另外輸出。|YouTube 60 FPS SDR のキュープリセットは公式の 1080p 推奨ビットレートを使用します。解像度が混在する場合は詳細エンコードで調整してください。プラットフォームで再エンコードされるため、300 FPS 以上のマスターは別途出力してください。
-抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。|The public Douyin upload API lists no frame-rate ceiling; this is a local compatibility preset, not a platform guarantee.|抖音公開上傳 API 未列出影格率上限；此處是本機相容性預設，不代表平台保證。|公開されている Douyin アップロード API にフレームレート上限は記載されていません。このローカル互換プリセットはプラットフォームの保証ではありません。
-Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。|Bilibili 60 FPS is a compatibility preset; the bitrate is a local recommendation, and current upload rules should be checked for your account.|Bilibili 60 FPS 是相容性預設；位元率是本機建議值，目前上傳規則需依帳號驗證。|Bilibili 60 FPS は互換性プリセットです。ビットレートはローカル推奨値で、現在のアップロード規則はアカウントごとに確認してください。
-平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。|Platforms re-encode video. Export a local 300+ FPS master separately; platform presets create compatibility copies.|平台會重新編碼影片。300 FPS 以上的本機母版需另外輸出；平台預設會產生相容性副本。|プラットフォームは動画を再エンコードします。300 FPS 以上のローカルマスターは別途出力してください。プラットフォームプリセットは互換性コピーを作成します。
+YouTube 60 FPS SDR 按源视频高度使用官方码率参考（未加载时按 1080p）；编码器为 Auto、GOP 为 2 秒，不是完整平台规格。300 FPS 以上母版需单独输出。|YouTube 60 FPS SDR uses the official bitrate reference for the source height (1080p by default when no video is loaded). The encoder remains on Auto and the GOP is 2 seconds, so this is not a complete platform-spec preset. Export a 300+ FPS master separately.|YouTube 60 FPS SDR 會依來源影片高度採用官方位元率參考（尚未載入影片時預設為 1080p）；編碼器為 Auto、GOP 為 2 秒，並非完整的平台規格預設。300 FPS 以上母版需另外輸出。|YouTube 60 FPS SDR はソース動画の高さに基づく公式ビットレートを使用します（動画未読込時は 1080p）。エンコーダーは Auto、GOP は 2 秒で、プラットフォーム仕様全体に準拠する設定ではありません。300 FPS 以上のマスターは別途出力してください。
+YouTube 60 FPS SDR 队列统一使用官方 1080p 码率参考；混合分辨率需调整。编码器为 Auto、GOP 为 2 秒；300 FPS 以上母版需单独输出。|The YouTube 60 FPS SDR queue uses one official 1080p bitrate reference for all files; adjust it for mixed resolutions. The encoder remains on Auto and the GOP is 2 seconds. Export a 300+ FPS master separately.|YouTube 60 FPS SDR 佇列對所有影片統一使用官方 1080p 位元率參考；解析度混合時請調整。編碼器為 Auto、GOP 為 2 秒；300 FPS 以上母版需另外輸出。|YouTube 60 FPS SDR キューはすべての動画に公式の 1080p ビットレートを一律で適用します。解像度が混在する場合は調整してください。エンコーダーは Auto、GOP は 2 秒です。300 FPS 以上のマスターは別途出力してください。
+抖音开放平台上传 API 未列出帧率上限；128 MiB、15 分钟和 4 GB 分片规则只适用于该 API，本地预设不代表普通投稿平台保证。|The Douyin Open Platform upload API lists no frame-rate ceiling; its 128 MiB, 15-minute, and 4 GB chunk-upload rules apply only to that API. This local preset is not a guarantee for ordinary Creator Center uploads.|抖音開放平台上傳 API 未列出影格率上限；128 MiB、15 分鐘和 4 GB 分片規則只適用於該 API，本機預設不代表一般投稿平台保證。|Douyin オープンプラットフォームのアップロード API にはフレームレート上限が記載されていません。128 MiB、15 分、4 GB の分割アップロード規則は API にのみ適用され、このローカルプリセットは通常のクリエイターセンター投稿を保証しません。
+Bilibili 60 FPS 是兼容性起始预设；码率为本机建议值，编码器保持 Auto，当前上传规则需按账号验证。|Bilibili 60 FPS is a compatibility starting preset; the bitrate is a local estimate, the encoder remains on Auto, and current upload rules should be checked for your account.|Bilibili 60 FPS 是相容性起始預設；位元率是本機建議值，編碼器維持 Auto，目前上傳規則需依帳號驗證。|Bilibili 60 FPS は互換性のための初期設定です。ビットレートはローカル推定値で、エンコーダーは Auto のままです。現在のアップロード規則はアカウントごとに確認してください。
+平台可能重新编码或限制播放帧率。平台预设每次仅生成一个文件；300 FPS 以上本机母版需用自定义帧率另行处理。|Platforms may re-encode video or limit playback frame rates. Each platform preset creates one file per run; process a 300+ FPS master separately with a custom frame rate.|平台可能重新編碼影片或限制播放影格率。每次平台預設只會產生一個檔案；300 FPS 以上的本機母版需另行使用自訂影格率處理。|プラットフォームは動画を再エンコードしたり、再生フレームレートを制限したりする場合があります。プラットフォームプリセットは実行ごとに 1 つのファイルを作成します。300 FPS 以上のマスターはカスタムフレームレートで別途処理してください。
 尚未选择视频|No video selected|尚未選擇影片|動画が選択されていません
 选择原视频|Select source video|選擇原始影片|元動画を選択
 视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)|Video files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)|影片檔案 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)|動画ファイル (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts)
@@ -346,6 +346,13 @@ RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO|RIFELOVE  /  MOTION STUDIO
 ●  CUDA 推理|●  CUDA inference|●  CUDA 推論|●  CUDA 推論
 选择本地模型包目录|Select a local model-pack folder|選擇本機模型套件資料夾|ローカルモデルパックフォルダーを選択
 管理本机的 RIFE 插帧模型和画质修复模型。模型只从本机目录读取；此页面不会联网或下载权重。|Manage local RIFE interpolation and video restoration models. Model files are read only from this device; this page does not connect to the internet or download weights.|管理本機的 RIFE 補幀模型與畫質修復模型。模型只會從本機目錄讀取；此頁面不會連線或下載權重。|ローカルの RIFE 補間モデルと映像修復モデルを管理します。モデルファイルはこの PC からのみ読み込み、このページからインターネット接続や重みのダウンロードは行いません。
+完整目录\s\s|Full path\s\s|完整目錄\s\s|完全なパス\s\s
+模型包校验通过|Model pack verified|模型套件驗證通過|モデルパックを検証済み
+旧版清单|Legacy manifest|舊版清單|旧形式のマニフェスト
+技术与许可详情|Technical and license details|技術與授權詳情|技術情報とライセンスの詳細
+收起详情|Hide details|收起詳情|詳細を閉じる
+许可：|License: |授權：|ライセンス：
+HDR：|HDR: |HDR：|HDR：
 本地模型|Local model|本機模型|ローカルモデル
 插帧|Interpolation|補幀|フレーム補間
 画质修复|Video restoration|畫質修復|映像修復

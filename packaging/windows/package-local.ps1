@@ -67,15 +67,21 @@ $modelPacks = @(
     }
 )
 if (-not $modelPacks.Count) { throw "At least one local model pack is required." }
+$rifeModelPacks = @($modelPacks | Where-Object { $_.descriptor.family -eq "rife" })
+$restorationPacks = @($modelPacks | Where-Object { $_.descriptor.family -eq "video-restoration" })
+if (-not $rifeModelPacks.Count) { throw "A local RIFE pack is required for the workstation runtime qualification." }
+if (@($modelPacks | Where-Object { $_.descriptor.family -notin @("rife","video-restoration") }).Count -gt 0) {
+    throw "The local bundle contains an unsupported model family."
+}
 $duplicateIds = $modelPacks | Group-Object { $_.descriptor.id } | Where-Object Count -gt 1
 if ($duplicateIds) { throw "Model pack ids must be unique in a local bundle: $($duplicateIds.Name -join ', ')" }
 $defaultModelPack = $modelPacks[0]
 $modelNames = ($modelPacks | ForEach-Object { if ($_.descriptor.displayName) { [string]$_.descriptor.displayName } else { [string]$_.descriptor.id } }) -join ", "
 $executable = Join-Path $build "RifeLove.exe"
-$cliExecutable = Join-Path $build "rifelove-cli.exe"
 $validatorExecutable = Join-Path $build "rifelove-validate-cuda.exe"
+$restorationValidatorExecutable = Join-Path $build "rifelove-validate-restoration.exe"
 $deployTool = Join-Path $qt "bin/windeployqt.exe"
-foreach ($required in @($executable,$cliExecutable,$validatorExecutable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"))) {
+foreach ($required in @($executable,$validatorExecutable,$restorationValidatorExecutable,$deployTool,(Join-Path $onnx "onnxruntime_providers_cuda.dll"))) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required packaging input is missing: $required" }
 }
 foreach ($pack in $modelPacks) {
@@ -93,7 +99,6 @@ if (Test-Path -LiteralPath $packageRoot) { throw "The unique package staging pat
 New-Item -ItemType Directory -Path $packageRoot | Out-Null
 try {
 Copy-Item -LiteralPath $executable -Destination $packageRoot
-Copy-Item -LiteralPath $cliExecutable -Destination $packageRoot
 $savedPath = $env:PATH
 try {
     $env:PATH = "$qt/bin;$ffmpeg/bin;$savedPath"
@@ -112,7 +117,12 @@ foreach ($name in @("avcodec-62.dll","avformat-62.dll","avutil-60.dll","swscale-
 foreach ($pack in $modelPacks) {
     $modelTarget = Join-Path $packageRoot ("models/{0}" -f $pack.descriptor.id)
     New-Item -ItemType Directory -Path $modelTarget -Force | Out-Null
-    foreach ($name in @("model.json","model.onnx","LICENSE.txt","source-manifest.json","validation.json")) {
+    $licenseFile = [string]$pack.descriptor.license.file
+    if ([string]::IsNullOrWhiteSpace($licenseFile) -or [IO.Path]::GetFileName($licenseFile) -cne $licenseFile) {
+        throw "Model pack declares an unsafe or missing license filename: $($pack.root)"
+    }
+    $requiredPackFiles = @("model.json","model.onnx",$licenseFile,"source-manifest.json","validation.json") | Select-Object -Unique
+    foreach ($name in $requiredPackFiles) {
         $source = Join-Path $pack.root $name
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required model package file is missing: $source" }
         Copy-Item -LiteralPath $source -Destination $modelTarget
@@ -192,23 +202,21 @@ $readmeLines = @(
     'RifeLove 本机运行包',
     '',
     '启动：双击 RifeLove.exe。应用会使用此文件夹内的 data、models 和设置；不需要联网。',
-    '运行日志只保存在本机：桌面日志位于 data/logs/rifelove.jsonl，CLI 日志位于 %LOCALAPPDATA%/RifeLove/logs/cli.jsonl。日志最多 4 MiB 并保留最近 3 个轮转文件；错误详情有时会包含本地文件名，分享前请检查。',
-    '本次附带并完成文件校验的模型：{0}。首次启动默认选择 {1}。当前色彩路径支持模型清单声明的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR，并保留输入位深和色彩标签；HDR、其他位深和未知色彩仍被拦截。模型许可与 SHA-256 位于各自的 models 子目录。',
-    '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT、ONNX Runtime、CUDA 和 cuDNN 运行 DLL 随包放在 runtime 目录；仍需安装兼容的 NVIDIA 显卡驱动。随包模型都经过本机 TensorRT FP32 数值校验，摘要保存在 data/tensorrt-validation.json。FP16 在当前 GTX 1660 SUPER 上未通过 8-bit SDR 精度门槛，因此不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
+    '运行日志只保存在本机：桌面日志位于 data/logs/rifelove.jsonl。日志最多 4 MiB 并保留最近 3 个轮转文件；错误详情有时会包含本地文件名，分享前请检查。',
+    '本次附带的本地模型：{0}。首次启动默认选择 {1}。当前色彩路径支持模型清单声明的 BT.709 与 BT.470BG/SMPTE 170M 8/10-bit SDR，并保留输入位深和色彩标签；HDR、其他位深和未知色彩仍被拦截。模型许可与 SHA-256 位于各自的 models 子目录。',
+    '默认推理：优先尝试 TensorRT 10.9 FP32；不兼容的节点由 ONNX Runtime CUDA 执行，初始化失败时也会回退到 CUDA。TensorRT、ONNX Runtime、CUDA 和 cuDNN 运行 DLL 随包放在 runtime 目录；仍需安装兼容的 NVIDIA 显卡驱动。RIFE 4.25 通过本机 TensorRT FP32 六组数值验证，报告在 data/tensorrt-validation.json。去模糊与超分模型另做本机 TensorRT 执行和输出尺寸检查，摘要在 data/restoration-runtime-smoke.json；这不代表它们通过 GPU 数值精度或真实画质验收。FP16 在当前 GTX 1660 SUPER 上不作为软件处理选项。TensorRT 引擎缓存位于本机用户目录。',
     'Qt 和运行库许可文本、Qt 6.12 SBOM 及 NVIDIA 运行库许可位于 licenses 目录。Qt 运行库采用动态链接；Qt 对应源码和分发许可审查仍需随公开发行版本一并完成。',
     '默认视频编码：任务开始前按目标帧率、像素格式、码率和编码选项预检查 NVIDIA NVENC；若当前驱动或像素格式不兼容，会选择已通过同一输出设置检查的软件编码器。界面会分别标明 CPU 视频编码和 CUDA RIFE 插帧。当前驱动提供 NVENC API 12.2，而本机 FFmpeg 要求 API 13.0 / 驱动 570.0 或更新，所以自动模式将使用软件 H.264。高级编码中可以显式选择 NVENC 的恒定质量 CQ（VBR + CQ）；该设置需要本机 NVENC 可初始化，无法回退到软件编码。',
     '导入视频时会显示按源分辨率和像素格式检查的 NVENC、软件 H.264、HEVC 与 AV1 能力；开始任务时会再次按目标输出帧率、时间基、像素格式、码率、GOP 和编码选项检查实际配置。进度栏按预计总帧数显示确定进度与剩余时间；估算总帧数不替代最终时间轴验证。',
-    '本机命令行：.\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --fps 60 --model-dir ".\models\{2}" --runtime-dir ".\runtime" --progress --report "处理报告.json"。报告记录模型/GPU、实际编码器和回退原因、端到端速度、质量保护计数及时间轴校验；不包含未实测的主观画质评分。',
-    '本地插帧会优先尝试 CUDA/NVDEC 解码；设备、解码器或像素格式协商不可用时会在交付帧前改用软件解码。可运行 .\rifelove-cli.exe media-scan "输入视频.mp4" --decode cuda 查看实际解码路径与回退原因。',
-    '复用 Studio 导出的本机配置：先运行 .\rifelove-cli.exe profile-check "配置.json" 检查配置，再运行 .\rifelove-cli.exe interpolate "输入视频.mp4" "输出视频.mkv" --profile "配置.json"。输入与输出文件需明确给出，输出扩展名必须匹配配置中的容器；配置和模型均从本机读取。',
-    '队列报告：在任务队列点击“导出报告”，或运行 .\rifelove-cli.exe queue-report ".\data\queue.sqlite" --output "队列报告.json"。报告包括任务状态、失败原因、处理帧数、完成任务平均输出 FPS 和质量保护计数；没有参考视频时不会给出 PSNR、SSIM 或 LPIPS。也可以用 `rifelove-cli.exe --help` 查看全部本地命令。',
+    '桌面处理优先尝试 CUDA/NVDEC 解码；设备、解码器或像素格式协商不可用时会在交付帧前改用软件解码。Studio 会在处理状态中报告实际编码器、回退原因、端到端速度和质量保护计数。',
+    'Studio 与任务队列使用同一套本机模型、帧率、编码和输出配置；可以在队列中查看处理状态、失败原因、帧数和完整性验证结果。',
     '桌面包含本地原片/结果分屏对比、同步播放、精确 CFR/VFR 帧步进，以及打开原片或结果所在文件夹的操作。',
     '任务队列每 256 个输出帧保存一个已验证检查点。进程异常退出后，重开软件可在中断任务上选择“从检查点继续”；软件会校验本机源文件、模型、运行库和片段，再跳过已完成的插帧。若最终视频已发布但队列状态未提交，启动时会核对成品大小、SHA-256 和验证记录，匹配时自动恢复为完成；不匹配时保留文件并显示诊断。普通暂停/继续仍在当前进程内接着处理。',
     '进度栏显示按源时长估算的输出帧总数与剩余时间；最终帧数以时间轴验证为准。工作期间会显示 RIFE 推理、编码、解码、预处理/色彩和输出验证阶段耗时，方便判断处理速度受哪一环影响。若解码帧缺少 PTS，软件只依据流声明起点或前一帧的明确时长恢复，并在扫描/处理报告中计数；缺少证据时会停止并说明，避免按平均帧率猜测可变帧率时间轴。',
     '',
     'GPU 运行库使用本机依赖目录中的 ONNX Runtime CUDA 1.22.0、TensorRT 10.9、CUDA 12.8 和 cuDNN 9；runtime 联接指向完整的本机推理运行库。它不是跨电脑可搬运的发行包。目标电脑需要兼容的 NVIDIA 驱动。此本机目录不代表完成了公开发行所需的第三方再分发审核。',
     '',
-    '当前验证边界：本地 GTX 1660 SUPER；RIFE 4.22 Lite、4.25、4.25 Lite 与 4.26 FP32 均通过六组小尺寸 CPU/CUDA/TensorRT 数值对比；4.25 另通过合成 720p BT.709、30→60 FPS 端到端验证，并保留音轨和 0.5 秒时长。RIFE 4.26 TensorRT FP32 六组对照最大绝对误差 0.00183、最低 PSNR 85.94 dB；RIFE 4.25 Lite TensorRT FP32 六组最大误差 0.000382、最低 PSNR 93.96 dB；Lite 的本机 720p 合成端到端速度与另外两款相近；4.22 Lite 是可选候选模型，不作为默认模型。短合成素材的新增帧 PSNR/SSIM 均值分别为 30.27 dB/0.9643（4.22 Lite）、30.61 dB/0.9649（4.25）、30.88 dB/0.9681（4.25 Lite）和 30.62 dB/0.9647（4.26）；这些数据不是盲测，也不代表真实视频画质排名。相同模型的 TensorRT FP16 六组测试未通过门槛（最大误差 0.953、最低 PSNR 16.53 dB），因此当前只启用 FP32。BT.470BG/SMPTE 170M 8-bit SDR 通过 CUDA RIFE 合成片段验证；BT.709 10-bit SDR 通过 96x64 合成 RIFE 插帧、AV1 回退和输出色彩/时间轴检查，但不是实际素材画质验收。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用源格式兼容的软件编码，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR 和真实素材对比仍未验证。',
+    '当前验证边界：本地 GTX 1660 SUPER；所选 RIFE 4.25 FP32 SDR8 通过六组小尺寸 CPU/CUDA/TensorRT 数值对比，并通过合成 720p BT.709、30→60 FPS 端到端验证，保留音轨并维持 0.5 秒时长。已移除的 4.22 Lite、4.25 Lite 和 4.26 候选历史上也通过小尺寸数值对比；这些合成指标没有确定真实画质排名。TensorRT FP16 尚未作为用户选项；历史 4.26 FP16 六组测试最大误差 0.953、最低 PSNR 16.53 dB。BT.470BG/SMPTE 170M 8-bit SDR 通过 CUDA RIFE 合成片段验证；BT.709 10-bit SDR 通过 96x64 合成 RIFE 插帧、AV1 回退和输出色彩/时间轴检查，但不是实际素材画质验收。当前驱动的 NVENC API 低于 FFmpeg 要求；自动模式改用源格式兼容的软件编码，Studio 会显示可恢复提示并继续 RIFE 插帧。HDR 和真实素材对比仍未验证。',
     '任务、偏好设置和模型中心目录保存在 data/preferences.ini 与 data/queue.sqlite.'
 )
 $readme = ($readmeLines -join [Environment]::NewLine) -f $modelNames, [string]$defaultModelPack.descriptor.displayName, [string]$defaultModelPack.descriptor.id
@@ -241,12 +249,6 @@ try {
 if (-not (Test-Path -LiteralPath (Join-Path $packageRoot "data/preferences.ini") -PathType Leaf)) {
     throw "Packaged RifeLove did not create its first-run preferences."
 }
-$cliHelp = & (Join-Path $packageRoot "rifelove-cli.exe") --help 2>&1
-$cliExitCode = $LASTEXITCODE
-if ($cliExitCode -ne 0 -or (($cliHelp -join "`n") -notmatch "interpolate") -or (($cliHelp -join "`n") -notmatch "queue-run") -or (($cliHelp -join "`n") -notmatch "queue-report") -or (($cliHelp -join "`n") -notmatch "profile-check") -or (($cliHelp -join "`n") -notmatch "--profile PROFILE_JSON") -or (($cliHelp -join "`n") -notmatch "\[--report JSON\]")) {
-    throw "Packaged RifeLove CLI did not expose the local interpolation and queue commands."
-}
-
 $preferences = Get-Content -LiteralPath (Join-Path $packageRoot "data/preferences.ini") -Raw
 if ($preferences -notmatch [regex]::Escape([string]$defaultModelPack.descriptor.id) -or $preferences -notmatch "onnxruntime\.dll|runtime") {
     throw "Packaged first-run preferences do not contain the default bundled model and runtime."
@@ -289,7 +291,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReuseQualificationEvidencePath)) {
             }
         }
     )
-    Assert-TensorRtQualificationEvidence -Evidence $cachedEvidence -ModelPacks $modelPacks `
+    Assert-TensorRtQualificationEvidence -Evidence $cachedEvidence -ModelPacks $rifeModelPacks `
         -OnnxRuntimeVersion $ortRuntimeVersion -TensorRtVersion ([string]$runtimeVersionLines[0]) `
         -TensorRtManifestSha256 ([string]$runtimeVersionLines[1]) -GpuIdentities $gpuIdentities
     $qualificationEvidence = [ordered]@{
@@ -308,7 +310,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReuseQualificationEvidencePath)) {
     try {
         $mingwRuntime = Join-Path $qt "Tools/mingw1510_64/mingw64/bin"
         $env:PATH = "$build;$packageRoot;$runtimeTarget;$qt/bin;$ffmpeg/bin;$mingwRuntime;$savedPath"
-        foreach ($pack in $modelPacks) {
+        foreach ($pack in $rifeModelPacks) {
             $reportPath = Join-Path $qualificationDirectory ("{0}.json" -f $pack.descriptor.id)
             $validationOutput = & $validatorExecutable $pack.root $runtimeTarget $reportPath tensorrt 2>&1
             $validationExitCode = $LASTEXITCODE
@@ -363,10 +365,109 @@ if (-not [string]::IsNullOrWhiteSpace($ReuseQualificationEvidencePath)) {
 }
 $qualificationEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $qualificationEvidencePath -Encoding UTF8
 
+$restorationSmokeSummaries = @()
+if ($restorationPacks.Count -gt 0) {
+    $restorationSmokeDirectory = Join-Path $packageRoot "data/restoration-smoke-temp"
+    New-Item -ItemType Directory -Path $restorationSmokeDirectory -Force | Out-Null
+    $savedPath = $env:PATH
+    try {
+        $mingwRuntime = Join-Path $qt "Tools/mingw1510_64/mingw64/bin"
+        $env:PATH = "$build;$packageRoot;$runtimeTarget;$qt/bin;$ffmpeg/bin;$mingwRuntime;$savedPath"
+        foreach ($pack in $restorationPacks) {
+            $descriptor = $pack.descriptor
+            $cpuReportPath = Join-Path $pack.root ([string]$descriptor.validation.reportFile)
+            $cpuReport = Get-Content -LiteralPath $cpuReportPath -Raw | ConvertFrom-Json
+            if ($cpuReport.model_sha256 -cne [string]$descriptor.sha256 -or @($cpuReport.cases).Count -lt 1) {
+                throw "The restoration model's CPU reference report does not match its ONNX graph: $($descriptor.id)"
+            }
+            $case = $cpuReport.cases[0]
+            $inputShape = @($case.input_shape)
+            $expectedOutputShape = @($case.output_shape)
+            if ($inputShape.Count -ne 4 -or $expectedOutputShape.Count -ne 4 -or
+                [int]$inputShape[0] -ne 1 -or [int]$inputShape[1] -ne 3 -or
+                [int]$expectedOutputShape[0] -ne 1 -or [int]$expectedOutputShape[1] -ne 3) {
+                throw "The restoration reference report has an unsupported tensor shape: $($descriptor.id)"
+            }
+            $inputHeight = [int]$inputShape[2]
+            $inputWidth = [int]$inputShape[3]
+            $expectedHeight = [int]$expectedOutputShape[2]
+            $expectedWidth = [int]$expectedOutputShape[3]
+            $fixturePath = Join-Path $restorationSmokeDirectory ("{0}-input.rgb" -f $descriptor.id)
+            if ($case.input_file) {
+                $fixtureName = [string]$case.input_file
+                if ([IO.Path]::GetFileName($fixtureName) -cne $fixtureName) { throw "Unsafe restoration input fixture name: $fixtureName" }
+                $sourceFixture = Join-Path (Join-Path $pack.root "fixtures") $fixtureName
+                if (-not (Test-Path -LiteralPath $sourceFixture -PathType Leaf)) { throw "Restoration CPU reference fixture is missing: $sourceFixture" }
+                if ($case.input_sha256 -and (Get-FileHash -LiteralPath $sourceFixture -Algorithm SHA256).Hash -ine [string]$case.input_sha256) {
+                    throw "Restoration CPU reference fixture hash does not match its report: $sourceFixture"
+                }
+                Copy-Item -LiteralPath $sourceFixture -Destination $fixturePath
+            } else {
+                $pixels = New-Object byte[] ($inputWidth * $inputHeight * 3)
+                for ($index = 0; $index -lt $pixels.Length; $index += 3) {
+                    $sample = [byte](($index / 3 * 37) % 256)
+                    $pixels[$index] = $sample
+                    $pixels[$index + 1] = [byte](($sample + 53) % 256)
+                    $pixels[$index + 2] = [byte](($sample + 107) % 256)
+                }
+                [IO.File]::WriteAllBytes($fixturePath,$pixels)
+            }
+            $outputPath = Join-Path $restorationSmokeDirectory ("{0}-output.rgb" -f $descriptor.id)
+            $validationOutput = @(& $restorationValidatorExecutable $pack.root $runtimeTarget $fixturePath `
+                ([string]$inputWidth) ([string]$inputHeight) $outputPath "tensorrt" 2>&1)
+            $validationExitCode = $LASTEXITCODE
+            if ($validationExitCode -ne 0) {
+                throw "Native TensorRT restoration smoke failed for $($descriptor.id): $($validationOutput -join "`n")"
+            }
+            $jsonLine = @($validationOutput | ForEach-Object { [string]$_ } |
+                Where-Object { $_.TrimStart().StartsWith("{") } | Select-Object -Last 1)
+            if ($jsonLine.Count -ne 1) { throw "Restoration smoke did not produce its runtime report for $($descriptor.id)." }
+            $runtimeReport = $jsonLine[0] | ConvertFrom-Json
+            $providerEvent = $runtimeReport.provider_events.PSObject.Properties["TensorrtExecutionProvider"]
+            $outputBytes = if (Test-Path -LiteralPath $outputPath -PathType Leaf) { (Get-Item -LiteralPath $outputPath).Length } else { 0 }
+            if ($runtimeReport.backend -cne "onnxruntime_tensorrt_cuda" -or
+                [int]$runtimeReport.width -ne $expectedWidth -or [int]$runtimeReport.height -ne $expectedHeight -or
+                $null -eq $providerEvent -or [int]$providerEvent.Value -lt 1 -or
+                $outputBytes -ne ($expectedWidth * $expectedHeight * 3)) {
+                throw "TensorRT restoration smoke did not prove GPU execution and declared output dimensions for $($descriptor.id)."
+            }
+            $restorationSmokeSummaries += [ordered]@{
+                modelId = [string]$descriptor.id
+                modelVersion = [string]$descriptor.version
+                modelSha256 = [string]$descriptor.sha256
+                precision = "fp32"
+                backend = [string]$runtimeReport.backend
+                device = [string]$runtimeReport.device
+                inputWidth = $inputWidth
+                inputHeight = $inputHeight
+                outputWidth = [int]$runtimeReport.width
+                outputHeight = [int]$runtimeReport.height
+                elapsedSeconds = [double]$runtimeReport.elapsed_seconds
+                tensorrtProviderEvents = [int]$providerEvent.Value
+                outputRgbSha256 = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                qualification = "native execution and shape smoke only; CPU reference report is separate"
+            }
+        }
+    } finally {
+        $env:PATH = $savedPath
+    }
+    Remove-Item -LiteralPath $restorationSmokeDirectory -Recurse -Force
+}
+$restorationSmokeEvidence = [ordered]@{
+    schemaVersion = 1
+    generatedAtUtc = [DateTime]::UtcNow.ToString("o")
+    runtime = [ordered]@{ onnxRuntimeVersion = $ortRuntimeVersion; tensorRtVersion = [string]$runtimeVersionLines[0] }
+    models = @($restorationSmokeSummaries)
+    limitations = "Confirms TensorRT execution and output dimensions on this workstation only; it is not GPU numerical, temporal-consistency, real-video quality or redistribution qualification."
+}
+$restorationSmokeEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $packageRoot "data/restoration-runtime-smoke.json") -Encoding UTF8
+
 Assert-PackageNotRunning -TargetPath $target
 Preserve-PackageUserState -OldRoot $target -NewRoot $packageRoot
 
-$manifest = New-PackageChecksumManifest -PackageRoot $packageRoot -RuntimeRoot $runtimeTarget -QualificationEvidencePath $qualificationEvidencePath
+$restorationSmokeEvidencePath = Join-Path $packageRoot "data/restoration-runtime-smoke.json"
+$manifest = New-PackageChecksumManifest -PackageRoot $packageRoot -RuntimeRoot $runtimeTarget `
+    -QualificationEvidencePath $qualificationEvidencePath -AdditionalEvidencePaths @($restorationSmokeEvidencePath)
 Set-Content -LiteralPath (Join-Path $packageRoot "SHA256SUMS.txt") -Value $manifest -Encoding UTF8
 
 # Copy mutable local state only after package qualification succeeds. Refuse to

@@ -108,12 +108,12 @@ Item {
         if (platformExportProfile === "bilibili120")
             return qsTr("Bilibili 的 120 FPS 依据历史官方活动信息；当前账号与转码行为仍需实测。")
         if (platformExportProfile === "youtube60")
-            return qsTr("YouTube 60 FPS SDR 队列使用官方 1080p 建议码率；混合分辨率请在高级编码中调整。平台仍会转码，300 FPS 以上母版需单独输出。")
+            return qsTr("YouTube 60 FPS SDR 队列统一使用官方 1080p 码率参考；混合分辨率需调整。编码器为 Auto、GOP 为 2 秒；300 FPS 以上母版需单独输出。")
         if (platformExportProfile === "douyin30" || platformExportProfile === "douyin60")
-            return qsTr("抖音公开上传 API 未列出帧率上限；此处是本地兼容预设，不代表平台保证。")
+            return qsTr("抖音开放平台上传 API 未列出帧率上限；128 MiB、15 分钟和 4 GB 分片规则只适用于该 API，本地预设不代表普通投稿平台保证。")
         if (platformExportProfile === "bilibili60")
-            return qsTr("Bilibili 60 FPS 是兼容性预设；码率为本机建议值，当前上传规则需按账号验证。")
-        return qsTr("平台会重新编码视频。300 FPS 以上本机母版需单独输出；平台预设会生成兼容性副本。")
+            return qsTr("Bilibili 60 FPS 是兼容性起始预设；码率为本机建议值，编码器保持 Auto，当前上传规则需按账号验证。")
+        return qsTr("平台可能重新编码或限制播放帧率。平台预设每次仅生成一个文件；300 FPS 以上本机母版需用自定义帧率另行处理。")
     }
     function normalizeEncodingMode() {
         if (![2, 3, 4].includes(encoderBox.currentIndex) && encodingQualityMode.currentIndex > 0) encodingQualityMode.currentIndex = 0

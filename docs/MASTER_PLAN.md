@@ -2,6 +2,8 @@
 
 Baseline: 2026-10-17. This is the complete product scope, not an MVP commitment. A phase can be marked complete only when its acceptance conditions and tests pass; a working foundation does not imply the product is finished.
 
+Scope amendment, 2026-10-28: the user requires a non-Qt Windows desktop application, no end-user CLI and no Alibaba Cloud OSS. Earlier references to Qt/QML, CLI and OSS in this historical baseline are superseded. The previously authorized Storj major-release backup remains a future configured release task. See the [native execution and acceptance plan](development/NON_QT_EXECUTION_PLAN.zh-CN.md) for the current decisions and work.
+
 ## Product and architecture
 
 Build an offline Windows 10/11 x64 desktop application for NVIDIA GPUs that balances visual quality, performance, stability and ease of use. Preserve source files; write a new output by default. Keep the UI, application services, core pipeline, media engine, timeline, interpolation, quality analysis, GPU runtime and inference backends behind explicit interfaces. The UI must submit work through services and never call CUDA or FFmpeg directly.

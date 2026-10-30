@@ -1,6 +1,8 @@
 #include "media/media_engine.hpp"
 #include "media/nvenc_diagnostic.hpp"
 #include "media/video_writer.hpp"
+#include "media/ffmpeg_helpers.hpp"
+#include "core/pipeline/output_validation.hpp"
 
 #include <gtest/gtest.h>
 
@@ -13,6 +15,63 @@
 using rifelove::media::DecodedFrame;
 using rifelove::media::MediaEngine;
 using rifelove::media::MediaError;
+
+namespace {
+class DeclaredEndFixture : public ::testing::Test {
+protected:
+    void SetUp() override {
+        input = avformat_alloc_context();
+        ASSERT_NE(input,nullptr);
+        input->iformat = av_find_input_format("matroska");
+        ASSERT_NE(input->iformat,nullptr);
+        stream = avformat_new_stream(input,nullptr);
+        ASSERT_NE(stream,nullptr);
+        stream->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+        stream->time_base = {1,1000};
+        stream->start_time = 0;
+        // The observed FFmpeg fill_all_stream_timings fallback, not a track
+        // declaration: a 750 ms video shares a file with longer audio.
+        stream->duration = 921;
+        input->duration = 921000;
+    }
+    void TearDown() override { avformat_free_context(input); }
+    AVFormatContext* input = nullptr;
+    AVStream* stream = nullptr;
+};
+}
+
+TEST_F(DeclaredEndFixture, MatroskaTrackEndOverridesContainerDerivedStreamDuration) {
+    ASSERT_EQ(av_dict_set(&stream->metadata,"DURATION","00:00:00.750000000",0),0);
+    EXPECT_EQ(rifelove::media::detail::declaredEnd(input,stream),rifelove::Rational(3,4));
+    stream->start_time = 250;
+    // DURATION is an absolute track end, not a length to add to start_time.
+    EXPECT_EQ(rifelove::media::detail::declaredEnd(input,stream),rifelove::Rational(3,4));
+}
+
+TEST_F(DeclaredEndFixture, MatroskaAudioCodecDelayUsesTheDemuxedPacketClock) {
+    stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+    stream->codecpar->initial_padding = 1024;
+    stream->codecpar->sample_rate = 48000;
+    ASSERT_EQ(av_dict_set(&stream->metadata,"DURATION","00:00:00.771000000",0),0);
+    EXPECT_EQ(rifelove::media::detail::declaredEnd(input,stream),rifelove::Rational(3,4));
+}
+
+TEST_F(DeclaredEndFixture, MatroskaMissingOrMalformedTrackEndDoesNotUseContainerDuration) {
+    EXPECT_FALSE(rifelove::media::detail::declaredEnd(input,stream));
+    for (const char* tag : {"", "bad", "00:61:00.000000000", "00:00:00.1234567890", "9999999999999999999999:00:00"}) {
+        ASSERT_EQ(av_dict_set(&stream->metadata,"DURATION",tag,0),0);
+        EXPECT_FALSE(rifelove::media::detail::declaredEnd(input,stream)) << tag;
+    }
+}
+
+TEST_F(DeclaredEndFixture, OtherContainersKeepTheirStreamDurationAndOrigin) {
+    input->iformat = av_find_input_format("mov");
+    ASSERT_NE(input->iformat,nullptr);
+    stream->start_time = 250;
+    stream->duration = 750;
+    ASSERT_EQ(av_dict_set(&stream->metadata,"DURATION","00:00:09.999000000",0),0);
+    EXPECT_EQ(rifelove::media::detail::declaredEnd(input,stream),rifelove::Rational(1));
+}
 
 namespace {
 class ImageFixture {
@@ -208,12 +267,73 @@ TEST(VideoMuxWriter, SupportsExplicitRestoredOutputDimensions) {
     EXPECT_EQ(result.streams.front().height,2);
 }
 
+TEST(VideoMuxWriter, ResamplesRestoredFramesToAnExplicitTargetWithoutChangingTimeline) {
+    ImageFixture fixture;
+    DecodedFrame source{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(),[&](const DecodedFrame& frame) { source = frame; });
+    auto pixels = std::make_shared<std::vector<std::uint8_t>>(4U * 2U * 3U,127);
+    DecodedFrame restored = source;
+    restored.width = 4;
+    restored.height = 2;
+    restored.planes[0] = {pixels->data(),12};
+    restored.storage = pixels;
+
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.pixelFormat = "bgr0";
+    settings.timeBase = rifelove::Rational(1,50);
+    settings.frameRate = rifelove::Rational(50);
+    settings.outputWidth = 2;
+    settings.outputHeight = 1;
+    const auto output = fixture.directory / "resampled-target.mkv";
+    rifelove::media::VideoMuxWriter writer(fixture.path.string(),output.string(),settings);
+    writer.writeFrame(restored,{},rifelove::Rational(1,50));
+    EXPECT_EQ(writer.finish().framesSubmitted,1U);
+    const auto info = MediaEngine::probe(output.string());
+    ASSERT_EQ(info.streams.size(),1U);
+    EXPECT_EQ(info.streams.front().width,2);
+    EXPECT_EQ(info.streams.front().height,1);
+    const auto decoded = MediaEngine::decodeVideo(output.string());
+    EXPECT_EQ(decoded.frameCount,1U);
+    EXPECT_EQ(decoded.firstTimestamp,rifelove::Rational(0));
+}
+
 TEST(VideoMuxWriter, RejectsOnlyOneExplicitOutputDimension) {
     ImageFixture fixture;
     rifelove::media::VideoEncodingSettings settings;
     settings.encoder = "ffv1";
     settings.outputWidth = 4;
     EXPECT_THROW((void)rifelove::media::VideoMuxWriter(fixture.path.string(),(fixture.directory / "invalid-dimensions.mkv").string(),settings),std::invalid_argument);
+}
+
+TEST(VideoMuxWriter, RejectsTargetAspectRatioChangesInsteadOfStretching) {
+    ImageFixture fixture;
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.outputWidth = 3;
+    settings.outputHeight = 1;
+    EXPECT_THROW((void)rifelove::media::VideoMuxWriter(fixture.path.string(),(fixture.directory / "aspect-change.mkv").string(),settings),std::invalid_argument);
+}
+
+TEST(VideoMuxWriter, RejectsGeneratedFrameAspectRatioChangesInsteadOfStretching) {
+    ImageFixture fixture;
+    DecodedFrame source{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(),[&](const DecodedFrame& frame) { source = frame; });
+    auto pixels = std::make_shared<std::vector<std::uint8_t>>(4U * 3U * 3U,127);
+    DecodedFrame malformed = source;
+    malformed.width = 4;
+    malformed.height = 3;
+    malformed.planes[0] = {pixels->data(),12};
+    malformed.storage = pixels;
+
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.pixelFormat = "bgr0";
+    settings.outputWidth = 2;
+    settings.outputHeight = 1;
+    const auto output = fixture.directory / "frame-aspect-change.mkv";
+    rifelove::media::VideoMuxWriter writer(fixture.path.string(),output.string(),settings);
+    EXPECT_THROW(writer.writeFrame(malformed,{},rifelove::Rational(1,50)),std::invalid_argument);
 }
 
 TEST(VideoMuxWriter, WritesVideoOnlyKeyframedSegmentsAtTheGlobalTimelineOrigin) {
@@ -280,6 +400,42 @@ TEST(VideoMuxWriter, WritesVideoOnlyKeyframedSegmentsAtTheGlobalTimelineOrigin) 
     auto wrongColor = contract;
     wrongColor.primaries = "bt709";
     EXPECT_THROW((void)MediaEngine::verifyVideoSegment(output.string(),wrongColor),std::runtime_error);
+}
+
+TEST(VideoMuxWriter, ResamplingKeepsCopiedAudioAndVideoTimeline) {
+    ImageFixture fixture;
+    const auto source = fixture.directory / "resample-source-with-audio.mkv";
+    const auto command = "ffmpeg.exe -y -v error -f lavfi -i \"testsrc2=size=96x64:rate=5:duration=0.6\" "
+        "-f lavfi -i \"sine=frequency=440:sample_rate=48000:duration=0.6\" -c:v ffv1 -pix_fmt yuv420p -c:a flac \"" +
+        source.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()),0) << "Could not create local resampling fixture with FFmpeg";
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(source.string(),[&](const DecodedFrame& frame) { if (!retained.storage) retained = frame; });
+
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.pixelFormat = "yuv420p";
+    settings.timeBase = rifelove::Rational(1,5);
+    settings.frameRate = rifelove::Rational(5);
+    settings.outputWidth = 48;
+    settings.outputHeight = 32;
+    const auto output = fixture.directory / "resampled-with-audio.mkv";
+    rifelove::media::VideoMuxWriter writer(source.string(),output.string(),settings);
+    for (int index = 0; index < 3; ++index)
+        writer.writeFrame(retained,rifelove::Rational(index,5),rifelove::Rational(1,5));
+    EXPECT_EQ(writer.finish().framesSubmitted,3U);
+
+    const auto info = MediaEngine::probe(output.string());
+    const auto video = std::find_if(info.streams.begin(),info.streams.end(),[](const auto& stream) { return stream.type == "video"; });
+    const auto audio = std::find_if(info.streams.begin(),info.streams.end(),[](const auto& stream) { return stream.type == "audio"; });
+    ASSERT_NE(video,info.streams.end());
+    ASSERT_NE(audio,info.streams.end());
+    EXPECT_EQ(video->width,48);
+    EXPECT_EQ(video->height,32);
+    EXPECT_EQ(audio->codec,"flac");
+    EXPECT_EQ(audio->sampleRate,48000);
+    EXPECT_EQ(audio->channels,1);
+    EXPECT_EQ(MediaEngine::decodeVideo(output.string()).frameCount,3U);
 }
 
 TEST(MediaEngine, AssemblesVerifiedVideoSegmentsAndCopiesOriginalAudioOnce) {
@@ -356,6 +512,153 @@ TEST(MediaEngine, AssemblesVerifiedVideoSegmentsAndCopiesOriginalAudioOnce) {
         throw std::runtime_error("validation rejected the assembled output");
     }),std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(validationFailureOutput));
+}
+
+TEST(MediaEngine, VerifiesHighRateSegmentWithQuantizedFinalDuration) {
+    ImageFixture fixture;
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(), [&](const DecodedFrame& frame) { if (!retained.storage) retained = frame; });
+    rifelove::media::VideoEncodingSettings settings;
+    settings.encoder = "ffv1";
+    settings.pixelFormat = "bgr0";
+    settings.timeBase = rifelove::Rational(1,360);
+    settings.frameRate = rifelove::Rational(360);
+    settings.copyAuxiliaryStreams = false;
+    settings.requireFirstPacketKeyframe = true;
+    const auto path = fixture.directory / "high-rate-segment.mkv";
+    rifelove::media::VideoMuxWriter writer(fixture.path.string(),path.string(),settings);
+    for (int index = 0; index < 17; ++index)
+        writer.writeFrame(retained,rifelove::Rational(index,360),rifelove::Rational(1,360));
+    (void)writer.finish();
+    rifelove::media::VideoSegmentContract contract;
+    contract.frameCount = 17; contract.firstTimestamp = rifelove::Rational(0);
+    contract.frameDuration = rifelove::Rational(1,360); contract.endExclusive = rifelove::Rational(17,360);
+    contract.width = 2; contract.height = 1; contract.codec = "ffv1"; contract.pixelFormat = "bgr0"; contract.bitDepth = 8;
+    EXPECT_NO_THROW((void)MediaEngine::verifyVideoSegment(path.string(),contract));
+    const auto assembled = fixture.directory / "high-rate-assembled.mkv";
+    ASSERT_NO_THROW((void)MediaEngine::assembleVideoSegments(fixture.path.string(),assembled.string(),-1,{{path.string(),contract}}));
+    const auto assembledInfo = MediaEngine::probe(assembled.string());
+    const auto validated = rifelove::detail::validatePipelineOutput(assembled.string(),0,2,1,
+        rifelove::Rational(0),rifelove::Rational(17,360),rifelove::Rational(360),17,assembledInfo);
+    EXPECT_EQ(validated.decodedFrames,17U);
+    EXPECT_TRUE(validated.quantized);
+    EXPECT_THROW((void)rifelove::detail::validatePipelineOutput(assembled.string(),0,2,1,
+        rifelove::Rational(0),rifelove::Rational(16,360) + rifelove::Rational(1,10000),rifelove::Rational(360),17,assembledInfo),std::runtime_error);
+    auto invalid = contract;
+    invalid.endExclusive = rifelove::Rational(16,360) + rifelove::Rational(1,10000);
+    EXPECT_THROW((void)MediaEngine::verifyVideoSegment(path.string(),invalid),std::runtime_error);
+}
+
+TEST(MediaEngine, AssemblesHighRateMatroskaAcrossUnevenSegments) {
+    ImageFixture fixture;
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(), [&](const DecodedFrame& frame) { if (!retained.storage) retained = frame; });
+    for (const int fps : {360, 480}) {
+        SCOPED_TRACE(fps);
+        rifelove::media::VideoEncodingSettings settings;
+        settings.encoder = "ffv1"; settings.pixelFormat = "bgr0";
+        settings.timeBase = rifelove::Rational(1,fps); settings.frameRate = rifelove::Rational(fps);
+        settings.copyAuxiliaryStreams = false; settings.requireFirstPacketKeyframe = true;
+        std::vector<rifelove::media::VideoSegmentInput> segments;
+        for (int segmentIndex = 0; segmentIndex < 2; ++segmentIndex) {
+            const int offset = segmentIndex == 0 ? 0 : 17;
+            const int count = segmentIndex == 0 ? 17 : 13;
+            const auto path = fixture.directory / ("high-rate-" + std::to_string(fps) + "-" + std::to_string(segmentIndex) + ".mkv");
+            rifelove::media::VideoMuxWriter writer(fixture.path.string(),path.string(),settings);
+            for (int index = 0; index < count; ++index)
+                writer.writeFrame(retained,rifelove::Rational(offset + index,fps),rifelove::Rational(1,fps));
+            (void)writer.finish();
+            rifelove::media::VideoSegmentContract contract;
+            contract.frameCount = static_cast<std::size_t>(count);
+            contract.firstTimestamp = rifelove::Rational(offset,fps);
+            contract.frameDuration = rifelove::Rational(1,fps);
+            contract.endExclusive = rifelove::Rational(offset + count,fps);
+            contract.width = 2; contract.height = 1; contract.codec = "ffv1"; contract.pixelFormat = "bgr0"; contract.bitDepth = 8;
+            segments.push_back({path.string(),contract});
+        }
+        const auto output = fixture.directory / ("high-rate-assembled-" + std::to_string(fps) + ".mkv");
+        const auto result = MediaEngine::assembleVideoSegments(fixture.path.string(),output.string(),-1,segments);
+        EXPECT_EQ(result.videoPackets,30U);
+        const auto info = MediaEngine::probe(output.string());
+        const auto verified = rifelove::detail::validatePipelineOutput(output.string(),0,2,1,
+            rifelove::Rational(0),rifelove::Rational(30,fps),rifelove::Rational(fps),30,info);
+        EXPECT_EQ(verified.decodedFrames,30U);
+        auto broken = segments;
+        broken[1].contract.firstTimestamp = rifelove::Rational(18,fps);
+        const auto rejected = fixture.directory / ("high-rate-rejected-" + std::to_string(fps) + ".mkv");
+        EXPECT_THROW((void)MediaEngine::assembleVideoSegments(fixture.path.string(),rejected.string(),-1,broken),std::invalid_argument);
+        EXPECT_FALSE(std::filesystem::exists(rejected));
+    }
+}
+
+TEST(MediaEngine, RestoresExactMp4AndMovTimingFromMillisecondCheckpoints) {
+    ImageFixture fixture;
+    const auto source = fixture.directory / "exact-assembly-source.mkv";
+    const auto command = "ffmpeg.exe -y -v error -f lavfi -i \"testsrc2=size=96x64:rate=12:duration=0.5\" "
+        "-c:v ffv1 -pix_fmt yuv420p \"" + source.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()),0);
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(source.string(),[&](const DecodedFrame& frame) { if (!retained.storage) retained = frame; });
+    struct Scenario { rifelove::Rational rate; const char* extension; bool shortenedLastFrame; int maxBFrames = 0; };
+    const std::vector<Scenario> scenarios{{rifelove::Rational(60),".mp4",false},
+        {rifelove::Rational(60000,1001),".mov",false},
+        {rifelove::Rational(360),".mp4",true},
+        {rifelove::Rational(60),".mov",false,2}};
+    for (std::size_t scenarioIndex = 0; scenarioIndex < scenarios.size(); ++scenarioIndex) {
+        const auto& scenario = scenarios[scenarioIndex];
+        SCOPED_TRACE(scenario.rate.toString() + scenario.extension);
+        const auto period = rifelove::Rational(1) / scenario.rate;
+        const auto expectedEnd = period * rifelove::Rational(30) - (scenario.shortenedLastFrame ? period / rifelove::Rational(2) : rifelove::Rational(0));
+        rifelove::media::VideoEncodingSettings settings;
+        settings.encoder = "mpeg4";
+        settings.pixelFormat = "yuv420p";
+        settings.timeBase = rifelove::Rational(1,scenario.rate.numerator() * (scenario.shortenedLastFrame ? 2 : 1));
+        settings.frameRate = scenario.rate;
+        settings.copyAuxiliaryStreams = false;
+        settings.requireFirstPacketKeyframe = true;
+        settings.maxBFrames = scenario.maxBFrames;
+        std::vector<rifelove::media::VideoSegmentInput> segments;
+        for (int segmentIndex = 0; segmentIndex < 2; ++segmentIndex) {
+            const auto first = period * rifelove::Rational(segmentIndex == 0 ? 0 : 18);
+            const std::size_t count = segmentIndex == 0 ? 18 : 12;
+            const auto end = segmentIndex == 0 ? period * rifelove::Rational(18) : expectedEnd;
+            const auto path = fixture.directory / ("exact-part-" + std::to_string(scenarioIndex) + "-" + std::to_string(segmentIndex) + ".mkv");
+            rifelove::media::VideoMuxWriter writer(source.string(),path.string(),settings);
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto timestamp = first + period * rifelove::Rational(static_cast<std::int64_t>(index));
+                writer.writeFrame(retained,timestamp,index + 1 == count ? end - timestamp : period);
+            }
+            (void)writer.finish();
+            rifelove::media::VideoSegmentContract contract;
+            contract.frameCount = count;
+            contract.firstTimestamp = first;
+            contract.frameDuration = period;
+            contract.endExclusive = end;
+            contract.width = 96;
+            contract.height = 64;
+            contract.codec = "mpeg4";
+            contract.pixelFormat = "yuv420p";
+            contract.bitDepth = 8;
+            segments.push_back({path.string(),contract});
+        }
+        const auto output = fixture.directory / ("exact-assembled-" + std::to_string(scenarioIndex) + scenario.extension);
+        const auto result = MediaEngine::assembleVideoSegments(source.string(),output.string(),-1,segments);
+        EXPECT_EQ(result.videoPackets,30U);
+        EXPECT_EQ(result.endExclusive,expectedEnd);
+        const auto info = MediaEngine::probe(output.string());
+        ASSERT_EQ(info.streams.size(),1U);
+        EXPECT_EQ(info.streams[0].declaredEnd,expectedEnd);
+        std::size_t count = 0;
+        std::optional<rifelove::Rational> decodedEnd;
+        const auto decoded = MediaEngine::decodeVideo(output.string(),[&](const DecodedFrame& frame) {
+            ASSERT_TRUE(frame.timestamp);
+            EXPECT_EQ(*frame.timestamp,period * rifelove::Rational(static_cast<std::int64_t>(count++)));
+            ASSERT_TRUE(frame.duration);
+            decodedEnd = *frame.timestamp + *frame.duration;
+        });
+        EXPECT_EQ(decoded.frameCount,30U);
+        EXPECT_EQ(decodedEnd,expectedEnd);
+    }
 }
 
 TEST(VideoMuxWriter, InvalidTimingAndCancellationRemovePartialFiles) {

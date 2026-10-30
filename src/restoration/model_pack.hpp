@@ -36,5 +36,7 @@ struct ModelPack {
 // The current native ONNX Runtime backend implements these adapter contracts.
 [[nodiscard]] bool supportsOnnxCudaOutputRateAdapter(const Capabilities& capabilities);
 [[nodiscard]] bool supportsOnnxCudaOutputRateModel(const ModelPack& model);
+[[nodiscard]] bool supportsOnnxCudaTemporalAdapter(const Capabilities& capabilities);
+[[nodiscard]] bool supportsOnnxCudaTemporalModel(const ModelPack& model);
 
 } // namespace rifelove::restoration

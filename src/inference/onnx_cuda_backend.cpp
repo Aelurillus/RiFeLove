@@ -522,19 +522,19 @@ std::filesystem::path OnnxCudaBackend::finishProfiling() { return impl_->finishP
 #ifdef RIFELOVE_HAS_MEDIA
 namespace rifelove::restoration {
 namespace {
-std::size_t tensorBytes(int width, int height, std::size_t limit, const char* label) {
+std::size_t tensorBytes(int width, int height, std::size_t limit, const char* label, std::size_t channels = 3) {
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
         throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest, std::string(label) + " dimensions are outside the supported limit");
     const auto pixels = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
-    if (pixels > std::numeric_limits<std::size_t>::max() / (3 * sizeof(float)))
+    if (pixels > std::numeric_limits<std::size_t>::max() / (channels * sizeof(float)))
         throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory, std::string(label) + " tensor size overflows addressable memory");
-    const auto bytes = static_cast<std::size_t>(pixels) * 3 * sizeof(float);
+    const auto bytes = static_cast<std::size_t>(pixels) * channels * sizeof(float);
     if (bytes > limit)
         throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory, std::string(label) + " tensor exceeds the configured host buffer limit");
     return bytes;
 }
 
-std::pair<std::string,std::array<std::int64_t,4>> inspectTensor(const OrtApi& api, const OrtSession* session, bool output) {
+std::pair<std::string,std::array<std::int64_t,4>> inspectTensor(const OrtApi& api, const OrtSession* session, bool output, int inputChannels = 3) {
     OrtAllocator* allocator = nullptr;
     inference::check(api, api.GetAllocatorWithDefaultOptions(&allocator));
     char* name = nullptr;
@@ -555,7 +555,7 @@ std::pair<std::string,std::array<std::int64_t,4>> inspectTensor(const OrtApi& ap
         throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must use one rank-four FP32 tensor");
     inference::check(api, api.GetDimensions(tensor,dimensions.data(),dimensions.size()));
     const auto dynamic = [](std::int64_t dimension) { return dimension == 0 || dimension == -1; };
-    if ((dimensions[0] != 1 && !dynamic(dimensions[0])) || (dimensions[1] != 3 && !(output && dynamic(dimensions[1]))))
+    if ((dimensions[0] != 1 && !dynamic(dimensions[0])) || (dimensions[1] != (output ? 3 : inputChannels) && !(output && dynamic(dimensions[1]))))
         throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must accept RGB NCHW batch-one tensors");
     return {std::move(copiedName),dimensions};
 }
@@ -595,8 +595,10 @@ public:
         validateCapabilities(pack.capabilities);
         const auto task = outputRateImageTask(pack.capabilities);
         const bool deblurAdapter = task == Task::deblur;
-        if (!supportsOnnxCudaOutputRateModel(pack))
-            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Model does not match a supported single-frame SDR restoration adapter");
+        const bool temporalAdapter = supportsOnnxCudaTemporalModel(pack);
+        const int nextChannels = temporalAdapter ? 16 : 3;
+        if (!supportsOnnxCudaOutputRateModel(pack) && !temporalAdapter)
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Model does not match a supported SDR restoration adapter");
 
         const auto graph = inference::readVerifiedFile(pack.graphPath,pack.graphSha256,2ULL * 1024 * 1024 * 1024);
         auto context = device->activate();
@@ -613,7 +615,7 @@ public:
         inference::check(api,api.SessionGetOutputCount(inspectSession.value,&outputs));
         if (inputs != 1 || outputs != 1)
             throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must expose exactly one input and one output");
-        const auto [nextInputName,nextInputShape] = inspectTensor(api,inspectSession.value,false);
+        const auto [nextInputName,nextInputShape] = inspectTensor(api,inspectSession.value,false,nextChannels);
         const auto [nextOutputName,nextOutputShape] = inspectTensor(api,inspectSession.value,true);
         if (nextInputShape[2] > 0 || nextInputShape[3] > 0 || nextOutputShape[2] > 0 || nextOutputShape[3] > 0)
             throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Tiled restoration requires dynamic height and width axes");
@@ -640,10 +642,10 @@ public:
                 const int coreSize = std::max(config.tileSize,minProfile);
                 // NAFNet's local attention needs substantially more context
                 // than the image-SR models when an image spans multiple tiles.
-                const int overlap = deblurAdapter ? std::max(config.tileOverlap,192) : config.tileOverlap;
+                const int overlap = deblurAdapter ? std::max(config.tileOverlap,192) : temporalAdapter ? std::max(config.tileOverlap,64) : config.tileOverlap;
                 const int maxProfile = coreSize + 2 * overlap;
                 const int optProfile = coreSize;
-                const std::string profileIdentity = (deblurAdapter ? "nafnet-rgb-fp32-min384-opt" : "sr-rgb-fp32-min64-opt") +
+                const std::string profileIdentity = (deblurAdapter ? "nafnet-rgb-fp32-min384-opt" : temporalAdapter ? "fastdvdnet-nchw16-fp32-min64-opt" : "sr-rgb-fp32-min64-opt") +
                     std::to_string(optProfile) + "-max" + std::to_string(maxProfile);
                 const inference::TensorRtCacheIdentity identity{"1.22.0",trtVersion,cudaVersion,"fp32",profileIdentity,512ULL * 1024 * 1024};
                 const auto prefix = inference::tensorRtEngineCachePrefix("restoration",pack.id,pack.version,pack.graphSha256,deviceInfo,identity);
@@ -658,9 +660,10 @@ public:
                 inference::check(api,api.CreateTensorRTProviderOptions(&tensorRt.value));
                 const std::string tensorRtOrdinal = std::to_string(deviceInfo.ordinal);
                 const std::string workspace = std::to_string(identity.workspaceBytes);
-                const std::string minShapes = nextInputName + ":1x3x" + std::to_string(minProfile) + "x" + std::to_string(minProfile);
-                const std::string optShapes = nextInputName + ":1x3x" + std::to_string(optProfile) + "x" + std::to_string(optProfile);
-                const std::string maxShapes = nextInputName + ":1x3x" + std::to_string(maxProfile) + "x" + std::to_string(maxProfile);
+                const auto tensorPrefix = nextInputName + ":1x" + std::to_string(nextChannels) + "x";
+                const std::string minShapes = tensorPrefix + std::to_string(minProfile) + "x" + std::to_string(minProfile);
+                const std::string optShapes = tensorPrefix + std::to_string(optProfile) + "x" + std::to_string(optProfile);
+                const std::string maxShapes = tensorPrefix + std::to_string(maxProfile) + "x" + std::to_string(maxProfile);
                 const char* trtKeys[] = {"device_id","trt_engine_cache_enable","trt_engine_cache_path","trt_engine_cache_prefix",
                     "trt_fp16_enable","trt_max_workspace_size","trt_profile_min_shapes","trt_profile_opt_shapes","trt_profile_max_shapes"};
                 const char* trtValues[] = {tensorRtOrdinal.c_str(),"1",cachePath.c_str(),"trt","0",workspace.c_str(),
@@ -686,7 +689,7 @@ public:
             inference::check(api,api.SessionGetOutputCount(next.value,&actualOutputs));
             if (actualInputs != 1 || actualOutputs != 1)
                 throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX graph must expose exactly one input and one output");
-            const auto [actualInputName,actualInputShape] = inspectTensor(api,next.value,false);
+            const auto [actualInputName,actualInputShape] = inspectTensor(api,next.value,false,nextChannels);
             const auto [actualOutputName,actualOutputShape] = inspectTensor(api,next.value,true);
             if (actualInputName != nextInputName || actualInputShape != nextInputShape || actualOutputName != nextOutputName || actualOutputShape != nextOutputShape)
                 throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"Restoration ONNX tensor contract changed while initializing an execution provider");
@@ -708,11 +711,11 @@ public:
         if (!next.value) next = buildSession(false);
         const int minTile = deblurAdapter ? 384 : 64;
         const int coreSize = std::max(config.tileSize,minTile);
-        const int overlap = deblurAdapter ? std::max(config.tileOverlap,192) : config.tileOverlap;
+        const int overlap = deblurAdapter ? std::max(config.tileOverlap,192) : temporalAdapter ? std::max(config.tileOverlap,64) : config.tileOverlap;
         const std::string selectedSignature = "ort-1.22.0;cuda-" + runtime->cudaRuntimeVersion() +
             ";trt-" + (selectedBackend == "onnxruntime_tensorrt_cuda" ? runtime->tensorRtVersion() : std::string("none")) +
             ";fp32;tile-" + std::to_string(coreSize) + ";overlap-" + std::to_string(overlap) +
-            (deblurAdapter ? ";nafnet-balanced-tiles-v1" : ";sr-tiles-v1");
+            (deblurAdapter ? ";nafnet-balanced-tiles-v1" : temporalAdapter ? ";fastdvdnet-five-frame-clamp-tiles-v1" : ";sr-tiles-v1");
         session = std::move(next);
         inputName = nextInputName;
         outputName = nextOutputName;
@@ -771,7 +774,31 @@ private:
         cancel();
         validateRequest(modelCapabilities,request);
         const auto& source = request.context[request.centerIndex];
-        const auto prepared = media::prepareRifeSdr(source,config.hostFloatBufferLimit,request.stop);
+        const bool temporalAdapter = supportsOnnxCudaTemporalAdapter(modelCapabilities);
+        if (temporalAdapter && (!request.denoiseSigma255 || !std::isfinite(*request.denoiseSigma255) ||
+            *request.denoiseSigma255 < 0.0F || *request.denoiseSigma255 > 55.0F ||
+            (*request.denoiseSigma255 > 0.0F && *request.denoiseSigma255 < 5.0F)))
+            throw inference::InferenceError(inference::InferenceErrorKind::invalidRequest,"FastDVDnet needs explicit noise sigma 5..55, or zero to bypass denoising");
+        if (temporalAdapter && *request.denoiseSigma255 == 0.0F)
+            return Result{source,std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()};
+        std::vector<media::RifeSdrFrame> preparedFrames;
+        preparedFrames.reserve(temporalAdapter ? request.context.size() : 1);
+        preparedFrames.push_back(media::prepareRifeSdr(source,config.hostFloatBufferLimit,request.stop));
+        const auto singleFrameBytes = preparedFrames.front().pixels.size() * sizeof(float);
+        const auto frameCount = temporalAdapter ? request.context.size() : 1;
+        if (singleFrameBytes > config.hostFloatBufferLimit / (frameCount + 1))
+            throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory,"Restoration temporal context and output exceed the host float buffer budget");
+        if (temporalAdapter) {
+            // Keep one prepared tensor per real frame. Boundary repetitions are
+            // packed directly into tiles and do not allocate invented frames.
+            for (std::size_t index = 0; index < request.context.size(); ++index) {
+                if (index == request.centerIndex) continue;
+                preparedFrames.push_back(media::prepareRifeSdr(request.context[index],config.hostFloatBufferLimit,request.stop));
+            }
+            std::rotate(preparedFrames.begin(),preparedFrames.begin() + 1,preparedFrames.begin() + static_cast<std::ptrdiff_t>(request.centerIndex + 1));
+        }
+        const auto& prepared = preparedFrames[temporalAdapter ? request.centerIndex : 0];
+        const std::size_t inputChannels = temporalAdapter ? 16 : 3;
         const auto scale = modelCapabilities.scaleNumerator;
         if (prepared.paddedWidth > std::numeric_limits<int>::max() / scale || prepared.paddedHeight > std::numeric_limits<int>::max() / scale ||
             source.width > std::numeric_limits<int>::max() / scale || source.height > std::numeric_limits<int>::max() / scale)
@@ -792,7 +819,7 @@ private:
         const auto fullOutputPlane = static_cast<std::size_t>(paddedOutputWidth) * static_cast<std::size_t>(paddedOutputHeight);
         const int minimumTile = modelCapabilities.adapterId == "nafnet-zoo-deblur-rgb-f32-nchw-v1" ? 384 : 64;
         const int coreSize = std::max(config.tileSize,minimumTile);
-        const int overlap = minimumTile == 384 ? std::max(config.tileOverlap,192) : config.tileOverlap;
+        const int overlap = minimumTile == 384 ? std::max(config.tileOverlap,192) : temporalAdapter ? std::max(config.tileOverlap,64) : config.tileOverlap;
         const auto coreStep = [&](int dimension) {
             if (minimumTile != 384) return coreSize;
             // Use the whole axis when it fits the tested profile. For longer
@@ -805,8 +832,10 @@ private:
         const int coreHeightStep = coreStep(prepared.paddedHeight);
         const int maxTileWidth = std::max(minimumTile,std::min(prepared.paddedWidth,coreSize + 2 * overlap));
         const int maxTileHeight = std::max(minimumTile,std::min(prepared.paddedHeight,coreSize + 2 * overlap));
-        const auto maxInputBytes = tensorBytes(maxTileWidth,maxTileHeight,config.hostFloatBufferLimit,"Restoration tile input");
+        const auto maxInputBytes = tensorBytes(maxTileWidth,maxTileHeight,config.hostFloatBufferLimit,"Restoration tile input",inputChannels);
         const auto maxOutputBytes = tensorBytes(maxTileWidth * scale,maxTileHeight * scale,config.hostFloatBufferLimit,"Restoration tile output");
+        if (temporalAdapter && singleFrameBytes * (frameCount + 1) + maxInputBytes + maxOutputBytes > config.hostFloatBufferLimit)
+            throw inference::InferenceError(inference::InferenceErrorKind::outOfMemory,"Restoration temporal window and tile buffers exceed the host float budget");
         if (!inputBuffer || inputBytes < maxInputBytes) { inputBuffer = device->allocate(maxInputBytes,request.stop); inputBytes = maxInputBytes; }
         if (!outputBuffer || outputBytes < maxOutputBytes) { outputBuffer = device->allocate(maxOutputBytes,request.stop); outputBytes = maxOutputBytes; }
 
@@ -836,23 +865,31 @@ private:
                 const int runTileWidth = std::max(minimumTile,tileWidth);
                 const int runTileHeight = std::max(minimumTile,tileHeight);
                 const auto tilePlane = static_cast<std::size_t>(runTileWidth) * static_cast<std::size_t>(runTileHeight);
-                const auto tileInputBytes = tilePlane * 3 * sizeof(float);
+                const auto tileInputBytes = tilePlane * inputChannels * sizeof(float);
                 const int outputTileWidth = runTileWidth * scale;
                 const int outputTileHeight = runTileHeight * scale;
                 const auto outputTilePlane = static_cast<std::size_t>(outputTileWidth) * static_cast<std::size_t>(outputTileHeight);
                 const auto tileOutputBytes = outputTilePlane * 3 * sizeof(float);
-                std::vector<float> tileInput(tilePlane * 3);
-                for (std::size_t channel = 0; channel < 3; ++channel) {
+                std::vector<float> tileInput(tilePlane * inputChannels);
+                for (std::size_t channel = 0; channel < inputChannels; ++channel) {
+                    if (temporalAdapter && channel == 15) {
+                        std::fill_n(tileInput.begin() + static_cast<std::ptrdiff_t>(channel * tilePlane),tilePlane,*request.denoiseSigma255 / 255.0F);
+                        continue;
+                    }
+                    const auto frameIndex = temporalAdapter ? static_cast<std::size_t>(std::clamp(
+                        static_cast<int>(channel / 3) - static_cast<int>(request.missingFramesBefore),0,static_cast<int>(preparedFrames.size()) - 1)) : 0;
+                    const auto& framePixels = preparedFrames[frameIndex].pixels;
+                    const auto rgbChannel = channel % 3;
                     for (int row = 0; row < runTileHeight; ++row) {
-                        const auto src = channel * fullInputPlane + static_cast<std::size_t>(tileY + std::min(row,tileHeight - 1)) * static_cast<std::size_t>(prepared.paddedWidth) + static_cast<std::size_t>(tileX);
+                        const auto src = rgbChannel * fullInputPlane + static_cast<std::size_t>(tileY + std::min(row,tileHeight - 1)) * static_cast<std::size_t>(prepared.paddedWidth) + static_cast<std::size_t>(tileX);
                         const auto dst = channel * tilePlane + static_cast<std::size_t>(row) * static_cast<std::size_t>(runTileWidth);
-                        std::copy_n(prepared.pixels.begin() + static_cast<std::ptrdiff_t>(src),tileWidth,tileInput.begin() + static_cast<std::ptrdiff_t>(dst));
+                        std::copy_n(framePixels.begin() + static_cast<std::ptrdiff_t>(src),tileWidth,tileInput.begin() + static_cast<std::ptrdiff_t>(dst));
                         std::fill_n(tileInput.begin() + static_cast<std::ptrdiff_t>(dst + static_cast<std::size_t>(tileWidth)),runTileWidth - tileWidth,
-                            prepared.pixels[src + static_cast<std::size_t>(tileWidth - 1)]);
+                            framePixels[src + static_cast<std::size_t>(tileWidth - 1)]);
                     }
                 }
                 inputBuffer->upload(std::as_bytes(std::span(tileInput)),0,request.stop);
-                const std::int64_t inputDimensions[] = {1,3,runTileHeight,runTileWidth};
+                const std::int64_t inputDimensions[] = {1,static_cast<std::int64_t>(inputChannels),runTileHeight,runTileWidth};
                 const std::int64_t outputDimensions[] = {1,3,outputTileHeight,outputTileWidth};
                 inference::Handle<OrtValue> input(api.ReleaseValue), output(api.ReleaseValue);
                 inference::check(api,api.CreateTensorWithDataAsOrtValue(cudaMemory.value,reinterpret_cast<void*>(inputBuffer->address()),tileInputBytes,inputDimensions,4,ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,&input.value));

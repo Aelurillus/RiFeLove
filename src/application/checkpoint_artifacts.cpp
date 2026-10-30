@@ -201,7 +201,14 @@ std::vector<media::VideoSegmentInput> CheckpointArtifacts::verifyCommitted(std::
         if (item.endOutputFrame - item.firstOutputFrame != contract.frameCount)
             throw std::runtime_error("checkpoint segment frame range differs from its media contract");
         const auto verified = media::MediaEngine::verifyVideoSegment(utf8(path),contract,stop);
-        if (previousEnd && verified.firstTimestamp != *previousEnd)
+        // The media verifier already checks the decoded first timestamp
+        // against this segment's contract within the container time base.
+        // Chain continuity must therefore compare the exact checkpoint
+        // contract boundaries, rather than the quantized timestamp read
+        // back from the container (for example 33/1000 versus 1/30 in
+        // Matroska). Otherwise a valid checkpoint can be rejected after a
+        // process interruption solely because of muxer time-base rounding.
+        if (previousEnd && contract.firstTimestamp != *previousEnd)
             throw std::runtime_error("checkpoint segment timestamps do not form a contiguous prefix");
         previousEnd = verified.endExclusive;
         result.push_back({utf8(path),std::move(contract)});
@@ -306,11 +313,96 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         auto actual = Json::parse(saved);
         const auto wanted = Json::parse(expected);
         if (actual == wanted) return true;
+        // Schema 8 introduces a second, source-rate restoration model. Older
+        // checkpoints can migrate only when that additional model is absent;
+        // compare the remainder through the existing schema-7 migrations.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 8 && actual.at("job").value("schemaVersion",0) < 8) {
+            const auto& oldJob = actual.at("job");
+            const auto& newJob = wanted.at("job");
+            if (oldJob.contains("temporalRestorationModelDirectory") || oldJob.contains("expectedTemporalRestorationDescriptorSha256") ||
+                !newJob.contains("temporalRestorationModelDirectory") || !newJob.contains("expectedTemporalRestorationDescriptorSha256") ||
+                newJob.at("temporalRestorationModelDirectory") != "" || newJob.at("expectedTemporalRestorationDescriptorSha256") != "" ||
+                wanted.contains("temporalRestorationRuntime")) return false;
+            auto previous = wanted;
+            previous["job"].erase("temporalRestorationModelDirectory");
+            previous["job"].erase("expectedTemporalRestorationDescriptorSha256");
+            previous["job"]["schemaVersion"] = 7;
+            return manifestMatches(saved,previous.dump());
+        }
         if (actual.is_object() && wanted.is_object() && actual.value("schemaVersion",0) == 2 &&
             wanted.value("schemaVersion",0) == 2 && actual.contains("job") && wanted.contains("job") &&
             actual.contains("identity") && wanted.contains("identity") && actual.at("job").is_object() && wanted.at("job").is_object()) {
             auto& oldJob = actual["job"];
-            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 4 &&
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 5 &&
+                oldJob.value("schemaVersion",0) == 4 && oldJob.contains("restorationModelDirectory") &&
+                oldJob.contains("expectedRestorationDescriptorSha256") && !oldJob.contains("motionBlur")) {
+                oldJob["motionBlur"] = {{"enabled",false},{"shutterAngleDegrees",180},{"sampleCount",4}};
+                oldJob["schemaVersion"] = 5;
+                return actual == wanted;
+            }
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 6 &&
+                oldJob.value("schemaVersion",0) == 4 && oldJob.contains("restorationModelDirectory") &&
+                oldJob.contains("expectedRestorationDescriptorSha256") && !oldJob.contains("motionBlur") &&
+                oldJob.contains("encoding") && oldJob.at("encoding").is_object() &&
+                !oldJob.at("encoding").contains("outputWidth") && !oldJob.at("encoding").contains("outputHeight")) {
+                oldJob["motionBlur"] = {{"enabled",false},{"shutterAngleDegrees",180},{"sampleCount",4}};
+                oldJob["encoding"]["outputWidth"] = 0;
+                oldJob["encoding"]["outputHeight"] = 0;
+                oldJob["schemaVersion"] = 6;
+                return actual == wanted;
+            }
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 6 &&
+                oldJob.value("schemaVersion",0) == 5 && oldJob.contains("restorationModelDirectory") &&
+                oldJob.contains("expectedRestorationDescriptorSha256") && oldJob.contains("motionBlur") &&
+                oldJob.contains("encoding") && oldJob.at("encoding").is_object() &&
+                !oldJob.at("encoding").contains("outputWidth") && !oldJob.at("encoding").contains("outputHeight")) {
+                oldJob["encoding"]["outputWidth"] = 0;
+                oldJob["encoding"]["outputHeight"] = 0;
+                oldJob["schemaVersion"] = 6;
+                return actual == wanted;
+            }
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 7 &&
+                oldJob.value("schemaVersion",0) == 6 && oldJob.contains("restorationModelDirectory") &&
+                oldJob.contains("expectedRestorationDescriptorSha256") && oldJob.contains("motionBlur") &&
+                oldJob.contains("encoding") && oldJob.at("encoding").is_object() &&
+                oldJob.at("encoding").contains("outputWidth") && oldJob.at("encoding").contains("outputHeight") &&
+                !oldJob.contains("temporalDenoiseSigma255")) {
+                // Schema 6 checkpoints used the runtime default. They may
+                // resume only as the explicit schema 7 default; a changed
+                // sigma must fail the identity comparison below.
+                oldJob["temporalDenoiseSigma255"] = 25.0F;
+                oldJob["schemaVersion"] = 7;
+                return actual == wanted;
+            }
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 7 &&
+                oldJob.value("schemaVersion",0) == 5 && oldJob.contains("restorationModelDirectory") &&
+                oldJob.contains("expectedRestorationDescriptorSha256") && oldJob.contains("motionBlur") &&
+                oldJob.contains("encoding") && oldJob.at("encoding").is_object() &&
+                !oldJob.at("encoding").contains("outputWidth") && !oldJob.at("encoding").contains("outputHeight") &&
+                !oldJob.contains("temporalDenoiseSigma255")) {
+                oldJob["encoding"]["outputWidth"] = 0;
+                oldJob["encoding"]["outputHeight"] = 0;
+                oldJob["temporalDenoiseSigma255"] = 25.0F;
+                oldJob["schemaVersion"] = 7;
+                return actual == wanted;
+            }
+            if (actual.at("identity") == wanted.at("identity") && wanted.at("job").value("schemaVersion",0) == 7 &&
+                oldJob.value("schemaVersion",0) == 4 && oldJob.contains("restorationModelDirectory") &&
+                oldJob.contains("expectedRestorationDescriptorSha256") && !oldJob.contains("motionBlur") &&
+                oldJob.contains("encoding") && oldJob.at("encoding").is_object() &&
+                !oldJob.at("encoding").contains("outputWidth") && !oldJob.at("encoding").contains("outputHeight") &&
+                !oldJob.contains("temporalDenoiseSigma255")) {
+                oldJob["motionBlur"] = {{"enabled",false},{"shutterAngleDegrees",180},{"sampleCount",4}};
+                oldJob["encoding"]["outputWidth"] = 0;
+                oldJob["encoding"]["outputHeight"] = 0;
+                oldJob["temporalDenoiseSigma255"] = 25.0F;
+                oldJob["schemaVersion"] = 7;
+                return actual == wanted;
+            }
+            if (actual.at("identity") == wanted.at("identity") &&
+                (wanted.at("job").value("schemaVersion",0) == 4 || wanted.at("job").value("schemaVersion",0) == 5 || wanted.at("job").value("schemaVersion",0) == 6 || wanted.at("job").value("schemaVersion",0) == 7) &&
                 !oldJob.contains("restorationModelDirectory") && !oldJob.contains("expectedRestorationDescriptorSha256")) {
                 if (oldJob.value("schemaVersion",0) == 2 && !oldJob.contains("inferenceBackend") &&
                     wanted.at("job").value("inferenceBackend",std::string()) == "auto") {
@@ -322,8 +414,24 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
                     oldJob["restorationModelDirectory"] = "";
                     oldJob["expectedRestorationDescriptorSha256"] = "";
                     oldJob["schemaVersion"] = 4;
-                    return actual == wanted;
                 }
+                if (oldJob.value("schemaVersion",0) == 4 && wanted.at("job").value("schemaVersion",0) >= 5 && !oldJob.contains("motionBlur")) {
+                    oldJob["motionBlur"] = {{"enabled",false},{"shutterAngleDegrees",180},{"sampleCount",4}};
+                    oldJob["schemaVersion"] = 5;
+                }
+                if (oldJob.value("schemaVersion",0) == 5 && wanted.at("job").value("schemaVersion",0) >= 6 &&
+                    oldJob.contains("encoding") && oldJob.at("encoding").is_object() &&
+                    !oldJob.at("encoding").contains("outputWidth") && !oldJob.at("encoding").contains("outputHeight")) {
+                    oldJob["encoding"]["outputWidth"] = 0;
+                    oldJob["encoding"]["outputHeight"] = 0;
+                    oldJob["schemaVersion"] = 6;
+                }
+                if (oldJob.value("schemaVersion",0) == 6 && wanted.at("job").value("schemaVersion",0) >= 7 &&
+                    !oldJob.contains("temporalDenoiseSigma255")) {
+                    oldJob["temporalDenoiseSigma255"] = 25.0F;
+                    oldJob["schemaVersion"] = 7;
+                }
+                return actual == wanted;
             }
             return false;
         }
@@ -345,7 +453,15 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         oldJob["inferenceBackend"] = "auto";
         oldJob["restorationModelDirectory"] = "";
         oldJob["expectedRestorationDescriptorSha256"] = "";
-        oldJob["schemaVersion"] = 4;
+        const auto wantedJobVersion = wanted.at("job").value("schemaVersion",0);
+        oldJob["schemaVersion"] = wantedJobVersion >= 7 ? 7 : (wantedJobVersion >= 6 ? 6 : (wantedJobVersion >= 5 ? 5 : 4));
+        if (wantedJobVersion >= 5)
+            oldJob["motionBlur"] = {{"enabled",false},{"shutterAngleDegrees",180},{"sampleCount",4}};
+        if (wantedJobVersion >= 6) {
+            oldJob["encoding"]["outputWidth"] = 0;
+            oldJob["encoding"]["outputHeight"] = 0;
+        }
+        if (wantedJobVersion >= 7) oldJob["temporalDenoiseSigma255"] = 25.0F;
         oldIdentity["model"]["adapter"] = {{"id","rife-sdr-v1"},{"version",1}};
         oldIdentity["schemaVersion"] = 2;
         actual["schemaVersion"] = 2;
