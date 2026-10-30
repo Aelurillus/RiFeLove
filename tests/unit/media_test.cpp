@@ -725,3 +725,78 @@ TEST(VideoMuxWriter, FractionalRateAndLastDurationRemainExactAcrossAThousandFram
     ASSERT_FALSE(info.streams.empty());
     EXPECT_EQ(info.streams[0].duration, result.endExclusive);
 }
+
+TEST(VideoMuxWriter, ChromaResamplingAndSpatialResizePreserveDecodedPixelValues) {
+    ImageFixture fixture;
+    constexpr int width = 480;
+    constexpr int height = 360;
+    const auto raw = fixture.directory / "tagged-444.yuv";
+    const auto source = fixture.directory / "tagged-444.mkv";
+    {
+        std::ofstream stream(raw,std::ios::binary);
+        for (int plane = 0; plane < 3; ++plane)
+            for (int y = 0; y < height; ++y)
+                for (int x = 0; x < width; ++x) {
+                    const auto value = static_cast<unsigned char>(plane == 0 ? 90 :
+                        plane == 1 ? (x < width / 2 ? 64 : 192) : (y < height / 2 ? 80 : 176));
+                    stream.put(static_cast<char>(value));
+                }
+        ASSERT_TRUE(stream);
+    }
+    // No pixel conversion is involved in this lossless source creation.
+    const auto command = "ffmpeg.exe -y -v error -f rawvideo -pixel_format yuv444p -video_size 480x360 -framerate 25 -i \"" +
+        raw.string() + "\" -frames:v 1 -vf setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited -c:v ffv1 \"" + source.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()),0);
+    DecodedFrame input{};
+    (void)MediaEngine::decodeVideo(source.string(),[&](const DecodedFrame& frame) { input = frame; });
+    ASSERT_EQ(input.color.pixelFormat,"yuv444p");
+    ASSERT_EQ(input.color.matrix,"bt709");
+    ASSERT_EQ(input.planes[0].data[0],90);
+    ASSERT_EQ(input.planes[1].data[0],64);
+    ASSERT_EQ(input.planes[2].data[0],80);
+    for (const int scale : {1,2,4}) {
+        SCOPED_TRACE(scale);
+        const int outputWidth = scale == 4 ? width / 2 : width * scale;
+        const int outputHeight = scale == 4 ? height / 2 : height * scale;
+        const auto output = fixture.directory / ("resampled-" + std::to_string(scale) + ".mkv");
+        rifelove::media::VideoEncodingSettings settings;
+        settings.encoder = "ffv1";
+        settings.pixelFormat = "yuv420p";
+        settings.outputWidth = outputWidth;
+        settings.outputHeight = outputHeight;
+        settings.timeBase = rifelove::Rational(1,25);
+        settings.frameRate = rifelove::Rational(25);
+        settings.copyAuxiliaryStreams = false;
+        {
+            rifelove::media::VideoMuxWriter writer(source.string(),output.string(),settings);
+            writer.writeFrame(input,rifelove::Rational(0),rifelove::Rational(1,25));
+            EXPECT_EQ(writer.finish().framesSubmitted,1U);
+        }
+        std::size_t decodedFrames = 0;
+        (void)MediaEngine::decodeVideo(output.string(),[&](const DecodedFrame& frame) {
+            ++decodedFrames;
+            EXPECT_EQ(frame.width,outputWidth);
+            EXPECT_EQ(frame.height,outputHeight);
+            EXPECT_EQ(frame.color.pixelFormat,"yuv420p");
+            for (int plane = 0; plane < 3; ++plane) {
+                const int planeWidth = plane == 0 ? outputWidth : outputWidth / 2;
+                const int planeHeight = plane == 0 ? outputHeight : outputHeight / 2;
+                std::size_t damaged = 0;
+                int maximumError = 0;
+                for (int y = 0; y < planeHeight; ++y)
+                    for (int x = 0; x < planeWidth; ++x) {
+                        // Exclude only the intended filtered color boundary.
+                        if ((plane == 1 && std::abs(x - planeWidth / 2) <= 8) ||
+                            (plane == 2 && std::abs(y - planeHeight / 2) <= 8)) continue;
+                        const int expected = plane == 0 ? 90 :
+                            plane == 1 ? (x < planeWidth / 2 ? 64 : 192) : (y < planeHeight / 2 ? 80 : 176);
+                        const int error = std::abs(frame.planes[plane].data[y * frame.planes[plane].stride + x] - expected);
+                        maximumError = std::max(maximumError,error);
+                        if (error > 2) ++damaged;
+                    }
+                EXPECT_EQ(damaged,0U) << "plane=" << plane << "; max pixel error=" << maximumError;
+            }
+        });
+        EXPECT_EQ(decodedFrames,1U);
+    }
+}

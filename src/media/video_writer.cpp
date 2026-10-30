@@ -246,7 +246,11 @@ public:
         const bool spatialResize = input.width != codec_->width || input.height != codec_->height;
         if (sourceFormat == codec_->pix_fmt && !spatialResize) av_image_copy(frame->data, frame->linesize, sourceData.data(), sourceStrides.data(), sourceFormat, input.width, input.height);
         else {
-            const int flags = spatialResize ? SWS_LANCZOS : SWS_BICUBIC;
+            // Keep the same accurate-rounding contract as the preview and RIFE
+            // converters. In particular this avoids the legacy MMX vertical
+            // filter selected by non-accurate swscale builds, which can return
+            // saturated/striped chroma while still reporting a complete frame.
+            const int flags = (spatialResize ? SWS_LANCZOS : SWS_BICUBIC) | SWS_ACCURATE_RND;
             scale_.reset(sws_getCachedContext(scale_.release(), input.width, input.height, sourceFormat,
                 codec_->width, codec_->height, codec_->pix_fmt, flags, nullptr, nullptr, nullptr));
             if (!scale_) throw std::runtime_error("pixel layout conversion is unsupported");
