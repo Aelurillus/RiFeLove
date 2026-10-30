@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <process.h>
 #include <vector>
 
 using namespace rifelove;
@@ -24,8 +25,9 @@ int wmain(int argc, wchar_t** argv) {
         const std::wstring provider = argc == 8 ? argv[7] : L"cuda";
         if (provider != L"cuda" && provider != L"tensorrt")
             throw std::invalid_argument("Provider must be cuda or tensorrt");
-        const auto outputPath = std::filesystem::path(argv[6]);
+        const auto outputPath = std::filesystem::absolute(std::filesystem::path(argv[6]));
         if (std::filesystem::exists(outputPath)) throw std::runtime_error("Refusing to replace the output fixture");
+        std::filesystem::create_directories(outputPath.parent_path());
         auto pixels = std::make_shared<std::vector<std::uint8_t>>(
             static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3);
         std::ifstream input(std::filesystem::path(argv[3]),std::ios::binary);
@@ -48,7 +50,8 @@ int wmain(int argc, wchar_t** argv) {
         restoration::OnnxCudaRestorationConfig config;
         config.runtimeDirectory = std::filesystem::path(argv[2]);
         config.providerPreference = provider == L"cuda" ? inference::ProviderPreference::cudaOnly : inference::ProviderPreference::requireTensorRt;
-        config.profilePrefix = outputPath.parent_path() / (outputPath.stem().wstring() + L"-profile");
+        config.profilePrefix = outputPath.parent_path() /
+            (outputPath.filename().wstring() + L"-profile-" + std::to_wstring(::_getpid()));
         if (provider == L"tensorrt")
             config.engineCacheDirectory = outputPath.parent_path() / L"engine-cache";
         restoration::OnnxCudaVideoRestorationBackend backend(device,config);
@@ -66,8 +69,8 @@ int wmain(int argc, wchar_t** argv) {
         if (!output) throw std::runtime_error("Could not write the output RGB fixture");
         const auto profilePath = backend.finishProfiling();
         std::ifstream profileInput(profilePath,std::ios::binary);
-        nlohmann::json profile;
-        profileInput >> profile;
+        if (!profileInput) throw std::runtime_error("Could not open ONNX Runtime restoration profile");
+        const auto profile = nlohmann::json::parse(profileInput);
         if (!profile.is_array()) throw std::runtime_error("Invalid ONNX Runtime restoration profile");
         nlohmann::json assignments = nlohmann::json::object();
         for (const auto& event : profile) {

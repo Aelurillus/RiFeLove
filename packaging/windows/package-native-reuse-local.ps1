@@ -151,7 +151,7 @@ function Read-FfmpegSdkIdentity([string]$BuildPath, [string]$FfmpegPath) {
     $cacheRootValue = Read-CMakeCacheValue $cachePath "RIFELOVE_FFMPEG_ROOT"
     if ([string]::IsNullOrWhiteSpace($cacheRootValue)) { throw "CMakeCache.txt 的 RIFELOVE_FFMPEG_ROOT 为空：$cachePath" }
     $cacheRoot = Resolve-RepositoryPath $cacheRootValue
-    $selectedRoot = Resolve-RepositoryPath $FfmpegPath
+    $selectedRoot = if ($FfmpegPath -ceq "local-sdk:ffmpeg") { $cacheRoot } else { Resolve-RepositoryPath $FfmpegPath }
     if (-not [string]::Equals($cacheRoot, $selectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw "打包拒绝：CMakeCache 的 RIFELOVE_FFMPEG_ROOT 与复用包 FFmpeg 根目录不一致。CMake=$cacheRoot；复用包=$selectedRoot"
     }
@@ -342,7 +342,7 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($source.Length).TrimStart('\', '/').Replace('\', '/')
-        if ($relative -in @("SHA256SUMS.txt", "PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json")) { continue }
+        if ($relative -in @("SHA256SUMS.txt", "PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "portable.flag")) { continue }
         if ($relative -match '(?i)(^|/)qt|qml|(^|/)rifelove-cli(\.exe)?$') { throw "Unexpected Qt or CLI artifact: $relative" }
         $destination = Join-Path $stage ($relative.Replace('/', '\'))
         New-HardLinkChecked $file.FullName $destination
@@ -363,6 +363,10 @@ try {
     $defaults["temporalRestorationModelDirectory"] = $temporalRelative
     $defaults["temporalRestorationDefaultEnabled"] = $false
     $defaults["temporalRestorationMode"] = "experimental-optional"
+    $defaults["dataDirectory"] = '%LOCALAPPDATA%\RifeLove'
+    $defaults["portableDataDirectory"] = "data"
+    $defaults["portableModeMarker"] = "portable-mode.txt"
+    $defaults["portableModeMarkerValue"] = "RifeLovePortable 1"
     New-Item -ItemType Directory -Path (Join-Path $stage "config") -Force | Out-Null
     $defaults | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $stage "config/defaults.json") -Encoding utf8NoBOM
 
@@ -394,6 +398,13 @@ try {
     $manifest.inferenceRuntime.providers = @("TensorRT", "CUDA", "CPU-fallback")
     $manifest.temporalRestorationDefaultEnabled = $false
     $manifest.storage = "local-only; no Alibaba OSS"
+    $manifest.dataDirectory = '%LOCALAPPDATA%\RifeLove'
+    $manifest.portableDataDirectory = "data"
+    $manifest.portableModeMarker = "portable-mode.txt"
+    $manifest.portableModeMarkerValue = "RifeLovePortable 1"
+    $manifest.ffmpeg.root = "local-sdk:ffmpeg"
+    $manifest.ffmpeg.source = "local SDK selected by the native build"
+    $manifest.inferenceRuntime.source = "local TensorRT/ONNX Runtime CUDA SDK"
     $manifest.packageName = Split-Path -Leaf $target
     $manifest.generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $manifest.executableSha256 = (Get-FileHash -LiteralPath (Join-Path $stage "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -404,7 +415,9 @@ try {
 RifeLove 原生 Windows 本机预览
 
 双击 RifeLoveNative.exe。请保留此目录中的 runtime、models 和其他运行库。
-这是本机预览，不是完整产品或可公开再分发的安装包。支持单任务、文件夹批量、任务历史、当前会话暂停/继续和平台副本预设；中断恢复界面、模型中心和动态压缩/细节修复仍未完成。
+这是本机预览，不是完整产品或可公开再分发的安装包。包含本机模型中心与用户数据目录迁移；完整最终产品、长视频恢复和通用动态压缩/细节修复仍需继续验收。
+任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写；视频输出位置由用户选择。
+便携模式需在 EXE 同目录创建 portable-mode.txt，第一行为 RifeLovePortable 1，才会使用旁边的 data 目录。符合条件的旧 data 队列与偏好会安全迁移，原文件保留。
 高帧率与长视频仍需更广泛的兼容性验收；失败时不会发布未通过验证的输出。TensorRT 初次加载可能较慢。
 默认使用 RIFE 4.25 插帧模型；Real-ESRGAN x2plus 超分可选，默认关闭。
 包内 FastDVDnet 五帧模型仅是 SDR8 实验性时序降噪模型，默认关闭；它可与超分同时选择，但不代表通用压缩修复、去模糊或细节增强能力。

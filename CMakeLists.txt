@@ -8,6 +8,7 @@ option(RIFELOVE_BUILD_TESTS "Build automated tests" ON)
 option(RIFELOVE_BUILD_CLI "Build the developer-only command-line tool" OFF)
 option(RIFELOVE_BUILD_DESKTOP "Build the legacy Qt Quick desktop shell when explicitly requested" OFF)
 option(RIFELOVE_BUILD_NATIVE_DESKTOP "Build the native Win32/Direct2D desktop shell on Windows" ON)
+option(RIFELOVE_REQUIRE_NATIVE_PROCESSING "Require the complete native desktop and local processing SDKs" OFF)
 option(RIFELOVE_REQUIRE_DESKTOP "Fail configure if the requested Qt desktop cannot be built" OFF)
 option(RIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS "Allow configure to download build dependencies" OFF)
 option(RIFELOVE_BUILD_MEDIA "Build the FFmpeg media engine" OFF)
@@ -20,6 +21,37 @@ set(RIFELOVE_TENSORRT_RUNTIME_DIR "$ENV{RIFELOVE_TENSORRT_RUNTIME_DIR}" CACHE PA
 set(RIFELOVE_JSON_ROOT "$ENV{RIFELOVE_JSON_ROOT}" CACHE PATH "Pinned nlohmann JSON 3.12.0 root")
 set(RIFELOVE_TEST_RIFE_PACK "" CACHE PATH "Locally exported and qualified RIFE reference pack for CUDA validation")
 set(RIFELOVE_MODEL_TOOLS_PYTHON "" CACHE FILEPATH "Optional development-only PyTorch reference interpreter")
+
+if(RIFELOVE_REQUIRE_NATIVE_PROCESSING)
+  if(NOT WIN32 OR NOT RIFELOVE_BUILD_NATIVE_DESKTOP OR NOT RIFELOVE_BUILD_MEDIA OR NOT RIFELOVE_BUILD_ONNX_CUDA)
+    message(FATAL_ERROR "The native release requires Windows, RIFELOVE_BUILD_NATIVE_DESKTOP=ON, RIFELOVE_BUILD_MEDIA=ON and RIFELOVE_BUILD_ONNX_CUDA=ON; an inspection-only shell is not a product build")
+  endif()
+  if(RIFELOVE_BUILD_DESKTOP OR RIFELOVE_BUILD_CLI)
+    message(FATAL_ERROR "The native release must not enable the legacy Qt desktop or developer CLI")
+  endif()
+  foreach(sdk_root IN ITEMS RIFELOVE_FFMPEG_ROOT RIFELOVE_ONNX_ROOT RIFELOVE_TENSORRT_RUNTIME_DIR RIFELOVE_JSON_ROOT)
+    if(NOT IS_DIRECTORY "${${sdk_root}}")
+      message(FATAL_ERROR "The native release requires a local ${sdk_root} directory. Set that environment variable or pass -D${sdk_root}=<local path>; SDK acquisition is not automatic")
+    endif()
+  endforeach()
+  foreach(sdk_file IN ITEMS
+      "${RIFELOVE_FFMPEG_ROOT}/include/libavformat/avformat.h"
+      "${RIFELOVE_ONNX_ROOT}/include/onnxruntime_c_api.h"
+      "${RIFELOVE_JSON_ROOT}/include/nlohmann/json.hpp")
+    if(NOT EXISTS "${sdk_file}")
+      message(FATAL_ERROR "The native release SDK is incomplete: ${sdk_file}")
+    endif()
+  endforeach()
+  foreach(runtime_file IN ITEMS onnxruntime.dll onnxruntime_providers_shared.dll onnxruntime_providers_cuda.dll onnxruntime_providers_tensorrt.dll
+      nvinfer_10.dll nvinfer_plugin_10.dll nvinfer_builder_resource_10.dll nvonnxparser_10.dll
+      cudart64_12.dll cublas64_12.dll cublasLt64_12.dll cufft64_11.dll cufftw64_11.dll nvblas64_12.dll
+      cudnn64_9.dll cudnn_adv64_9.dll cudnn_cnn64_9.dll cudnn_engines_precompiled64_9.dll
+      cudnn_engines_runtime_compiled64_9.dll cudnn_graph64_9.dll cudnn_heuristic64_9.dll cudnn_ops64_9.dll)
+    if(NOT EXISTS "${RIFELOVE_TENSORRT_RUNTIME_DIR}/${runtime_file}")
+      message(FATAL_ERROR "The native release runtime is incomplete: ${RIFELOVE_TENSORRT_RUNTIME_DIR}/${runtime_file}")
+    endif()
+  endforeach()
+endif()
 
 if(RIFELOVE_ENABLE_TENSORRT_FP16_VALIDATION AND
     (NOT RIFELOVE_BUILD_TESTS OR NOT RIFELOVE_BUILD_ONNX_CUDA OR NOT RIFELOVE_TEST_RIFE_PACK OR NOT RIFELOVE_TENSORRT_RUNTIME_DIR))
@@ -382,9 +414,15 @@ if(RIFELOVE_BUILD_TESTS)
     target_sources(rifelove-tests PRIVATE tests/unit/model_pack_test.cpp tests/unit/restoration_model_pack_test.cpp tests/unit/tensorrt_cache_test.cpp)
     target_link_libraries(rifelove-tests PRIVATE rifelove_inference)
     if(RIFELOVE_TEST_RIFE_PACK)
+      # Reference validators run concurrently under CTest. Isolate relative logs
+      # and reports as well as the validator's per-process ORT profile prefixes.
+      set(rifelove_native_reference_output "${CMAKE_CURRENT_BINARY_DIR}/native-reference")
+      file(MAKE_DIRECTORY "${rifelove_native_reference_output}/cuda"
+        "${rifelove_native_reference_output}/tensorrt" "${rifelove_native_reference_output}/tensorrt-fp16")
       add_test(NAME OnnxCuda.NativeReference COMMAND rifelove-validate-cuda
-        "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_ONNX_ROOT}/lib" "${CMAKE_CURRENT_BINARY_DIR}/native-cuda-validation.json")
-      set_tests_properties(OnnxCuda.NativeReference PROPERTIES TIMEOUT 180)
+        "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_ONNX_ROOT}/lib" "${rifelove_native_reference_output}/cuda/native-cuda-validation.json")
+      set_tests_properties(OnnxCuda.NativeReference PROPERTIES TIMEOUT 180
+        WORKING_DIRECTORY "${rifelove_native_reference_output}/cuda")
       if(RIFELOVE_TENSORRT_RUNTIME_DIR)
         foreach(required_runtime_file IN ITEMS onnxruntime.dll onnxruntime_providers_cuda.dll onnxruntime_providers_tensorrt.dll
             nvinfer_10.dll nvinfer_plugin_10.dll nvinfer_builder_resource_10.dll nvonnxparser_10.dll
@@ -403,12 +441,14 @@ if(RIFELOVE_BUILD_TESTS)
           endif()
         endif()
         add_test(NAME OnnxTensorRt.NativeReference COMMAND rifelove-validate-cuda
-          "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_TENSORRT_RUNTIME_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/native-tensorrt-validation.json" tensorrt)
-        set_tests_properties(OnnxTensorRt.NativeReference PROPERTIES TIMEOUT 300)
+          "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_TENSORRT_RUNTIME_DIR}" "${rifelove_native_reference_output}/tensorrt/native-tensorrt-validation.json" tensorrt)
+        set_tests_properties(OnnxTensorRt.NativeReference PROPERTIES TIMEOUT 300
+          WORKING_DIRECTORY "${rifelove_native_reference_output}/tensorrt")
         if(RIFELOVE_ENABLE_TENSORRT_FP16_VALIDATION)
           add_test(NAME OnnxTensorRt.FP16Qualification COMMAND rifelove-validate-cuda
-            "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_TENSORRT_RUNTIME_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/native-tensorrt-fp16-validation.json" tensorrt-fp16)
-          set_tests_properties(OnnxTensorRt.FP16Qualification PROPERTIES TIMEOUT 600)
+            "${RIFELOVE_TEST_RIFE_PACK}" "${RIFELOVE_TENSORRT_RUNTIME_DIR}" "${rifelove_native_reference_output}/tensorrt-fp16/native-tensorrt-fp16-validation.json" tensorrt-fp16)
+          set_tests_properties(OnnxTensorRt.FP16Qualification PROPERTIES TIMEOUT 600
+            WORKING_DIRECTORY "${rifelove_native_reference_output}/tensorrt-fp16")
         endif()
       elseif(RIFELOVE_ENABLE_TENSORRT_FP16_VALIDATION)
         message(FATAL_ERROR "FP16 qualification requires RIFELOVE_TENSORRT_RUNTIME_DIR")

@@ -165,9 +165,9 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
         text(state.processingAvailable ? L"查看本地任务记录" : L"任务记录 · 暂不可用",
              28, state.processingAvailable ? 234 : 200, l.side - 45, 20, 11, D2D1::ColorF(0x9AAAC0));
     if (l.resourceButtonsTop >= 340) {
-        // Informational disabled entry: no HWND, focus target or click action.
-        text(L"模型中心 · 未开放", 28, 261, l.side - 50, 20, 10, D2D1::ColorF(0x667286));
-        text(L"暂不可点击", 28, 284, l.side - 45, 18, 10, D2D1::ColorF(0x667286));
+        text(state.processingAvailable ? L"模型中心 · 完全离线" : L"模型中心 · 当前构建不可用",
+             28, 261, l.side - 50, 20, 10, D2D1::ColorF(0x9AAAC0));
+        text(L"仅登记，不复制或删除", 28, 284, l.side - 45, 18, 10, D2D1::ColorF(0x667286));
     }
     if (l.resourceButtonsTop >= 380) {
         line(20, 327, l.side - 40);
@@ -216,15 +216,15 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     // The native controls are separate so temporal denoise and spatial
     // super-resolution can be enabled independently. Keep their labels close
     // to the corresponding fields so long model names remain understandable.
-    text(L"可选降噪 · 默认关闭", l.left + 20, y + 331, lw - 40, 20, 11, muted);
-    text(L"超分辨率 · 默认关闭", l.left + 20, y + 397, lw - 40, 20, 11, muted);
+    text(L"可选降噪 · 默认项见模型中心", l.left + 20, y + 331, lw - 40, 20, 11, muted);
+    text(L"超分辨率 · 默认项见模型中心", l.left + 20, y + 397, lw - 40, 20, 11, muted);
     text(L"输出尺寸 · 仅超分模型可用", l.left + 20, y + 463, lw - 40, 20, 11, muted);
     line(l.left + 20, y + 524, lw - 40);
     if (state.advancedExpanded) {
         text(L"快门角度", l.left + 20, y + 589, 64, 20, 10, muted);
         text(L"采样数", l.left + 170, y + 589, 62, 20, 10, muted);
     } else {
-        text(L"多时刻采样合成自然运动模糊；默认关闭", l.left + 20, y + 585, lw - 40, 24, 11, muted);
+        text(state.motionBlurSummary, l.left + 20, y + 581, lw - 40, 38, 11, muted, false, true);
     }
     line(l.left + 20, y + 624, lw - 40);
 
@@ -241,10 +241,8 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     text(state.outputPath.empty() ? L"尚未设置输出文件" : state.outputPath,
         exportLeft, y + 440, exportWidth, 18, 10, white);
     line(exportLeft, y + 498, exportWidth);
-    text(L"RIFE · CUDA", exportLeft, y + 517, exportWidth, 20, 11, white, true);
-    text(state.runtimeReady ? L"运行库已发现，模型将于处理前再次验证" : L"请选择随包的 ONNX CUDA 运行库",
-        exportLeft, y + 547, exportWidth, 40, 11, state.runtimeReady ? muted : warning, false, true);
-    text(L"平台可能再次编码，输出帧率不等于处理速度", exportLeft, y + 594, exportWidth, 23, 10, muted);
+    text(state.platformSummary, exportLeft, y + 511, exportWidth, 78, 11, muted, false, true);
+    text(L"仅本地导出 · 不上传 · 不承诺平台播放帧率", exportLeft, y + 594, exportWidth, 23, 10, muted);
     renderTarget_->PopAxisAlignedClip();
 
     // The primary action dock is never scrolled off-screen.

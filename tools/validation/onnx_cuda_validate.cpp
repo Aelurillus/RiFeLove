@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <process.h>
 #include <set>
 
 using namespace rifelove;
@@ -44,6 +45,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool useFp16 = requestedProvider == L"tensorrt-fp16";
         const auto root = std::filesystem::absolute(std::filesystem::path(argv[1]));
         const auto reportPath = std::filesystem::absolute(std::filesystem::path(argv[3]));
+        std::filesystem::create_directories(reportPath.parent_path());
         const auto pack = inference::loadModelPack(root);
         const auto reference = readJson(inference::packFile(root, "validation.json"));
         require(reference.at("status") == "passed_cpu_reference", "Reference pack has not passed CPU qualification");
@@ -53,7 +55,10 @@ int wmain(int argc, wchar_t** argv) {
         config.runtimeDirectory = std::filesystem::absolute(std::filesystem::path(argv[2]));
         config.providerPreference = useTensorRt ? inference::ProviderPreference::requireTensorRt : inference::ProviderPreference::cudaOnly;
         config.enableTensorRtFp16 = useFp16;
-        config.profilePrefix = reportPath.parent_path() / "onnx-cuda-profile";
+        // ORT adds only a second-resolution timestamp. Keep parallel providers,
+        // precision variants and separate processes out of one another's files.
+        config.profilePrefix = reportPath.parent_path() /
+            (reportPath.filename().wstring() + L"-profile-" + std::to_wstring(::_getpid()));
         inference::OnnxCudaBackend backend(device, config);
         backend.loadModel(pack);
         const auto capabilities = backend.capabilities();

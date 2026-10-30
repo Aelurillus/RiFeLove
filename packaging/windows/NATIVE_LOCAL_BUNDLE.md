@@ -13,7 +13,7 @@
 - 干净包包含一份 `models/rife-4.25-fp32-sdr8-v3`、一份 `models/realesrgan-x2plus-sdr8-v2` 和一份默认关闭的 `models/fastdvdnet-clipped-five-frame-sdr8-eval`。刷新已有包时，只有 `data/` 中的队列/检查点文件同时包含 `models/cache/rife-4.25-fp32-sdr8-v2`、RIFE ID/version 和匹配 SHA-256，才额外保留 `models/rife-4.25-fp32-sdr8-v2`；此目录保留原始 basename，并由 `models/legacy-models.json` 标记为隐藏，不参与默认模型选择。
 - `models/realesrgan-x2plus-sdr8-v2`，供本机超分路径使用；当前原生窗口仍以 RIFE 插帧为主要工作流。
 - `models/fastdvdnet-clipped-five-frame-sdr8-eval`，供本机 SDR8 源率五帧时序降噪路径使用；它不是压缩修复、去模糊或细节增强模型，当前仅作为本地评估包随包提供，默认关闭，必须由用户明确选择后才启用。
-- `config/defaults.json`、`portable.flag`、许可证文本、来源/验证侧车和 SHA-256 清单。
+- `config/defaults.json`、许可证文本、来源/验证侧车和 SHA-256 清单。便携模式通过用户显式创建的 `portable-mode.txt` 启用。
 
 在仓库根目录执行：
 

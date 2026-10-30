@@ -18,16 +18,24 @@
     },
     {
       "name": "windows-release",
-      "displayName": "RifeLove Windows release",
+      "displayName": "RifeLove native Windows release",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/windows-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
+        "RIFELOVE_BUILD_NATIVE_DESKTOP": "ON",
+        "RIFELOVE_BUILD_MEDIA": "ON",
+        "RIFELOVE_BUILD_ONNX_CUDA": "ON",
         "RIFELOVE_BUILD_CLI": "OFF",
         "RIFELOVE_BUILD_TESTS": "ON",
-        "RIFELOVE_BUILD_DESKTOP": "OFF"
+        "RIFELOVE_BUILD_DESKTOP": "OFF",
+        "RIFELOVE_REQUIRE_NATIVE_PROCESSING": "ON",
+        "RIFELOVE_FFMPEG_ROOT": "$env{RIFELOVE_FFMPEG_ROOT}",
+        "RIFELOVE_ONNX_ROOT": "$env{RIFELOVE_ONNX_ROOT}",
+        "RIFELOVE_TENSORRT_RUNTIME_DIR": "$env{RIFELOVE_TENSORRT_RUNTIME_DIR}",
+        "RIFELOVE_JSON_ROOT": "$env{RIFELOVE_JSON_ROOT}"
       }
     }
   ],

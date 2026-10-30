@@ -1,4 +1,5 @@
 #include "native_app.hpp"
+#include "application/platform_bitrate.hpp"
 
 #include <algorithm>
 #include <array>
@@ -96,7 +97,6 @@ RECT fitWindowToWorkArea(RECT requested, const RECT& area) {
     return RECT{left, top, left + width, top + height};
 }
 
-#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 std::wstring wideFromUtf8(std::string_view value) {
     if (value.empty()) return {};
     const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0);
@@ -115,6 +115,7 @@ std::string utf8FromWide(std::wstring_view value) {
     return result;
 }
 
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 bool isTemporalRestoration(const restoration::ModelPack& model) {
     return restoration::supportsOnnxCudaTemporalModel(model);
 }
@@ -219,6 +220,8 @@ std::wstring streamSummary(const media::MediaInfo& info) {
     return result;
 }
 
+#endif
+
 int parsePositiveInteger(std::wstring_view value, const char* field) {
     const auto text = utf8FromWide(value);
     if (text.empty()) throw std::invalid_argument(std::string(field) + " must not be empty");
@@ -229,14 +232,15 @@ int parsePositiveInteger(std::wstring_view value, const char* field) {
     return parsed;
 }
 
-#endif
 }
 
-NativeApp::NativeApp() {
+NativeApp::NativeApp(std::filesystem::path applicationDirectory, std::filesystem::path localAppDataRoot) {
     instance_ = GetModuleHandleW(nullptr);
     wchar_t modulePath[32768]{};
     const DWORD length = GetModuleFileNameW(instance_, modulePath, static_cast<DWORD>(std::size(modulePath)));
-    applicationDirectory_ = length ? std::filesystem::path(modulePath).parent_path() : std::filesystem::current_path();
+    applicationDirectory_ = applicationDirectory.empty()
+        ? (length ? std::filesystem::path(modulePath).parent_path() : std::filesystem::current_path())
+        : std::filesystem::absolute(applicationDirectory).lexically_normal();
     backgroundBrush_ = CreateSolidBrush(RGB(12, 15, 21));
     editBrush_ = CreateSolidBrush(RGB(20, 25, 34));
     staticBrush_ = CreateSolidBrush(RGB(19, 24, 32));
@@ -246,11 +250,30 @@ NativeApp::NativeApp() {
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     processingService_ = std::make_unique<application::ProcessingService>();
     state_.processingAvailable = true;
+    try {
+        const auto root = localAppDataRoot.empty() ? nativeLocalAppDataRoot() : std::filesystem::absolute(localAppDataRoot).lexically_normal();
+        dataDirectory_ = prepareNativeDataDirectory(applicationDirectory_, root);
+    } catch (const std::exception&) {
+        dataDirectory_.notice = L"无法确定安全的本机用户数据目录；队列和模型设置已停用，原数据保留。";
+    }
+    try {
+        if (!dataDirectory_.writable || !dataDirectory_.preferencesReady)
+            throw std::runtime_error("Native model data directory is unavailable");
+        (void)checkedNativeModelDirectory(dataDirectory_.directory, false);
+        const auto settings = dataDirectory_.directory / L"local-models.txt";
+        const DWORD attributes = GetFileAttributesW(settings.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+            throw std::runtime_error("Model preferences must not be a reparse point");
+        modelPreferences_ = loadNativeModelPreferences(settings);
+    } catch (const std::exception&) {
+        modelPreferencesWritable_ = false;
+        modelCenterNotice_ = L"模型设置读取或迁移失败；为保护原数据，本次禁止更改登记和默认项。请查看详情中的数据目录。";
+    }
     discoverLocalResources();
     try {
-        const auto queueDirectory = applicationDirectory_ / L"data";
-        std::filesystem::create_directories(queueDirectory);
-        taskQueue_ = std::make_unique<application::TaskQueue>(queueDirectory / L"queue.sqlite");
+        if (!dataDirectory_.writable || !dataDirectory_.queueReady)
+            throw std::runtime_error("Native queue directory or migration is unavailable; old data was preserved");
+        taskQueue_ = std::make_unique<application::TaskQueue>(dataDirectory_.directory / L"queue.sqlite");
         const auto recovered = taskQueue_->recoveredCount();
         const auto published = taskQueue_->recoveredPublishedOutputCount();
         if (recovered != 0 || published != 0) {
@@ -264,6 +287,7 @@ NativeApp::NativeApp() {
         taskQueue_.reset();
     }
 #else
+    (void)localAppDataRoot;
     state_.status = L"当前构建未启用完整媒体和 ONNX 服务";
 #endif
 }
@@ -272,6 +296,8 @@ NativeApp::~NativeApp() {
     closing_ = true;
     callbackWindow_.store(nullptr);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    if (modelCenterWindow_ && IsWindow(modelCenterWindow_)) DestroyWindow(modelCenterWindow_);
+    if (modelCenterFont_) DeleteObject(modelCenterFont_);
     if (historyWindow_ && IsWindow(historyWindow_)) DestroyWindow(historyWindow_);
     historyThread_.request_stop();
     if (historyThread_.joinable()) historyThread_.join();
@@ -338,6 +364,9 @@ int NativeApp::run() {
     while (true) {
         const BOOL result = GetMessageW(&message, nullptr, 0, 0);
         if (result <= 0) return result == 0 ? static_cast<int>(message.wParam) : 1;
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+        if (modelCenterWindow_ && IsDialogMessageW(modelCenterWindow_, &message)) continue;
+#endif
         if (!IsDialogMessageW(window_, &message)) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
@@ -741,7 +770,7 @@ void NativeApp::createControls() {
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPlatformCombo)), instance_, nullptr);
     modelLabel_ = createStatic(L"模型和运行库", 1105);
     platformLabel_ = createStatic(L"平台预设", 1108);
-    modelButton_ = createButton(L"选择模型", kSelectModel);
+    modelButton_ = createButton(L"本地模型中心", kSelectModel);
     runtimeButton_ = createButton(L"选择运行库", kSelectRuntime);
     motionBlurCheck_ = CreateWindowExW(0, L"BUTTON", L"自然动态曝光",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
@@ -752,10 +781,10 @@ void NativeApp::createControls() {
     samplesLabel_ = createStatic(L"采样数", kSamplesLabel);
     samplesEdit_ = CreateWindowExW(0, L"EDIT", L"4", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSamplesEdit)), instance_, nullptr);
-    temporalRestorationLabel_ = createStatic(L"可选降噪（默认关闭）", kTemporalRestorationLabel);
+    temporalRestorationLabel_ = createStatic(L"可选降噪", kTemporalRestorationLabel);
     temporalRestorationCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTemporalRestorationCombo)), instance_, nullptr);
-    restorationLabel_ = createStatic(L"超分辨率（默认关闭）", kRestorationLabel);
+    restorationLabel_ = createStatic(L"超分辨率", kRestorationLabel);
     restorationCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRestorationCombo)), instance_, nullptr);
     outputSizeLabel_ = createStatic(L"目标尺寸", kOutputSizeLabel);
@@ -781,7 +810,7 @@ void NativeApp::createControls() {
     ShowWindow(rateCustomEdit_, SW_HIDE);
     for (const wchar_t* value : {L"自动（NVENC 优先）", L"H.264 NVENC", L"软件 H.264"}) SendMessageW(encoderCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
     SendMessageW(encoderCombo_, CB_SETCURSEL, 0, 0);
-    for (const wchar_t* value : {L"本机高帧率母版 / 自定义", L"YouTube · 60 FPS 上传副本", L"Bilibili · 60 FPS 上传副本", L"Bilibili · 120 FPS 实验", L"抖音 · 30 FPS 上传副本", L"抖音 · 60 FPS 上传副本"})
+    for (const wchar_t* value : {L"本机高帧率母版 / 自定义", L"YouTube · 60 FPS 本地副本", L"Bilibili · 60 FPS 本地副本", L"Bilibili · 120 FPS 历史实验", L"抖音 · 30 FPS 本地副本", L"抖音 · 60 FPS 本地副本"})
         SendMessageW(platformCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
     SendMessageW(platformCombo_, CB_SETCURSEL, 0, 0);
     SendMessageW(temporalRestorationCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"关闭（默认：不使用可选降噪）"));
@@ -800,6 +829,11 @@ void NativeApp::createControls() {
     }
 #endif
     SendMessageW(restorationCombo_, CB_SETCURSEL, 0, 0);
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    syncRestorationSelectors();
+#else
+    EnableWindow(modelButton_, FALSE);
+#endif
     for (const wchar_t* value : {L"默认：原尺寸 / 超分 ×2", L"1440p  ·  2560 × 1440", L"2160p  ·  3840 × 2160"})
         SendMessageW(outputSizeCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
     SendMessageW(outputSizeCombo_, CB_SETCURSEL, 0, 0);
@@ -968,6 +1002,28 @@ void NativeApp::updateView() {
     state_.modelSummary = modelSummary_;
     state_.runtimeSummary = runtimeSummary_;
     state_.deviceSummary = deviceSummary_;
+    state_.platformSummary = platformSummary_;
+    const auto rateSelection = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
+    const auto rateText = rateSelection >= 0 && rateSelection < static_cast<int>(kTargetRates.size())
+        ? std::to_wstring(kTargetRates[static_cast<std::size_t>(rateSelection)]) : controlText(rateCustomEdit_);
+    const auto extension = currentOutput().extension().wstring();
+    state_.platformSummary += L"\n当前：" + rateText + L" FPS · " +
+        (extension.empty() ? (lastPlatformSelection_ > 0 ? std::wstring(L".mp4") : std::wstring(L".mkv")) : extension) +
+        L" · " + controlText(encoderCombo_);
+    try {
+        PipelineSettings settings;
+        applyExportControls(settings);
+        if (lastPlatformSelection_ > 0) {
+            state_.platformSummary += L"\n" + std::to_wstring(settings.encoding.bitRate / 1000) +
+                L" kbps · GOP " + std::to_wstring(settings.encoding.gopSize) + L" 帧";
+        }
+    } catch (const std::exception&) {
+        state_.platformSummary += L"\n导出参数无效，请检查帧率与曝光";
+    }
+    const bool blurEnabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    state_.motionBlurSummary = blurEnabled
+        ? L"自然曝光：" + controlText(shutterEdit_) + L"° · " + controlText(samplesEdit_) + L" 次采样；参数可修改"
+        : L"自然曝光：关闭；可手动开启并修改参数";
     state_.restorationSummary = L"降噪：关闭 · 超分：关闭";
     state_.outputSizeSummary = L"原始输出尺寸";
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
@@ -1024,6 +1080,9 @@ void NativeApp::updateButtonState() {
         temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) if (control) EnableWindow(control, !serviceBusy);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (!serviceBusy) updateRestorationControls();
+    updateModelDetails();
+#else
+    if (modelButton_) EnableWindow(modelButton_, FALSE);
 #endif
 }
 
@@ -1130,8 +1189,9 @@ void NativeApp::selectOutput() {
     dialog.lpstrFile = fileName;
     dialog.nMaxFile = static_cast<DWORD>(std::size(fileName));
     dialog.lpstrFilter = L"MKV 视频\0*.mkv\0MP4 视频\0*.mp4\0所有文件\0*.*\0\0";
-    dialog.nFilterIndex = 1;
-    dialog.lpstrDefExt = L"mkv";
+    const bool platformCopy = SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0) > 0;
+    dialog.nFilterIndex = platformCopy ? 2 : 1;
+    dialog.lpstrDefExt = platformCopy ? L"mp4" : L"mkv";
     dialog.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
     if (GetSaveFileNameW(&dialog)) {
         setOutputPath(std::filesystem::path(fileName));
@@ -1157,14 +1217,8 @@ std::filesystem::path NativeApp::browseForFolder(const wchar_t* title) const {
 }
 
 void NativeApp::selectModel() {
-    const auto directory = browseForFolder(L"选择包含 model.json 和 model.onnx 的 RIFE 模型目录");
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
-    if (!directory.empty() && refreshModel(directory)) {
-        state_.status = L"模型已验证，可以继续检查源视频";
-        updateView();
-    }
-#else
-    (void)directory;
+    showModelCenter();
 #endif
 }
 
@@ -1181,6 +1235,221 @@ void NativeApp::selectRuntime() {
 }
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    auto* app = reinterpret_cast<NativeApp*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        app = static_cast<NativeApp*>(create->lpCreateParams);
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+        app->modelCenterWindow_ = window;
+    }
+    if (!app) return DefWindowProcW(window, message, wParam, lParam);
+    switch (message) {
+    case WM_CREATE: {
+        const auto control = [&](const wchar_t* cls, const wchar_t* label, DWORD style, int id) {
+            return CreateWindowExW((id == kModelList || id == kModelDetails) ? WS_EX_CLIENTEDGE : 0,
+                cls, label, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, window,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), app->instance_, nullptr);
+        };
+        app->modelCenterStatus_ = control(L"STATIC", L"", SS_LEFT, 1200);
+        app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, kModelList);
+        app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
+        SendMessageW(app->modelDetails_, EM_SETLIMITTEXT, 128 * 1024, 0);
+        control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON, kModelRegister);
+        control(L"BUTTON", L"设为该类默认", WS_TABSTOP | BS_PUSHBUTTON, kModelDefault);
+        control(L"BUTTON", L"取消登记", WS_TABSTOP | BS_PUSHBUTTON, kModelUnregister);
+        control(L"BUTTON", L"重新校验", WS_TABSTOP | BS_PUSHBUTTON, kModelRefresh);
+        control(L"BUTTON", L"关闭", WS_TABSTOP | BS_PUSHBUTTON, kModelClose);
+        app->layoutModelCenter();
+        app->updateModelCenter();
+        return 0;
+    }
+    case WM_SIZE:
+        app->layoutModelCenter();
+        return 0;
+    case WM_DPICHANGED: {
+        if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
+        const auto* suggested = reinterpret_cast<const RECT*>(lParam);
+        if (suggested) {
+            const auto work = monitorWorkArea(MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST));
+            const auto fitted = fitWindowToWorkArea(*suggested, work);
+            SetWindowPos(window, nullptr, fitted.left, fitted.top, fitted.right - fitted.left, fitted.bottom - fitted.top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        app->layoutModelCenter();
+        return 0;
+    }
+    case WM_GETMINMAXINFO: {
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        const auto work = monitorWorkArea(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST));
+        const int dpi = static_cast<int>(GetDpiForWindow(window));
+        info->ptMinTrackSize.x = std::min<LONG>(MulDiv(480, dpi ? dpi : 96, 96), work.right - work.left);
+        info->ptMinTrackSize.y = std::min<LONG>(MulDiv(480, dpi ? dpi : 96, 96), work.bottom - work.top);
+        return 0;
+    }
+    case WM_COMMAND: {
+        const int id = LOWORD(wParam);
+        if (id == kModelList && HIWORD(wParam) == LBN_SELCHANGE) {
+            app->updateModelDetails();
+            return 0;
+        }
+        if (HIWORD(wParam) != BN_CLICKED) break;
+        const auto index = static_cast<std::size_t>(SendMessageW(app->modelList_, LB_GETCURSEL, 0, 0));
+        if (id == kModelClose || id == IDCANCEL) { DestroyWindow(window); return 0; }
+        if (id == kModelRegister && app->modelChangesAllowed()) {
+            const auto directory = app->browseForFolder(L"登记本机模型目录（包含 model.json）；原文件保留不变");
+            if (!directory.empty()) (void)app->registerLocalModel(directory);
+        } else if (id == kModelDefault) (void)app->setDefaultLocalModel(index);
+        else if (id == kModelUnregister) (void)app->unregisterLocalModel(index);
+        else if (id == kModelRefresh && app->modelChangesAllowed()) {
+            app->modelCenterNotice_ = L"已重新读取并校验本地模型；缺失或校验失败的模型不能设为默认。";
+            app->refreshLocalModels();
+        }
+        return 0;
+    }
+    case WM_CLOSE:
+        DestroyWindow(window);
+        return 0;
+    case WM_NCDESTROY:
+        app->modelCenterWindow_ = nullptr;
+        app->modelList_ = nullptr;
+        app->modelDetails_ = nullptr;
+        app->modelCenterStatus_ = nullptr;
+        if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        break;
+    default: break;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+void NativeApp::layoutModelCenter() {
+    if (!modelCenterWindow_) return;
+    const int dpi = static_cast<int>(GetDpiForWindow(modelCenterWindow_));
+    const auto px = [&](int value) { return MulDiv(value, dpi ? dpi : 96, 96); };
+    if (!modelCenterFont_) modelCenterFont_ = CreateFontW(-MulDiv(10, dpi ? dpi : 96, 72), 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    for (int id = 1200; id <= kModelClose; ++id) {
+        const auto child = GetDlgItem(modelCenterWindow_, id);
+        if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(modelCenterFont_), TRUE);
+    }
+    RECT client{};
+    GetClientRect(modelCenterWindow_, &client);
+    const int margin = px(16), gap = px(12);
+    const int width = std::max(1, static_cast<int>(client.right) - margin * 2);
+    const bool narrow = width < px(740);
+    const int buttonHeight = px(34);
+    const int buttonRows = narrow ? 2 : 1;
+    const int buttonsTop = std::max(px(180), static_cast<int>(client.bottom) - margin - buttonRows * (buttonHeight + gap) + gap);
+    const int contentTop = px(102), contentHeight = std::max(px(60), buttonsTop - contentTop - gap);
+    const auto move = [&](HWND child, int x, int y, int w, int h) {
+        if (child) SetWindowPos(child, nullptr, x, y, std::max(1, w), std::max(1, h), SWP_NOZORDER | SWP_NOACTIVATE);
+    };
+    move(modelCenterStatus_, margin, px(12), width, px(82));
+    if (narrow) {
+        const int listHeight = std::max(px(30), contentHeight * 2 / 5);
+        move(modelList_, margin, contentTop, width, listHeight);
+        move(modelDetails_, margin, contentTop + listHeight + gap, width, contentHeight - listHeight - gap);
+    } else {
+        const int listWidth = width * 38 / 100;
+        move(modelList_, margin, contentTop, listWidth, contentHeight);
+        move(modelDetails_, margin + listWidth + gap, contentTop, width - listWidth - gap, contentHeight);
+    }
+    const std::array<int, 5> buttons{kModelRegister, kModelDefault, kModelUnregister, kModelRefresh, kModelClose};
+    const int columns = narrow ? 3 : 5;
+    const int buttonWidth = (width - (columns - 1) * gap) / columns;
+    for (std::size_t index = 0; index < buttons.size(); ++index)
+        move(GetDlgItem(modelCenterWindow_, buttons[index]), margin + static_cast<int>(index % columns) * (buttonWidth + gap),
+            buttonsTop + static_cast<int>(index / columns) * (buttonHeight + gap), buttonWidth, buttonHeight);
+}
+
+void NativeApp::showModelCenter() {
+    if (modelCenterWindow_ && IsWindow(modelCenterWindow_)) {
+        ShowWindow(modelCenterWindow_, SW_SHOWNORMAL);
+        SetForegroundWindow(modelCenterWindow_);
+        updateModelDetails();
+        return;
+    }
+    WNDCLASSEXW cls{};
+    cls.cbSize = sizeof(cls);
+    cls.hInstance = instance_;
+    cls.lpfnWndProc = &NativeApp::modelCenterWindowProcedure;
+    cls.lpszClassName = L"RifeLoveLocalModelCenter";
+    cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    cls.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    cls.style = CS_HREDRAW | CS_VREDRAW;
+    if (!RegisterClassExW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
+    const auto scale = dpiScale();
+    RECT owner{};
+    if (window_) GetWindowRect(window_, &owner);
+    RECT requested{owner.left + scaled(32, scale), owner.top + scaled(32, scale),
+        owner.left + scaled(1012, scale), owner.top + scaled(652, scale)};
+    requested = fitWindowToWorkArea(requested, monitorWorkArea(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST)));
+    modelCenterWindow_ = CreateWindowExW(WS_EX_CONTROLPARENT, cls.lpszClassName, L"RifeLove · 本地模型中心",
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, requested.left, requested.top, requested.right - requested.left,
+        requested.bottom - requested.top, window_, nullptr, instance_, this);
+    if (modelCenterWindow_) {
+        ShowWindow(modelCenterWindow_, SW_SHOWNORMAL);
+        SetFocus(modelList_);
+    }
+}
+
+void NativeApp::updateModelCenter() {
+    if (!modelList_) return;
+    SendMessageW(modelList_, LB_RESETCONTENT, 0, 0);
+    int selection = 0;
+    int extent = 0;
+    const HDC dc = GetDC(modelList_);
+    const auto oldFont = dc && modelCenterFont_ ? SelectObject(dc, modelCenterFont_) : nullptr;
+    for (std::size_t index = 0; index < localModels_.size(); ++index) {
+        const auto& item = localModels_[index];
+        auto label = item.name + L"  " + item.version;
+        const bool selectedDefault = item.kind >= 0 && !modelPreferences_.defaults[static_cast<std::size_t>(item.kind)].empty() &&
+            NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(modelPreferences_.defaults[static_cast<std::size_t>(item.kind)]);
+        if (selectedDefault) label += L"  [默认]";
+        label += item.usable ? L"  [可选]" : item.verified ? L"  [能力未支持]" : L"  [校验未通过]";
+        SendMessageW(modelList_, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        if (dc) { SIZE size{}; GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &size); extent = std::max(extent, static_cast<int>(size.cx) + 24); }
+        if (!modelCenterSelectedPath_.empty() && NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(modelCenterSelectedPath_))
+            selection = static_cast<int>(index);
+    }
+    if (dc) { if (oldFont) SelectObject(dc, oldFont); ReleaseDC(modelList_, dc); }
+    SendMessageW(modelList_, LB_SETHORIZONTALEXTENT, extent, 0);
+    SendMessageW(modelList_, LB_SETCURSEL, localModels_.empty() ? -1 : selection, 0);
+    updateModelDetails();
+}
+
+void NativeApp::updateModelDetails() {
+    if (!modelCenterWindow_ || !modelList_) return;
+    const auto index = static_cast<std::size_t>(SendMessageW(modelList_, LB_GETCURSEL, 0, 0));
+    const LocalModel* item = index < localModels_.size() ? &localModels_[index] : nullptr;
+    const bool editable = modelPreferencesWritable_ && modelChangesAllowed();
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelRegister), editable);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelDefault), editable && item && item->usable);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelUnregister), editable && item);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelRefresh), modelChangesAllowed());
+    std::wstring status = L"完全离线 · " + std::to_wstring(localModels_.size()) + L" 个本地目录。仅登记，不复制或删除原文件。\r\n";
+    status += L"完整性通过仅代表本地文件哈希一致，不认证发布者或画质。\r\n";
+    status += modelChangesAllowed() ? modelCenterNotice_ : L"正在检查视频或运行任务；模型更改暂不可用。";
+    SetWindowTextW(modelCenterStatus_, status.c_str());
+    std::wstring details = L"暂无已登记模型。\r\n\r\n选择“登记本地目录…”并指定包含 model.json 的本机模型包目录。";
+    if (item) {
+        modelCenterSelectedPath_ = item->directory;
+        const wchar_t* kind = item->kind == 0 ? L"RIFE 插帧" : item->kind == 1 ? L"超分辨率" : item->kind == 2 ? L"时域修复" : L"其他 / 尚未支持";
+        details = L"名称：" + item->name + L"\r\n版本：" + item->version + L"\r\n类别：" + kind;
+        details += L"\r\n\r\n能力：" + item->capabilities + L"\r\n颜色 / 输入配置：" + item->profiles;
+        details += L"\r\n\r\n验证状态：" + item->verification;
+        details += item->usable ? L"\r\n当前客户端可选用；实际处理仍需通过运行库、设备和源视频检查。" : L"\r\n仅可查看，不能设为默认。";
+        details += L"\r\n\r\n完整目录（可选择并复制）：\r\n" + item->directory.wstring();
+        details += L"\r\n\r\n默认项按类别分别保存；可选超分与降噪仍可在主窗口临时关闭。";
+    }
+    details += L"\r\n\r\n用户数据目录：\r\n" + dataDirectory_.directory.wstring();
+    details += L"\r\n" + dataDirectory_.notice;
+    details += L"\r\n旧版数据目录（原件保留）：\r\n" + dataDirectory_.legacyDirectory.wstring();
+    if (controlText(modelDetails_) != details) SetWindowTextW(modelDetails_, details.c_str());
+}
+
 LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto* app = reinterpret_cast<NativeApp*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
@@ -1378,38 +1647,104 @@ void NativeApp::handleHistoryResult(NativeHistoryResult result) {
 }
 #endif
 
-void NativeApp::applyPlatformPreset(int index) {
-    if (index < 0) index = 0;
-    if (lastPlatformSelection_ == 0 && index > 0) {
-        localRateSelection_ = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
-        localEncoderSelection_ = static_cast<int>(SendMessageW(encoderCombo_, CB_GETCURSEL, 0, 0));
-        localCustomRate_ = controlText(rateCustomEdit_);
-    }
-    if (index == 0 && lastPlatformSelection_ > 0) {
-        SendMessageW(rateCombo_, CB_SETCURSEL, localRateSelection_, 0);
-        SendMessageW(encoderCombo_, CB_SETCURSEL, localEncoderSelection_, 0);
-        SetWindowTextW(rateCustomEdit_, localCustomRate_.c_str());
-    } else if (index > 0) {
-        SendMessageW(rateCombo_, CB_SETCURSEL, index == 3 ? 2 : index == 4 ? 0 : 1, 0);
-        SendMessageW(encoderCombo_, CB_SETCURSEL, 0, 0);
-    }
-    lastPlatformSelection_ = index;
-    if (index == 0) platformSummary_ = L"本机高帧率母版：保留自定义帧率和 MKV 输出";
-    else if (index == 1) platformSummary_ = L"YouTube 本地上传副本：60 FPS · MP4 · SDR 码率参考";
-    else if (index == 2) platformSummary_ = L"Bilibili 本地上传副本：60 FPS · MP4 · 本机兼容性建议";
-    else if (index == 3) platformSummary_ = L"Bilibili 120 FPS 实验副本：历史官方活动依据，需账号实测";
-    else if (index == 4) platformSummary_ = L"抖音本地上传副本：30 FPS · MP4 · 适用 API 规则需单独核对";
-    else platformSummary_ = L"抖音本地上传副本：60 FPS · MP4 · 适用 API 规则需单独核对";
-    const auto source = currentSource();
-    if (!source.empty()
+void NativeApp::applyExportControls(PipelineSettings& settings) const {
+    const int rateIndex = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
+    if (rateIndex >= 0 && rateIndex < static_cast<int>(kTargetRates.size()))
+        settings.targetRate = Rational(kTargetRates[static_cast<std::size_t>(rateIndex)]);
+    else if (rateIndex == static_cast<int>(kTargetRates.size()))
+        settings.targetRate = Rational::parse(utf8FromWide(controlText(rateCustomEdit_)));
+    else throw std::invalid_argument("select a target frame rate");
+    if (settings.targetRate <= Rational(0)) throw std::invalid_argument("target frame rate must be positive");
+
+    const std::array<const char*, 3> encoders{"auto", "h264_nvenc", "libopenh264"};
+    const int encoderIndex = static_cast<int>(SendMessageW(encoderCombo_, CB_GETCURSEL, 0, 0));
+    if (encoderIndex < 0 || encoderIndex >= static_cast<int>(encoders.size()))
+        throw std::invalid_argument("select a video encoder");
+    settings.encoding.encoder = encoders[static_cast<std::size_t>(encoderIndex)];
+    settings.encoding.frameRate = settings.targetRate;
+    settings.encoding.videoStreamIndex = -1;
+
+    int scaleNumerator = 1;
+    int scaleDenominator = 1;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
-        && !hasBatchSelection()
+    const int restorationIndex = static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0));
+    if (restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size())) {
+        const auto& restoration = spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)];
+        scaleNumerator = restoration.capabilities.scaleNumerator;
+        scaleDenominator = restoration.capabilities.scaleDenominator;
+        if (isUpscaleRestoration(restoration)) {
+            const auto target = outputTargetCheck(static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)));
+            if (target.usable()) {
+                settings.encoding.outputWidth = target.width;
+                settings.encoding.outputHeight = target.height;
+            }
+        }
+    }
+#endif
+    const int platformIndex = static_cast<int>(SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0));
+    if (platformIndex > 0) {
+        const auto& rate = settings.targetRate;
+        const auto roundedRate = rate.numerator() / rate.denominator() + (rate.numerator() % rate.denominator() != 0);
+        if (roundedRate > std::numeric_limits<int>::max() / 2)
+            throw std::invalid_argument("target frame rate exceeds the platform GOP limit");
+        const int integerRate = static_cast<int>(roundedRate);
+        const auto profile = platformIndex == 1 ? application::PlatformBitrate::youtube : application::PlatformBitrate::localQuality;
+        const int outputHeight = application::platformOutputHeight(sourceHeight_, settings.encoding.outputHeight,
+            scaleNumerator, scaleDenominator);
+        settings.encoding.bitRate = static_cast<std::int64_t>(application::platformBitrateKbps(profile, outputHeight, integerRate)) * 1000;
+        settings.encoding.gopSize = application::platformGopSizeFrames(profile, integerRate);
+    }
+    settings.motionBlur.enabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (settings.motionBlur.enabled) {
+        settings.motionBlur.shutterAngleDegrees = parsePositiveInteger(controlText(shutterEdit_), "shutter angle");
+        settings.motionBlur.sampleCount = parsePositiveInteger(controlText(samplesEdit_), "sample count");
+        if (settings.motionBlur.shutterAngleDegrees < 0 || settings.motionBlur.shutterAngleDegrees > 360)
+            throw std::invalid_argument("shutter angle must be 0..360 degrees");
+        if (settings.motionBlur.sampleCount < 1 || settings.motionBlur.sampleCount > 16)
+            throw std::invalid_argument("sample count must be 1..16");
+    }
+}
+
+void NativeApp::applyPlatformPreset(int index) {
+    if (index < 0 || index >= static_cast<int>(exportPresetControls_.size())) index = 0;
+    // Each preset keeps the user's edits for this window session. Leaving a
+    // platform copy cannot replace the independent high-rate master settings.
+    auto& previous = exportPresetControls_[static_cast<std::size_t>(lastPlatformSelection_)];
+    previous = {static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0)),
+        static_cast<int>(SendMessageW(encoderCombo_, CB_GETCURSEL, 0, 0)), controlText(rateCustomEdit_),
+        SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED,
+        controlText(shutterEdit_), controlText(samplesEdit_), true};
+    auto& selected = exportPresetControls_[static_cast<std::size_t>(index)];
+    if (!selected.saved) {
+        selected.rateSelection = index == 3 ? 2 : index == 4 ? 0 : 1;
+        selected.blurEnabled = index == 1 || index == 2 || index == 5;
+    }
+    SendMessageW(rateCombo_, CB_SETCURSEL, selected.rateSelection, 0);
+    SendMessageW(encoderCombo_, CB_SETCURSEL, selected.encoderSelection, 0);
+    SetWindowTextW(rateCustomEdit_, selected.customRate.c_str());
+    SendMessageW(motionBlurCheck_, BM_SETCHECK, selected.blurEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SetWindowTextW(shutterEdit_, selected.shutterAngle.c_str());
+    SetWindowTextW(samplesEdit_, selected.sampleCount.c_str());
+    lastPlatformSelection_ = index;
+    if (index == 0) platformSummary_ = L"本机母版：自定义帧率、编码器与曝光独立保存";
+    else if (index == 1) platformSummary_ = L"YouTube 本地副本：SDR 码率参考，可手动修改";
+    else if (index == 2) platformSummary_ = L"Bilibili 本地副本：码率为本机兼容性建议";
+    else if (index == 3) platformSummary_ = L"Bilibili 历史 120 FPS 实验；当前权益需账号实测";
+    else platformSummary_ = L"抖音本地副本：本机兼容性建议，投稿规则需另核对";
+    const auto source = currentSource();
+    if (
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+        !hasBatchSelection()
+#else
+        true
 #endif
     ) {
         auto output = currentOutput();
-        if (output.empty()) output = source.parent_path() / (source.stem().wstring() + L"_RifeLove");
-        output.replace_extension(index > 0 ? L".mp4" : L".mkv");
-        setOutputPath(output);
+        if (output.empty() && !source.empty()) output = source.parent_path() / (source.stem().wstring() + L"_RifeLove");
+        if (!output.empty()) {
+            output.replace_extension(index > 0 ? L".mp4" : L".mkv");
+            setOutputPath(output);
+        }
     }
     state_.status = index == 0 ? L"已选择本机高帧率母版" : L"已选择本地平台副本预设；RifeLove 不会上传文件";
     layoutControls();
@@ -1427,32 +1762,13 @@ void NativeApp::startProcessing() {
     }
     const auto source = currentSource();
     const auto output = currentOutput();
-    const auto& rates = kTargetRates;
-    Rational selectedRate(60);
-    const int rateIndex = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
-    try {
-        if (rateIndex >= 0 && rateIndex < static_cast<int>(rates.size())) selectedRate = Rational(rates[static_cast<std::size_t>(rateIndex)]);
-        else if (rateIndex == static_cast<int>(rates.size())) selectedRate = Rational::parse(utf8FromWide(controlText(rateCustomEdit_)));
-        if (selectedRate <= Rational(0)) throw std::invalid_argument("target frame rate must be positive");
-    } catch (const std::exception& error) {
-        state_.status = L"目标帧率格式无效：" + wideFromUtf8(error.what());
-        updateView();
-        return;
-    }
-    const std::array<const char*, 3> encoders{"auto", "h264_nvenc", "libopenh264"};
-    int encoderIndex = static_cast<int>(SendMessageW(encoderCombo_, CB_GETCURSEL, 0, 0));
-    if (encoderIndex < 0 || encoderIndex >= static_cast<int>(encoders.size())) encoderIndex = 0;
     application::ProcessingJob job;
     job.source = utf8(source);
     job.output = utf8(output);
     job.modelDirectory = modelDirectory_;
     job.runtimeDirectory = runtimeDirectory_;
-    job.settings.targetRate = selectedRate;
-    job.settings.encoding.encoder = encoders[static_cast<std::size_t>(encoderIndex)];
-    job.settings.encoding.videoStreamIndex = -1;
     const int temporalRestorationIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const int restorationIndex = restorationCombo_ ? static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
-    const int outputSizeIndex = outputSizeCombo_ ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
     if (temporalRestorationIndex > 0 && temporalRestorationIndex <= static_cast<int>(temporalRestorationModels_.size())) {
         const auto& temporalRestoration = temporalRestorationModels_[static_cast<std::size_t>(temporalRestorationIndex - 1)];
         temporalRestorationModelPack_ = temporalRestoration;
@@ -1464,43 +1780,12 @@ void NativeApp::startProcessing() {
         restorationModelPack_ = restoration;
         job.restorationModelDirectory = restoration.directory;
         job.expectedRestorationDescriptorSha256 = inference::sha256File(restoration.directory / L"model.json", 256 * 1024);
-        if (isUpscaleRestoration(restoration)) {
-            const auto target = outputTargetCheck(outputSizeIndex);
-            if (target.usable()) {
-                job.settings.encoding.outputWidth = target.width;
-                job.settings.encoding.outputHeight = target.height;
-            }
-        }
     }
     const int platformIndex = static_cast<int>(SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0));
-    if (platformIndex > 0) {
-        if (selectedRate.denominator() == 1 && selectedRate.numerator() > std::numeric_limits<int>::max() / 2) {
-            state_.status = L"目标帧率超出平台编码参数范围";
-            updateView();
-            return;
-        }
-        const int integerRate = selectedRate.denominator() == 1 ? static_cast<int>(selectedRate.numerator()) : 60;
-        const auto profile = platformIndex == 1 ? application::PlatformBitrate::youtube : application::PlatformBitrate::localQuality;
-        const bool hasRestoration = restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size());
-        const auto& caps = hasRestoration ? spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)].capabilities : restoration::Capabilities{};
-        const int outputHeight = application::platformOutputHeight(sourceHeight_, job.settings.encoding.outputHeight,
-            caps.scaleNumerator, caps.scaleDenominator);
-        const int bitrateKbps = application::platformBitrateKbps(profile, outputHeight, integerRate);
-        job.settings.encoding.bitRate = static_cast<std::int64_t>(bitrateKbps) * 1000;
-        job.settings.encoding.gopSize = application::platformGopSizeFrames(profile, integerRate);
-    }
     try {
-        job.settings.motionBlur.enabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-        if (job.settings.motionBlur.enabled) {
-            job.settings.motionBlur.shutterAngleDegrees = parsePositiveInteger(controlText(shutterEdit_), "shutter angle");
-            job.settings.motionBlur.sampleCount = parsePositiveInteger(controlText(samplesEdit_), "sample count");
-            if (job.settings.motionBlur.shutterAngleDegrees < 0 || job.settings.motionBlur.shutterAngleDegrees > 360)
-                throw std::invalid_argument("shutter angle must be 0..360 degrees");
-            if (job.settings.motionBlur.sampleCount < 1 || job.settings.motionBlur.sampleCount > 16)
-                throw std::invalid_argument("sample count must be 1..16");
-        }
+        applyExportControls(job.settings);
     } catch (const std::exception& error) {
-        state_.status = L"动态曝光设置无效：" + wideFromUtf8(error.what());
+        state_.status = L"导出设置无效：" + wideFromUtf8(error.what());
         updateView();
         return;
     }
@@ -1783,49 +2068,214 @@ void NativeApp::closeWindow() {
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 void NativeApp::discoverLocalResources() {
-    const auto models = applicationDirectory_ / L"models";
-    std::error_code error;
-    const auto marker = models / L"default-model.txt";
-    if (std::filesystem::is_regular_file(marker, error)) {
-        std::ifstream input(marker, std::ios::binary);
-        std::string line;
-        if (input && std::getline(input, line)) {
-            // Local packages are written by PowerShell and can use CRLF;
-            // strip the line ending before treating the value as a path.
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.starts_with("\xEF\xBB\xBF")) line.erase(0, 3);
-            auto selected = std::filesystem::path(wideFromUtf8(line));
-            if (selected.is_relative()) {
-                // Bundled default-model.txt normally contains only the model
-                // directory's basename. Explicit relative paths remain rooted
-                // at the application directory for existing local settings.
-                selected = selected.has_parent_path() ? applicationDirectory_ / selected : models / selected;
-            }
-            if (refreshModel(selected)) {
-                modelSummary_ += L"  ·  默认包";
-            }
-        }
-    }
-    if (modelPack_) {
-        // Keep the verified marker selection; do not silently replace it with
-        // another directory merely because it sorts earlier in the package.
-    } else if (std::filesystem::is_directory(models, error)) {
-        try {
-            if (refreshModel(models)) modelSummary_ += L"  ·  自动发现";
-        } catch (const std::exception&) {
-            // Fall through to the directory scan below.
-        }
-    }
-    if (!modelPack_ && std::filesystem::is_directory(models, error)) {
-        for (const auto& entry : std::filesystem::directory_iterator(models, error)) {
-            if (!entry.is_directory(error)) continue;
-            if (refreshModel(entry.path())) break;
-        }
-    }
+    refreshLocalModels();
     for (const auto& runtime : {applicationDirectory_ / L"runtime", applicationDirectory_ / L"onnxruntime"}) {
         if (refreshRuntime(runtime)) break;
     }
+}
+
+NativeApp::LocalModel NativeApp::inspectLocalModel(const std::filesystem::path& directory) const {
+    LocalModel item;
+    item.directory = std::filesystem::absolute(directory).lexically_normal();
+    item.name = item.directory.filename().wstring();
+    try {
+        const auto checked = checkedNativeModelDirectory(item.directory);
+        std::string rifeFailure;
+        try {
+            const auto pack = inference::loadModelPack(checked);
+            if (pack.family != "rife") throw std::runtime_error("Not a RIFE model pack");
+            item.kind = 0;
+            item.name = wideFromUtf8(pack.displayName.empty() ? pack.id : pack.displayName);
+            item.version = wideFromUtf8(pack.version);
+            item.capabilities = L"RIFE 帧间插帧；适配器 " + wideFromUtf8(pack.adapterId) + L" / " + std::to_wstring(pack.adapterVersion);
+            for (const auto& profile : pack.supportedInputProfiles) {
+                if (!item.profiles.empty()) item.profiles += L"、";
+                item.profiles += wideFromUtf8(profile);
+            }
+            item.profiles += pack.hdrQualified ? L"；包声明支持 HDR" : L"；未声明 HDR 能力";
+            item.verified = pack.metadataIntegrityVerified;
+            item.usable = item.verified && pack.adapterId == "rife-sdr-v1" && pack.adapterVersion == 1;
+            item.verification = item.verified ? L"权重、许可、来源清单与验证报告的哈希一致"
+                : L"仅权重哈希通过；旧格式缺少完整元数据校验，不能设为默认";
+            if (item.verified && !item.usable) item.verification += L"；当前客户端不支持此适配器";
+            return item;
+        } catch (const std::exception& error) {
+            rifeFailure = error.what();
+        }
+        try {
+            const auto pack = restoration::loadModelPack(checked);
+            const auto& capabilities = pack.capabilities;
+            item.name = wideFromUtf8(pack.displayName.empty() ? pack.id : pack.displayName);
+            item.version = wideFromUtf8(pack.version);
+            const bool sr = std::find(capabilities.tasks.begin(), capabilities.tasks.end(), restoration::Task::superResolution) != capabilities.tasks.end();
+            const bool temporal = std::find(capabilities.placements.begin(), capabilities.placements.end(), restoration::Placement::sourceRateBeforeInterpolation) != capabilities.placements.end();
+            item.kind = temporal ? 2 : sr ? 1 : -1;
+            for (const auto task : capabilities.tasks) {
+                if (!item.capabilities.empty()) item.capabilities += L"、";
+                switch (task) {
+                case restoration::Task::denoise: item.capabilities += L"降噪"; break;
+                case restoration::Task::deblur: item.capabilities += L"去模糊"; break;
+                case restoration::Task::deblock: item.capabilities += L"去块效应"; break;
+                case restoration::Task::superResolution: item.capabilities += L"超分辨率"; break;
+                }
+            }
+            item.capabilities += L"；比例 " + std::to_wstring(capabilities.scaleNumerator) + L"/" + std::to_wstring(capabilities.scaleDenominator);
+            item.capabilities += L"；时域前/后 " + std::to_wstring(capabilities.temporalFramesBefore) + L"/" + std::to_wstring(capabilities.temporalFramesAfter);
+            item.capabilities += L"；适配器 " + wideFromUtf8(capabilities.adapterId);
+            for (const auto& profile : capabilities.supportedInputProfiles) {
+                if (!item.profiles.empty()) item.profiles += L"、";
+                item.profiles += wideFromUtf8(profile);
+            }
+            item.verified = pack.metadataIntegrityVerified;
+            item.usable = item.verified && ((item.kind == 2 && restoration::supportsOnnxCudaTemporalModel(pack)) ||
+                (item.kind == 1 && capabilities.scaleNumerator == 2 && capabilities.scaleDenominator == 1 && restoration::supportsOnnxCudaOutputRateModel(pack)));
+            item.verification = L"权重、许可、来源清单与验证报告的哈希一致";
+            if (!item.usable) item.verification += L"；当前客户端不支持该能力/比例，不能设为默认";
+            return item;
+        } catch (const std::exception& error) {
+            // Keep both diagnostics: the directory may contain either pack family.
+            item.verification = L"校验失败；RIFE：" + wideFromUtf8(rifeFailure) + L"；修复模型：" + wideFromUtf8(error.what());
+        }
+    } catch (const std::exception& error) {
+        item.verification = L"目录不可用或不是安全的本地目录：" + wideFromUtf8(error.what());
+    }
+    return item;
+}
+
+void NativeApp::refreshLocalModels() {
+    if (!modelChangesAllowed()) return;
+    std::vector<std::filesystem::path> candidates;
+    const auto add = [&](const std::filesystem::path& path) {
+        if (!path.empty() && !modelPreferences_.isExcluded(path) && !NativeModelPreferences::contains(candidates, path))
+            candidates.push_back(std::filesystem::absolute(path).lexically_normal());
+    };
+    const auto models = applicationDirectory_ / L"models";
+    std::filesystem::path markerSelection;
+    try {
+        (void)checkedNativeModelDirectory(models, false);
+        const DWORD descriptor = GetFileAttributesW((models / L"model.json").c_str());
+        if (descriptor != INVALID_FILE_ATTRIBUTES) add(models);
+        for (const auto& entry : std::filesystem::directory_iterator(models)) {
+            const DWORD attributes = GetFileAttributesW(entry.path().c_str());
+            if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY)) add(entry.path());
+        }
+        const auto marker = models / L"default-model.txt";
+        const DWORD attributes = GetFileAttributesW(marker.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))) {
+            std::ifstream input(marker, std::ios::binary);
+            std::string line;
+            if (std::getline(input, line) && line.size() < 32768) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.starts_with("\xEF\xBB\xBF")) line.erase(0, 3);
+                markerSelection = std::filesystem::path(wideFromUtf8(line));
+                if (!markerSelection.empty() && markerSelection.is_relative())
+                    markerSelection = markerSelection.has_parent_path() ? applicationDirectory_ / markerSelection : models / markerSelection;
+                if (!markerSelection.empty()) add(markerSelection);
+            }
+        }
+    } catch (const std::exception&) {
+        // A missing bundled models directory is normal for a fresh install.
+    }
+    for (const auto& path : modelPreferences_.registered) add(path);
+    for (const auto& path : modelPreferences_.defaults) add(path);
+    localModels_.clear();
+    for (const auto& path : candidates) localModels_.push_back(inspectLocalModel(path));
+    std::sort(localModels_.begin(), localModels_.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.name == rhs.name ? lhs.directory.wstring() < rhs.directory.wstring() : lhs.name < rhs.name;
+    });
+    auto selected = modelPreferences_.defaults[0];
+    if (selected.empty()) {
+        for (const auto& preferred : {modelDirectory_, markerSelection}) {
+            const auto found = std::find_if(localModels_.begin(), localModels_.end(), [&](const auto& item) {
+                return item.kind == 0 && item.usable && !preferred.empty() && NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(preferred);
+            });
+            if (found != localModels_.end()) { selected = found->directory; break; }
+        }
+        if (selected.empty()) {
+            const auto found = std::find_if(localModels_.begin(), localModels_.end(), [](const auto& item) { return item.kind == 0 && item.usable; });
+            if (found != localModels_.end()) selected = found->directory;
+        }
+    }
+    modelPack_.reset();
+    modelDirectory_.clear();
+    state_.modelReady = false;
+    modelSummary_ = selected.empty() ? L"尚未登记可用的 RIFE 模型" : L"默认 RIFE 模型校验失败；请打开本地模型中心";
+    const auto found = std::find_if(localModels_.begin(), localModels_.end(), [&](const auto& item) {
+        return item.kind == 0 && item.usable && !selected.empty() && NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(selected);
+    });
+    if (found != localModels_.end()) (void)refreshModel(found->directory);
     discoverRestorationModels();
+    syncRestorationSelectors();
+    updateModelCenter();
+    if (window_) updateView();
+}
+
+bool NativeApp::modelChangesAllowed() const {
+    return !queueSessionActive_.load() && (!processingService_ || !processingService_->busy());
+}
+
+bool NativeApp::saveModelPreferences(const NativeModelPreferences& preferences) {
+    if (!modelPreferencesWritable_ || !modelChangesAllowed()) {
+        if (!modelChangesAllowed()) modelCenterNotice_ = L"视频检查或任务运行期间，暂不能更改模型。";
+        updateModelDetails();
+        return false;
+    }
+    try {
+        if (!dataDirectory_.writable || !dataDirectory_.preferencesReady)
+            throw std::runtime_error("Native model data directory is unavailable");
+        (void)checkedNativeModelDirectory(dataDirectory_.directory, false);
+        saveNativeModelPreferences(dataDirectory_.directory / L"local-models.txt", preferences);
+        modelPreferences_ = preferences;
+        return true;
+    } catch (const std::exception&) {
+        modelCenterNotice_ = L"模型设置保存失败；更改未生效。请检查详情中用户数据目录的写入权限。";
+        updateModelDetails();
+        return false;
+    }
+}
+
+bool NativeApp::registerLocalModel(const std::filesystem::path& directory) {
+    if (!modelChangesAllowed()) return false;
+    const auto item = inspectLocalModel(directory);
+    if (!item.verified) {
+        modelCenterNotice_ = L"无法登记：" + item.verification;
+        updateModelDetails();
+        return false;
+    }
+    auto preferences = modelPreferences_;
+    preferences.registerDirectory(item.directory);
+    if (!saveModelPreferences(preferences)) return false;
+    modelCenterNotice_ = item.usable ? L"已登记本地目录；请选择模型并设为默认。未复制任何模型文件。"
+        : L"已登记并完成完整性校验，但当前客户端不支持该能力；不能设为默认。";
+    refreshLocalModels();
+    return true;
+}
+
+bool NativeApp::setDefaultLocalModel(std::size_t index) {
+    if (index >= localModels_.size() || !modelChangesAllowed()) return false;
+    const auto item = inspectLocalModel(localModels_[index].directory);
+    if (!item.usable || item.kind < 0) {
+        modelCenterNotice_ = L"不能设为默认：模型已变化、校验未通过或当前能力不受支持。";
+        refreshLocalModels();
+        return false;
+    }
+    auto preferences = modelPreferences_;
+    preferences.registerDirectory(item.directory);
+    preferences.defaults[static_cast<std::size_t>(item.kind)] = item.directory;
+    if (!saveModelPreferences(preferences)) return false;
+    modelCenterNotice_ = L"默认模型已保存，下次启动继续使用；可选修复已同步到主窗口。";
+    refreshLocalModels();
+    return true;
+}
+
+bool NativeApp::unregisterLocalModel(std::size_t index) {
+    if (index >= localModels_.size() || !modelChangesAllowed()) return false;
+    auto preferences = modelPreferences_;
+    preferences.unregisterDirectory(localModels_[index].directory);
+    if (!saveModelPreferences(preferences)) return false;
+    modelCenterNotice_ = L"已取消应用登记并清除对应默认项；原目录与全部文件均保留。";
+    refreshLocalModels();
+    return true;
 }
 
 bool NativeApp::refreshModel(const std::filesystem::path& directory) {
@@ -1863,26 +2313,15 @@ bool NativeApp::refreshRuntime(const std::filesystem::path& directory) {
 void NativeApp::discoverRestorationModels() {
     temporalRestorationModels_.clear();
     spatialRestorationModels_.clear();
-    const auto models = applicationDirectory_ / L"models";
-    std::error_code error;
-    if (!std::filesystem::is_directory(models, error)) return;
-    const auto consider = [&](const std::filesystem::path& directory) {
+    for (const auto& item : localModels_) {
+        if (!item.usable || item.kind == 0) continue;
         try {
-            const auto pack = restoration::loadModelPack(directory);
-            const auto& capabilities = pack.capabilities;
-            const bool x2 = capabilities.scaleNumerator == 2 && capabilities.scaleDenominator == 1;
-            const bool sr = std::find(capabilities.tasks.begin(), capabilities.tasks.end(), restoration::Task::superResolution) != capabilities.tasks.end();
-            if (restoration::supportsOnnxCudaTemporalModel(pack)) {
-                temporalRestorationModels_.push_back(pack);
-            } else if (x2 && sr && restoration::supportsOnnxCudaOutputRateModel(pack)) {
-                spatialRestorationModels_.push_back(pack);
-            }
+            const auto pack = restoration::loadModelPack(checkedNativeModelDirectory(item.directory));
+            if (item.kind == 2) temporalRestorationModels_.push_back(pack);
+            else if (item.kind == 1) spatialRestorationModels_.push_back(pack);
         } catch (const std::exception&) {
-            // Invalid or unrelated local directories are omitted from the user-facing selector.
+            // A pack changed during the refresh; it cannot enter a job selector.
         }
-    };
-    for (const auto& entry : std::filesystem::directory_iterator(models, error)) {
-        if (entry.is_directory(error)) consider(entry.path());
     }
     std::sort(temporalRestorationModels_.begin(), temporalRestorationModels_.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.displayName < rhs.displayName;
@@ -1890,6 +2329,25 @@ void NativeApp::discoverRestorationModels() {
     std::sort(spatialRestorationModels_.begin(), spatialRestorationModels_.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.displayName < rhs.displayName;
     });
+}
+
+void NativeApp::syncRestorationSelectors() {
+    const auto populate = [&](HWND combo, const auto& models, int kind, const wchar_t* off) {
+        if (!combo) return;
+        SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+        SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(off));
+        int selection = 0;
+        for (std::size_t index = 0; index < models.size(); ++index) {
+            const auto name = restorationSelectorLabel(models[index]);
+            SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
+            const auto& selected = modelPreferences_.defaults[static_cast<std::size_t>(kind)];
+            if (!selected.empty() && NativeModelPreferences::key(models[index].directory) == NativeModelPreferences::key(selected))
+                selection = static_cast<int>(index + 1);
+        }
+        SendMessageW(combo, CB_SETCURSEL, selection, 0);
+    };
+    populate(temporalRestorationCombo_, temporalRestorationModels_, 2, L"关闭（初始默认：不使用可选降噪）");
+    populate(restorationCombo_, spatialRestorationModels_, 1, L"关闭（初始默认：不使用超分辨率）");
 }
 
 void NativeApp::updateRestorationControls() {

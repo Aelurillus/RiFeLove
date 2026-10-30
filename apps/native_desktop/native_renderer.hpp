@@ -25,6 +25,7 @@ struct NativeRenderState {
     std::wstring deviceSummary;
     std::wstring encoderSummary;
     std::wstring platformSummary;
+    std::wstring motionBlurSummary;
     std::wstring restorationSummary;
     std::wstring outputSizeSummary;
     std::wstring stage;

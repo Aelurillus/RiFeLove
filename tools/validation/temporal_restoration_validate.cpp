@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <process.h>
 #include <thread>
 
 using namespace rifelove;
@@ -26,8 +27,9 @@ int wmain(int argc, wchar_t** argv) {
             throw std::invalid_argument("Invalid temporal RGB fixture dimensions/count");
         const std::wstring provider = argc == 10 ? argv[9] : L"cuda";
         if (provider != L"cuda" && provider != L"tensorrt") throw std::invalid_argument("Unknown provider");
-        const auto outputPath = std::filesystem::path(argv[8]);
+        const auto outputPath = std::filesystem::absolute(std::filesystem::path(argv[8]));
         if (std::filesystem::exists(outputPath)) throw std::runtime_error("Refusing to replace a fixture output");
+        std::filesystem::create_directories(outputPath.parent_path());
         std::ifstream input(std::filesystem::path(argv[3]),std::ios::binary);
         if (!input) throw std::runtime_error("Could not open temporal RGB fixture");
         const auto pack = restoration::loadModelPack(std::filesystem::path(argv[1]));
@@ -48,7 +50,8 @@ int wmain(int argc, wchar_t** argv) {
         restoration::OnnxCudaRestorationConfig config;
         config.runtimeDirectory = std::filesystem::path(argv[2]);
         config.engineCacheDirectory = outputPath.parent_path() / L"engine-cache";
-        config.profilePrefix = outputPath.parent_path() / (outputPath.stem().wstring() + L"-profile");
+        config.profilePrefix = outputPath.parent_path() /
+            (outputPath.filename().wstring() + L"-profile-" + std::to_wstring(::_getpid()));
         config.providerPreference = provider == L"cuda" ? inference::ProviderPreference::cudaOnly : inference::ProviderPreference::requireTensorRt;
         restoration::OnnxCudaVideoRestorationBackend backend(device,config);
         const auto started = std::chrono::steady_clock::now();
@@ -90,7 +93,9 @@ int wmain(int argc, wchar_t** argv) {
         const double totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         const auto profilePath = backend.finishProfiling();
         std::ifstream profileInput(profilePath,std::ios::binary);
-        nlohmann::json profile; profileInput >> profile;
+        if (!profileInput) throw std::runtime_error("Could not open ONNX Runtime temporal restoration profile");
+        const auto profile = nlohmann::json::parse(profileInput);
+        if (!profile.is_array()) throw std::runtime_error("Invalid ONNX Runtime temporal restoration profile");
         nlohmann::json assignments = nlohmann::json::object();
         for (const auto& event : profile)
             if (event.contains("args") && event.at("args").contains("provider")) {

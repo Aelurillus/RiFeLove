@@ -9,7 +9,11 @@
 #include <windows.h>
 
 #include "native_renderer.hpp"
+#include "native_model_store.hpp"
+#include "native_data_directory.hpp"
+#include "core/pipeline/video_pipeline.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -32,7 +36,7 @@ namespace rifelove::native_desktop {
 
 class NativeApp final {
 public:
-    NativeApp();
+    explicit NativeApp(std::filesystem::path applicationDirectory = {}, std::filesystem::path localAppDataRoot = {});
     ~NativeApp();
     NativeApp(const NativeApp&) = delete;
     NativeApp& operator=(const NativeApp&) = delete;
@@ -40,7 +44,23 @@ public:
     [[nodiscard]] bool create(HINSTANCE instance, int showCommand);
     [[nodiscard]] int run();
 #ifdef RIFELOVE_NATIVE_TESTING
+    [[nodiscard]] HWND testMainWindow() const noexcept { return window_; }
     [[nodiscard]] const NativeRenderState& testViewState() const noexcept { return state_; }
+    [[nodiscard]] PipelineSettings testExportSettings() const {
+        PipelineSettings settings;
+        applyExportControls(settings);
+        return settings;
+    }
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    [[nodiscard]] const auto& testLocalModels() const noexcept { return localModels_; }
+    [[nodiscard]] const auto& testModelPreferences() const noexcept { return modelPreferences_; }
+    [[nodiscard]] const auto& testDataDirectory() const noexcept { return dataDirectory_; }
+    bool testRegisterModel(const std::filesystem::path& path) { return registerLocalModel(path); }
+    bool testSetDefaultModel(std::size_t index) { return setDefaultLocalModel(index); }
+    bool testUnregisterModel(std::size_t index) { return unregisterLocalModel(index); }
+    void testRefreshModels() { refreshLocalModels(); }
+    HWND testShowModelCenter() { showModelCenter(); return modelCenterWindow_; }
+#endif
 #endif
 
 private:
@@ -80,6 +100,13 @@ private:
     static constexpr int kRestorationLabel = 1109;
     static constexpr int kOutputSizeLabel = 1110;
     static constexpr int kTemporalRestorationLabel = 1111;
+    static constexpr int kModelList = 1201;
+    static constexpr int kModelDetails = 1202;
+    static constexpr int kModelRegister = 1203;
+    static constexpr int kModelDefault = 1204;
+    static constexpr int kModelUnregister = 1205;
+    static constexpr int kModelRefresh = 1206;
+    static constexpr int kModelClose = 1207;
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     struct NativeEvent final {
@@ -123,6 +150,7 @@ private:
     void setSourcePath(const std::filesystem::path& source);
     void setOutputPath(const std::filesystem::path& output);
     void applyPlatformPreset(int index);
+    void applyExportControls(PipelineSettings& settings) const;
     void startProcessing();
     void cancelProcessing();
     void closeWindow();
@@ -181,6 +209,30 @@ private:
     [[nodiscard]] bool refreshRuntime(const std::filesystem::path& directory);
     void discoverRestorationModels();
     void updateRestorationControls();
+    struct LocalModel final {
+        std::filesystem::path directory;
+        std::wstring name;
+        std::wstring version;
+        std::wstring capabilities;
+        std::wstring profiles;
+        std::wstring verification;
+        int kind = -1;
+        bool verified = false;
+        bool usable = false;
+    };
+    [[nodiscard]] LocalModel inspectLocalModel(const std::filesystem::path& directory) const;
+    void refreshLocalModels();
+    void syncRestorationSelectors();
+    [[nodiscard]] bool registerLocalModel(const std::filesystem::path& directory);
+    [[nodiscard]] bool setDefaultLocalModel(std::size_t index);
+    [[nodiscard]] bool unregisterLocalModel(std::size_t index);
+    [[nodiscard]] bool saveModelPreferences(const NativeModelPreferences& preferences);
+    [[nodiscard]] bool modelChangesAllowed() const;
+    static LRESULT CALLBACK modelCenterWindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+    void showModelCenter();
+    void layoutModelCenter();
+    void updateModelCenter();
+    void updateModelDetails();
     void showTaskHistory();
     void refreshTaskHistory();
     void handleHistoryResult(NativeHistoryResult result);
@@ -242,11 +294,29 @@ private:
     std::atomic<HWND> callbackWindow_{nullptr};
     std::atomic<bool> closing_{false};
     bool advancedExpanded_ = false;
-    int localRateSelection_ = 1;
-    int localEncoderSelection_ = 0;
+    struct ExportPresetControls {
+        int rateSelection = 1;
+        int encoderSelection = 0;
+        std::wstring customRate = L"300/1";
+        bool blurEnabled = false;
+        std::wstring shutterAngle = L"180";
+        std::wstring sampleCount = L"4";
+        bool saved = false;
+    };
+    std::array<ExportPresetControls, 6> exportPresetControls_{};
     int lastPlatformSelection_ = 0;
-    std::wstring localCustomRate_ = L"300/1";
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    NativeModelPreferences modelPreferences_;
+    NativeDataDirectory dataDirectory_;
+    bool modelPreferencesWritable_ = true;
+    std::wstring modelCenterNotice_;
+    std::vector<LocalModel> localModels_;
+    HWND modelCenterWindow_ = nullptr;
+    HWND modelList_ = nullptr;
+    HWND modelDetails_ = nullptr;
+    HWND modelCenterStatus_ = nullptr;
+    HFONT modelCenterFont_ = nullptr;
+    std::filesystem::path modelCenterSelectedPath_;
     HWND historyWindow_ = nullptr;
     HWND historyText_ = nullptr;
     HWND historyStatus_ = nullptr;

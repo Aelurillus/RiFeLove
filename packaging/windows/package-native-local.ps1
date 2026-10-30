@@ -537,13 +537,12 @@ try {
         schemaVersion = 1; product = "RifeLoveNative"; qt = $false; cliIncluded = $false; oss = $false
         defaultModelDirectory = "models/rife-4.25-fp32-sdr8-v3"; legacyModelDirectory = if ($includeLegacyModel) { "models/rife-4.25-fp32-sdr8-v2" } else { $null }
         restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = "models/fastdvdnet-clipped-five-frame-sdr8-eval"; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = "experimental-optional"; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
-        ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; CPU build has no x86asm optimization"; dataDirectory = "data"
+        ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; CPU build has no x86asm optimization"; dataDirectory = '%LOCALAPPDATA%\RifeLove'
+        portableDataDirectory = "data"; portableModeMarker = "portable-mode.txt"; portableModeMarkerValue = "RifeLovePortable 1"
         legacyModelIncluded = $includeLegacyModel
     }
     $defaults | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $configTarget "defaults.json") -Encoding utf8NoBOM
     New-Item -ItemType Directory -Path (Join-Path $staging "data") | Out-Null
-    Set-Content -LiteralPath (Join-Path $staging "portable.flag") -Value "RifeLoveNative local package" -Encoding utf8NoBOM
-
     $licenseTarget = Join-Path $staging "licenses"
     New-Item -ItemType Directory -Path $licenseTarget | Out-Null
     Copy-FileChecked (Join-Path $repositoryRoot "LICENSE") (Join-Path $licenseTarget "RifeLove-MIT.txt")
@@ -595,11 +594,12 @@ try {
         generatedAtUtc = [DateTimeOffset]::UtcNow.ToString("o"); executable = "RifeLoveNative.exe"
         executableSha256 = (Get-FileHash -LiteralPath (Join-Path $staging "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
         qtIncluded = $false; cliIncluded = $false; ossEnabled = $false; userMediaIncluded = $false; userDataIncluded = $false
-        ffmpeg = [ordered]@{ source = "work/codec-ffmpeg-build/ffmpeg-install"; root = $ffmpeg; binaries = $ffmpegFiles; nvenc = "integrated in isolated SDK; validated H.264 NVENC and software fallback"; x86asm = "disabled; CPU throughput remains unqualified"; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
-        inferenceRuntime = [ordered]@{ source = $runtime; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = $versionLines[0]; sourceSha256 = $versionLines[1]; providers = @("TensorRT", "CUDA", "CPU-fallback") }
+        ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; nvenc = "integrated in isolated SDK; validated H.264 NVENC and software fallback"; x86asm = "disabled; CPU throughput remains unqualified"; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
+        inferenceRuntime = [ordered]@{ source = "local TensorRT/ONNX Runtime CUDA SDK"; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = $versionLines[0]; sourceSha256 = $versionLines[1]; providers = @("TensorRT", "CUDA", "CPU-fallback") }
         models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
         migration = [ordered]@{ legacyModelIncluded = $includeLegacyModel; legacyModelPathToken = $legacyReference.token; legacyModelSha256 = $legacyModelHash; evidence = @($legacyReference.evidence); cleanPackageOmitsUnreferencedLegacy = $true }
-        defaults = "config/defaults.json"; dataDirectory = "data"; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"
+        defaults = "config/defaults.json"; dataDirectory = '%LOCALAPPDATA%\RifeLove'; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"
+        portableDataDirectory = "data"; portableModeMarker = "portable-mode.txt"; portableModeMarkerValue = "RifeLovePortable 1"
     }
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $staging "PACKAGE-MANIFEST.json") -Encoding utf8NoBOM
     $readme = @"
@@ -607,7 +607,8 @@ RifeLove 原生 Windows 本机包
 
 启动：双击 RifeLoveNative.exe。此目录是 Win32/Direct2D/DirectWrite 原生桌面包，不包含 Qt、QML 或 CLI。
 默认模型：models/rife-4.25-fp32-sdr8-v3；models/realesrgan-x2plus-sdr8-v2 为 Real-ESRGAN x2plus v2 本机评估权重；models/fastdvdnet-clipped-five-frame-sdr8-eval 为 FastDVDnet 五帧时序降噪本机评估权重，仅支持已声明的 SDR8 源率降噪。
-视频、任务、设置和日志只保存在本机 data 目录。刷新本机包时，已有 data 和用户添加的模型会保留；发布包和 SHA256SUMS.txt 不包含 data。
+任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写。视频输出位置由用户选择，原片不会被覆盖。
+只有在 EXE 同目录创建 portable-mode.txt 且第一行为 RifeLovePortable 1，才显式使用旁边的 data 目录。旧 data 中符合条件的队列与偏好会安全迁移，原文件保留。刷新本机包会保留旧 data 和用户添加的模型；SHA256SUMS.txt 不包含可变用户 data。
 当前包使用隔离构建的 FFmpeg 运行库，包含 H.264 NVENC、OpenH264、Kvazaar 和 libaom；自动编码优先使用 H.264 NVENC，并在不可用时软件回退。该构建关闭 x86asm，CPU 编码性能尚未完成资格确认。
 TensorRT、ONNX Runtime CUDA、CUDA、cuDNN 和 FFmpeg DLL 随包放置。仍需要兼容的 NVIDIA 驱动；首次推理可能生成本机 TensorRT 缓存。
 只有刷新时发现 data 中存在带精确 v2 路径 token、模型 ID、版本和 SHA-256 的队列/检查点记录，包才会额外保留 models/rife-4.25-fp32-sdr8-v2；干净包不会捆绑未被实际迁移数据引用的重复 RIFE 模型。

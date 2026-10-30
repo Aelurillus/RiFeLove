@@ -1,5 +1,7 @@
 #include "native_app.hpp"
 #include "native_renderer.hpp"
+#include "native_model_center_test.hpp"
+#include "native_data_directory_test.hpp"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -351,6 +353,126 @@ void checkFrameRateOptions(HWND window) {
     SendMessageW(rate, CB_SETCURSEL, 1, 0);
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1005, CBN_SELCHANGE), reinterpret_cast<LPARAM>(rate));
     check(custom && !IsWindowVisible(custom), "custom rational edit hides again for standard frame rates");
+}
+
+void checkPlatformPresets(NativeApp& app, HWND window) {
+    const HWND rate = GetDlgItem(window, 1005), encoder = GetDlgItem(window, 1006);
+    const HWND platform = GetDlgItem(window, 1012), custom = GetDlgItem(window, 1011);
+    const HWND blur = GetDlgItem(window, 1013), shutter = GetDlgItem(window, 1014);
+    const HWND samples = GetDlgItem(window, 1015), output = GetDlgItem(window, 1003);
+    check(rate && encoder && platform && custom && blur && shutter && samples && output,
+        "find controls for platform preset regression");
+    if (!rate || !encoder || !platform || !custom || !blur || !shutter || !samples || !output) return;
+    const auto readText = [](HWND control) {
+        const int length = GetWindowTextLengthW(control);
+        std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
+        GetWindowTextW(control, value.data(), length + 1);
+        value.resize(static_cast<std::size_t>(length));
+        return value;
+    };
+    const auto choose = [&](HWND control, int index) {
+        check(SendMessageW(control, CB_SETCURSEL, index, 0) != CB_ERR, "select an export preset setting");
+        SendMessageW(window, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(control), CBN_SELCHANGE), reinterpret_cast<LPARAM>(control));
+    };
+    const auto setBlur = [&](bool enabled) {
+        SendMessageW(blur, BM_SETCHECK, enabled ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(window, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
+    };
+    const int originalRate = static_cast<int>(SendMessageW(rate, CB_GETCURSEL, 0, 0));
+    const int originalEncoder = static_cast<int>(SendMessageW(encoder, CB_GETCURSEL, 0, 0));
+    const auto originalCustom = readText(custom), originalOutput = readText(output);
+    const auto originalShutter = readText(shutter), originalSamples = readText(samples);
+    const bool originalBlur = SendMessageW(blur, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    SetWindowTextW(output, L"C:\\RifeLove-preset-regression\\master.mkv");
+    choose(encoder, 2);
+    SetWindowTextW(shutter, L"270");
+    SetWindowTextW(samples, L"8");
+    setBlur(true);
+    for (const int index : {5, 6, 7, 8}) {
+        choose(rate, index);
+        choose(platform, 1);
+        const auto copy = app.testExportSettings();
+        check(copy.targetRate == rifelove::Rational(60) && copy.motionBlur.enabled &&
+            copy.motionBlur.shutterAngleDegrees == 180 && copy.motionBlur.sampleCount == 4,
+            "60 FPS platform copy defaults to editable 180 degree four-sample exposure");
+        choose(platform, 0);
+        const auto master = app.testExportSettings();
+        const std::array<int, 4> highRates{300, 360, 480, 600};
+        check(master.targetRate == rifelove::Rational(highRates[static_cast<std::size_t>(index - 5)]) &&
+            master.encoding.encoder == "libopenh264" && master.motionBlur.enabled &&
+            master.motionBlur.shutterAngleDegrees == 270 && master.motionBlur.sampleCount == 8,
+            "returning to master restores high rate, encoder and independent exposure settings");
+        check(std::filesystem::path(readText(output)).extension() == L".mkv", "master restores the MKV output container");
+    }
+    choose(rate, 9);
+    SetWindowTextW(custom, L"300000/1001");
+    choose(platform, 1);
+    choose(platform, 0);
+    check(app.testExportSettings().targetRate == rifelove::Rational(300000, 1001) && readText(custom) == L"300000/1001",
+        "master restores the exact custom rational rate");
+
+    const std::array<int, 5> copyRates{60, 60, 120, 30, 60};
+    const std::array<std::int64_t, 5> bitrates{12'000'000, 20'000'000, 40'000'000, 20'000'000, 20'000'000};
+    const std::array<int, 5> gops{30, 120, 240, 60, 120};
+    for (int index = 1; index <= 5; ++index) {
+        choose(platform, index);
+        const auto settings = app.testExportSettings();
+        const auto offset = static_cast<std::size_t>(index - 1);
+        check(settings.targetRate == rifelove::Rational(copyRates[offset]) && settings.encoding.frameRate == settings.targetRate &&
+            settings.encoding.encoder == "auto" && settings.encoding.bitRate == bitrates[offset] && settings.encoding.gopSize == gops[offset],
+            "platform controls pass actual frame rate, encoder, bitrate and GOP to the common job settings");
+        check(settings.motionBlur.enabled == (copyRates[offset] == 60), "only the 60 FPS copy presets initially enable natural exposure");
+        check(std::filesystem::path(readText(output)).extension() == L".mp4", "platform copy selects MP4 output");
+        check(app.testViewState().platformSummary.find(std::to_wstring(copyRates[offset]) + L" FPS") != std::wstring::npos,
+            "platform explanation reports the actual selected output rate");
+        if (copyRates[offset] == 60)
+            check(app.testViewState().platformSummary.find(L"240 FPS") == std::wstring::npos,
+                "60 FPS output is not described as 240 FPS playback");
+        if (index == 3)
+            check(app.testViewState().platformSummary.find(L"历史") != std::wstring::npos &&
+                app.testViewState().platformSummary.find(L"实测") != std::wstring::npos,
+                "Bilibili 120 FPS retains its historical experimental qualification");
+    }
+    choose(platform, 2);
+    choose(rate, 9);
+    SetWindowTextW(custom, L"30000/1001");
+    choose(encoder, 1);
+    SetWindowTextW(shutter, L"90");
+    SetWindowTextW(samples, L"6");
+    setBlur(false);
+    choose(platform, 1);
+    choose(platform, 2);
+    auto edited = app.testExportSettings();
+    check(edited.targetRate == rifelove::Rational(30000, 1001) && edited.encoding.encoder == "h264_nvenc" &&
+        edited.encoding.gopSize == 60 && !edited.motionBlur.enabled && readText(shutter) == L"90" && readText(samples) == L"6",
+        "platform revisits retain manual rate, encoder, disabled exposure and edited parameters");
+    setBlur(true);
+    edited = app.testExportSettings();
+    check(edited.motionBlur.shutterAngleDegrees == 90 && edited.motionBlur.sampleCount == 6,
+        "manual exposure values are passed to the same settings builder as processing jobs");
+    check(app.testViewState().platformSummary.find(L"30000/1001 FPS") != std::wstring::npos,
+        "manual rational rate is visible instead of the preset's nominal 60 FPS");
+    // Leave each platform preset at its documented default for later media
+    // fixtures in this same process; no production reset-only API is needed.
+    choose(rate, 1);
+    choose(encoder, 0);
+    SetWindowTextW(shutter, L"180");
+    SetWindowTextW(samples, L"4");
+    choose(platform, 1);
+    choose(rate, 9);
+    SetWindowTextW(custom, L"30000/1001");
+    const auto fractionalYoutube = app.testExportSettings();
+    check(fractionalYoutube.encoding.bitRate == 8'000'000 && fractionalYoutube.encoding.gopSize == 15,
+        "fractional 29.97 FPS uses standard-rate YouTube bitrate and GOP rather than falling back to 60 FPS");
+    choose(rate, 1);
+    choose(platform, 0);
+    choose(rate, originalRate);
+    choose(encoder, originalEncoder);
+    SetWindowTextW(custom, originalCustom.c_str());
+    SetWindowTextW(shutter, originalShutter.c_str());
+    SetWindowTextW(samples, originalSamples.c_str());
+    setBlur(originalBlur);
+    SetWindowTextW(output, originalOutput.c_str());
 }
 
 void checkLongComboPopup(HWND window) {
@@ -825,14 +947,21 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 
+    rifelove::native_test::checkLocalModelPreferences(check);
+    rifelove::native_test::checkNativeDataDirectories(check);
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    if (argc == 1) rifelove::native_test::checkLocalModelCenter(check);
+#endif
     {
-        NativeApp app;
+        rifelove::native_test::ModelCenterTemporaryDirectory profile;
+        NativeApp app({}, profile.root / L"LocalAppData");
         check(app.create(GetModuleHandleW(nullptr), SW_SHOWNOACTIVATE), "create native window");
         HWND window = nullptr;
         EnumThreadWindows(GetCurrentThreadId(), findWindow, reinterpret_cast<LPARAM>(&window));
         check(window != nullptr, "find native window on isolated desktop");
         if (window) {
             checkFrameRateOptions(window);
+            checkPlatformPresets(app, window);
             checkLongComboPopup(window);
             checkNarrowImportLayout(window);
             checkOutputFieldAlignment(window);
