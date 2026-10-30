@@ -39,6 +39,15 @@ std::vector<Rational> motionBlurSampleTimes(
     return result;
 }
 
+std::pair<Rational,Rational> motionBlurExposureBounds(
+    Rational center, Rational targetRate, int shutterAngleDegrees) {
+    if (targetRate <= Rational(0)) throw std::invalid_argument("Motion blur target rate must be positive");
+    if (shutterAngleDegrees < 0 || shutterAngleDegrees > 360)
+        throw std::invalid_argument("Motion blur shutter angle must be 0..360 degrees");
+    const auto halfExposure = Rational(shutterAngleDegrees,720) / targetRate;
+    return {center - halfExposure,center + halfExposure};
+}
+
 MotionBlurSampleLocation resolveMotionBlurSample(
     std::span<const Rational> sourceTimestamps,
     std::span<const quality::PairAction> pairActions,
@@ -78,6 +87,54 @@ bool motionBlurWindowCrossesBlockedPair(
         if (windowStart < sourceTimestamps[index + 1] && windowEnd > sourceTimestamps[index]) return true;
     }
     return false;
+}
+
+MotionBlurExposurePlan planMotionBlurExposure(
+    std::span<const Rational> sourceTimestamps,
+    std::span<const quality::PairAction> pairActions,
+    Rational center, Rational targetRate, int shutterAngleDegrees, int sampleCount,
+    bool beginsAtSourceStart, bool endOfSource) {
+    const auto sampleTimes = motionBlurSampleTimes(center,targetRate,shutterAngleDegrees,sampleCount);
+    const auto [windowStart,windowEnd] = motionBlurExposureBounds(center,targetRate,shutterAngleDegrees);
+    if (sourceTimestamps.empty() || pairActions.size() + 1 != sourceTimestamps.size())
+        throw std::invalid_argument("Motion blur exposure needs a matching source window");
+    // Resolve once to validate strictly increasing timestamps, even while
+    // waiting for lookahead. Losing history is an error, not a blur fallback.
+    MotionBlurExposurePlan plan;
+    plan.center = resolveMotionBlurSample(sourceTimestamps,pairActions,center);
+    if (!beginsAtSourceStart && windowStart < sourceTimestamps.front())
+        throw std::logic_error("Motion blur source history does not cover the full shutter");
+    if (!endOfSource && windowEnd > sourceTimestamps.back()) return plan;
+    plan.ready = true;
+    plan.edgeHeld = windowStart < sourceTimestamps.front() || windowEnd > sourceTimestamps.back();
+    if (plan.center.blocked) {
+        plan.fallbackReason = std::string(quality::toString(pairActions[plan.center.leftIndex]));
+        return plan;
+    }
+    for (std::size_t index = 0; index < pairActions.size(); ++index) {
+        if (pairActions[index] != quality::PairAction::interpolate &&
+            windowStart < sourceTimestamps[index + 1] && windowEnd > sourceTimestamps[index]) {
+            plan.fallbackReason = std::string(quality::toString(pairActions[index]));
+            return plan;
+        }
+    }
+    plan.samples.reserve(sampleTimes.size());
+    for (const auto time : sampleTimes) {
+        auto location = resolveMotionBlurSample(sourceTimestamps,pairActions,time);
+        if (location.blocked) throw std::logic_error("Motion blur sample crossed an unchecked quality barrier");
+        plan.edgeHeld = plan.edgeHeld || time < sourceTimestamps.front() || time > sourceTimestamps.back();
+        plan.samples.push_back(location);
+    }
+    return plan;
+}
+
+std::size_t motionBlurDiscardableFrames(
+    std::span<const Rational> sourceTimestamps, Rational nextWindowStart) {
+    if (sourceTimestamps.empty()) return 0;
+    const auto after = std::upper_bound(sourceTimestamps.begin(),sourceTimestamps.end(),nextWindowStart);
+    // The last timestamp <= the next shutter start is its left bracket.
+    return after == sourceTimestamps.begin() ? 0 :
+        static_cast<std::size_t>(std::distance(sourceTimestamps.begin(),after) - 1);
 }
 
 } // namespace rifelove::pipeline

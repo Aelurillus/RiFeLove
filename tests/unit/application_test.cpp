@@ -84,6 +84,7 @@ TEST(ProcessingConfiguration, RoundTripsAllAdvancedSettingsAndPinnedIdentity) {
     EXPECT_EQ(restored.temporalRestorationModelDirectory,job.temporalRestorationModelDirectory);
     EXPECT_EQ(restored.expectedTemporalRestorationDescriptorSha256,job.expectedTemporalRestorationDescriptorSha256);
     EXPECT_TRUE(restored.settings.motionBlur.enabled);
+    EXPECT_EQ(nlohmann::json::parse(encoded).at("motionBlur").at("algorithmVersion"),2);
     EXPECT_EQ(restored.settings.motionBlur.shutterAngleDegrees,180);
     EXPECT_EQ(restored.settings.motionBlur.sampleCount,4);
     EXPECT_EQ(restored.sourceDurationEstimate,job.sourceDurationEstimate);
@@ -101,6 +102,8 @@ TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThreshold
     json = nlohmann::json::parse(serializeJob(job)); json["encoding"]["bitRate"] = 18446744073709551615ULL;
     EXPECT_THROW((void)parseJob(job.source,job.output,json.dump()),std::invalid_argument);
     json = nlohmann::json::parse(serializeJob(job)); json["encoding"]["maxBFrames"] = 1.5;
+    EXPECT_THROW((void)parseJob(job.source,job.output,json.dump()),std::invalid_argument);
+    json = nlohmann::json::parse(serializeJob(job)); json["motionBlur"]["algorithmVersion"] = 999;
     EXPECT_THROW((void)parseJob(job.source,job.output,json.dump()),std::invalid_argument);
     auto bad = job; bad.expectedSourceSha256 = "unverified"; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
     bad = job; bad.settings.scene.cutMeanDifference = -0.1; EXPECT_THROW((void)serializeJob(bad),std::invalid_argument);
@@ -223,6 +226,10 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     result.video.firstTimestamp = Rational(3,2); result.video.endExclusive = Rational(7,2);
     result.sourceFrames = 60; result.aiFrames = 60; result.processedFrames = 120; result.reusedFrames = 0;
     result.inferenceCalls = 240; result.originalFrames = 60; result.heldFrames = 0;
+    result.motionBlurActive = true; result.motionBlurredFrames = 117; result.motionBlurFallbackFrames = 3;
+    result.motionBlurFallbackReasons = {{"scene_cut_hold",3}};
+    result.motionBlurEdgeHeldFrames = 2; result.motionBlurPeakWindowFrames = 12;
+    result.motionBlurPeakPreparedBytes = 12 * 64 * 64 * 3 * sizeof(float);
     result.sceneCuts = 1; result.duplicatePairs = 2; result.abnormalPairs = 3; result.recoveredTimestamps = 4;
     result.modelId = "rife-4.25-fp32-sdr8"; result.backend = "onnxruntime_tensorrt_cuda";
     result.restorationModelId = "realesrgan-x2"; result.restorationBackend = "onnxruntime_cuda";
@@ -269,6 +276,11 @@ TEST(ProcessingReport, SerializesRuntimeIdentityQualityDiagnosticsAndTimingEvide
     EXPECT_EQ(report.at("temporalRestoration").at("id"),"fastdvdnet");
     EXPECT_EQ(report.at("pipelineResult").at("temporalRestorationBackend"),"onnxruntime_tensorrt_cuda");
     EXPECT_EQ(report.at("performance").at("inferenceCalls"),240);
+    EXPECT_EQ(report.at("qualityDiagnostics").at("motionBlur").at("blurredFrames"),117);
+    EXPECT_EQ(report.at("qualityDiagnostics").at("motionBlur").at("fallbackFrames"),3);
+    EXPECT_EQ(report.at("qualityDiagnostics").at("motionBlur").at("fallbackReasons").at("scene_cut_hold"),3);
+    EXPECT_EQ(report.at("qualityDiagnostics").at("motionBlur").at("countsScope"),"current_execution");
+    EXPECT_EQ(report.at("pipelineResult").at("motionBlur").at("edgeHeldFrames"),2);
     EXPECT_EQ(report.at("pipelineResult").at("timings").at("sourceDecodeSeconds"),1.25);
     EXPECT_EQ(report.at("pipelineResult").at("recoveredTimestamps"),4);
 }

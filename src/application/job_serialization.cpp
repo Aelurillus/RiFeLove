@@ -165,6 +165,10 @@ std::string serializeJob(const ProcessingJob& job) {
         {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"outputWidth",e.outputWidth},{"outputHeight",e.outputHeight},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
             {"bitRate",e.bitRate},{"gopSize",e.gopSize},{"maxBFrames",e.maxBFrames},{"allowPrecisionLoss",e.allowPrecisionLoss},{"options",e.encoderOptions}}},
         {"scene",{{"cutMeanDifference",s.cutMeanDifference},{"cutHistogramDistance",s.cutHistogramDistance},{"abnormalMeanDifference",s.abnormalMeanDifference},{"duplicateMaximumDifference",s.duplicateMaximumDifference}}}};
+    // The full-PTS shutter changes pixels compared with the former four-frame
+    // window. Bind enabled jobs/checkpoints to this algorithm; old sharp
+    // fallback segments must not be silently reused by the corrected path.
+    if (job.settings.motionBlur.enabled) json["motionBlur"]["algorithmVersion"] = 2;
     const auto result = json.dump(); if (result.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB"); return result;
 }
 ProcessingJob parseJob(const std::string& source, const std::string& output, const std::string& value) {
@@ -192,6 +196,8 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
         job.settings.motionBlur.enabled = blur.at("enabled").get<bool>();
         job.settings.motionBlur.shutterAngleDegrees = integer<int>(blur.at("shutterAngleDegrees"));
         job.settings.motionBlur.sampleCount = integer<int>(blur.at("sampleCount"));
+        if (blur.contains("algorithmVersion") && integer<int>(blur.at("algorithmVersion")) != 2)
+            throw std::invalid_argument("Unsupported motion blur algorithm version");
     }
     job.expectedSourceSha256 = json.at("expectedSourceSha256").get<std::string>(); job.expectedModelSha256 = json.at("expectedModelSha256").get<std::string>();
     job.expectedModelId = json.at("expectedModelId").get<std::string>(); job.expectedModelVersion = json.at("expectedModelVersion").get<std::string>();
@@ -312,6 +318,10 @@ std::string serializeResult(const PipelineResult& r) {
         {"encoder",r.video.encoder},{"sourceFrames",r.sourceFrames},{"outputFrames",r.video.framesSubmitted},
         {"aiFrames",r.aiFrames},{"processedFrames",processedFrames},{"reusedFrames",reusedFrames},
         {"inferenceCalls",r.inferenceCalls},{"originalFrames",r.originalFrames},{"heldFrames",r.heldFrames},{"sceneCuts",r.sceneCuts},{"duplicatePairs",r.duplicatePairs},{"abnormalPairs",r.abnormalPairs},
+        {"motionBlur",{{"algorithmVersion",2},{"active",r.motionBlurActive},{"blurredFrames",r.motionBlurredFrames},
+            {"fallbackFrames",r.motionBlurFallbackFrames},{"fallbackReasons",r.motionBlurFallbackReasons},
+            {"edgeHeldFrames",r.motionBlurEdgeHeldFrames},{"peakWindowFrames",r.motionBlurPeakWindowFrames},
+            {"peakPreparedBytes",r.motionBlurPeakPreparedBytes},{"countsScope","current_execution"}}},
         {"recoveredTimestamps",r.recoveredTimestamps},
         {"firstTimestamp",r.video.firstTimestamp.toString()},{"endExclusive",r.video.endExclusive.toString()},{"elapsedSeconds",r.elapsedSeconds},{"processingFps",processingFps},{"encoderFallbackReason",r.encoderFallbackReason},
         {"timings",timingBreakdown(r.timings)},
@@ -375,6 +385,7 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
             {"aiFrames",result.aiFrames},{"inferenceCalls",result.inferenceCalls},{"originalFrames",result.originalFrames},{"heldFrames",result.heldFrames},
             {"stageTimings",timingBreakdown(result.timings)}}},
         {"qualityDiagnostics",{{"sceneCuts",result.sceneCuts},{"duplicatePairs",result.duplicatePairs},{"abnormalMotionPairs",result.abnormalPairs},
+            {"motionBlur",pipeline.at("motionBlur")},
             {"perceptualMetricsMeasured",false},
             {"note","No reference video was supplied; PSNR, SSIM and LPIPS were not measured."}}},
         {"timingValidation",pipeline.at("validation")},

@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -119,6 +120,15 @@ struct PipelineResult {
     // exposure sampling can make this larger than the AI output-frame count;
     // after checkpoint resume it counts only work performed by this run.
     std::size_t inferenceCalls = 0;
+    // Current execution only: reused checkpoint output is not claimed as
+    // newly integrated exposure. Quality holds are counted separately.
+    bool motionBlurActive = false;
+    std::size_t motionBlurredFrames = 0;
+    std::size_t motionBlurFallbackFrames = 0;
+    std::map<std::string,std::size_t> motionBlurFallbackReasons;
+    std::size_t motionBlurEdgeHeldFrames = 0;
+    std::size_t motionBlurPeakWindowFrames = 0;
+    std::size_t motionBlurPeakPreparedBytes = 0;
     std::size_t originalFrames;
     std::size_t heldFrames;
     std::size_t sceneCuts;
@@ -163,7 +173,8 @@ struct PipelineResult {
     return static_cast<double>(ratio > maximum ? maximum : ratio);
 }
 // Services own the selected device/backend. The pipeline owns no UI or vendor
-// contexts and retains only adjacent source frames and one pending output.
+// contexts. Ordinary interpolation retains adjacent source frames; exposure
+// synthesis retains the exact shutter window within the host-buffer budget.
 [[nodiscard]] PipelineResult interpolateVideo(const std::string& source, const std::string& destination,
     const PipelineSettings& settings, gpu::CudaDevice& device, inference::IInterpolationBackend& backend,
     const std::function<void(const PipelineProgress&)>& progress = {}, std::stop_token stop = {});

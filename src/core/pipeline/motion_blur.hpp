@@ -4,7 +4,9 @@
 #include "interpolation/scene_analysis.hpp"
 
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace rifelove::pipeline {
@@ -20,6 +22,10 @@ namespace rifelove::pipeline {
 // a disabled/legacy path.
 [[nodiscard]] std::vector<Rational> motionBlurSampleTimes(
     Rational center, Rational targetRate, int shutterAngleDegrees, int sampleCount);
+
+// Full shutter bounds, not only the midpoint quadrature sample extrema.
+[[nodiscard]] std::pair<Rational,Rational> motionBlurExposureBounds(
+    Rational center, Rational targetRate, int shutterAngleDegrees);
 
 struct MotionBlurSampleLocation {
     // For an exact source-frame or edge hold, sourceIndex is valid and
@@ -51,5 +57,28 @@ struct MotionBlurSampleLocation {
     std::span<const Rational> sourceTimestamps,
     std::span<const quality::PairAction> pairActions,
     Rational windowStart, Rational windowEnd);
+
+struct MotionBlurExposurePlan {
+    // Until EOF, ready is false while the full shutter still needs future
+    // source timestamps. Only the real source start/end permit edge hold.
+    bool ready = false;
+    MotionBlurSampleLocation center;
+    std::vector<MotionBlurSampleLocation> samples;
+    bool edgeHeld = false;
+    // A quality barrier causes an explicit center/left hold, never an
+    // exposure that mixes across the barrier. Empty means integration is safe.
+    std::string fallbackReason;
+};
+
+[[nodiscard]] MotionBlurExposurePlan planMotionBlurExposure(
+    std::span<const Rational> sourceTimestamps,
+    std::span<const quality::PairAction> pairActions,
+    Rational center, Rational targetRate, int shutterAngleDegrees, int sampleCount,
+    bool beginsAtSourceStart, bool endOfSource);
+
+// Discard history strictly before the left bracket of the next shutter.
+// Retaining one bracket also preserves exact VFR interpolation and barriers.
+[[nodiscard]] std::size_t motionBlurDiscardableFrames(
+    std::span<const Rational> sourceTimestamps, Rational nextWindowStart);
 
 } // namespace rifelove::pipeline

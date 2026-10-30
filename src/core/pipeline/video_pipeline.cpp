@@ -11,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <limits>
 #include <numeric>
 #include <utility>
@@ -381,10 +382,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         }
     }
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
-    std::optional<CachedFrame> before;
     std::optional<CachedFrame> left;
     std::optional<CachedFrame> right;
-    std::optional<quality::SceneAnalysis> beforeAnalysis;
     std::optional<quality::SceneAnalysis> pairAnalysis;
     std::optional<CfrClock> clock;
     std::optional<media::DecodedFrame> pending;
@@ -393,6 +392,15 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::shared_ptr<gpu::DeviceBuffer> reusableOutput;
     gpu::DeviceBufferPool inputBuffers(device,2);
     const bool motionBlurActive = settings.motionBlur.enabled && settings.motionBlur.shutterAngleDegrees > 0 && settings.motionBlur.sampleCount > 1;
+    result.motionBlurActive = motionBlurActive;
+    // Source-window storage is bounded by both the configured aggregate
+    // prepared-float budget and an absolute frame-count cap. If a shutter
+    // cannot fit, fail explicitly instead of silently outputting sharp frames.
+    const auto preparedFrameBytes = paddedWidth * paddedHeight * 3 * sizeof(float);
+    const auto blurWindowFrameLimit = std::min<std::size_t>(4096,settings.hostFloatBufferLimit / preparedFrameBytes);
+    std::deque<CachedFrame> blurFrames;
+    std::deque<quality::SceneAnalysis> blurAnalyses;
+    bool blurBeginsAtSourceStart = true;
     std::optional<restoration::TemporalWindow> temporalWindow;
     if (temporalCapabilities) temporalWindow.emplace(*temporalCapabilities);
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
@@ -497,7 +505,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     };
     const auto uploadForSample = [&](CachedFrame& frame) -> inference::GpuFrame {
         // Motion blur keeps a bounded source window. Use short-lived uploads
-        // for samples so retaining the host frames does not pin three or four
+        // for samples so retaining the host frames does not pin the window's
         // device buffers in the two-buffer input pool.
         if (!motionBlurActive) return upload(frame);
         auto storage = measure(result.timings.inputUploadSeconds,[&] {
@@ -541,68 +549,78 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         else if (analysis.action == quality::PairAction::abnormalMotionHold) ++result.abnormalPairs;
         return analysis;
     };
-    const auto emitBlurred = [&](Rational center, CachedFrame* priorFrame, const quality::SceneAnalysis* priorAnalysis,
-        CachedFrame& firstFrame, const quality::SceneAnalysis& currentAnalysis, CachedFrame& secondFrame,
-        CachedFrame* nextFrame, const quality::SceneAnalysis* followingAnalysis) {
-        std::vector<CachedFrame*> frames;
+    const auto blurTimestamps = [&] {
         std::vector<Rational> timestamps;
-        std::vector<quality::PairAction> actions;
-        if (priorFrame) {
-            if (!priorAnalysis) throw std::logic_error("Motion blur is missing the preceding pair analysis");
-            frames.push_back(priorFrame); timestamps.push_back(*priorFrame->source.timestamp); actions.push_back(priorAnalysis->action);
-        }
-        frames.push_back(&firstFrame); timestamps.push_back(*firstFrame.source.timestamp);
-        frames.push_back(&secondFrame); timestamps.push_back(*secondFrame.source.timestamp); actions.push_back(currentAnalysis.action);
-        if (nextFrame) {
-            if (!followingAnalysis) throw std::logic_error("Motion blur is missing the following pair analysis");
-            frames.push_back(nextFrame); timestamps.push_back(*nextFrame->source.timestamp); actions.push_back(followingAnalysis->action);
-        }
-        const auto sampleTimes = pipeline::motionBlurSampleTimes(center,settings.targetRate,
-            settings.motionBlur.shutterAngleDegrees,settings.motionBlur.sampleCount);
-        const auto centerLocation = pipeline::resolveMotionBlurSample(timestamps,actions,center);
-        if (centerLocation.blocked) throw std::logic_error("Motion blur center landed in a blocked source interval");
-        // If a high-rate source has more than one frame inside the exposure
-        // window, the four-frame bounded window may still be insufficient.
-        // Fall back to the center sample instead of silently clamping to an
-        // interior edge and introducing a periodic motion/brightness jump.
-        const auto windowNeedsUnavailableFrame =
-            (priorFrame && sampleTimes.front() < timestamps.front()) ||
-            (nextFrame && sampleTimes.back() > timestamps.back());
-        const auto blockedWindow = windowNeedsUnavailableFrame ||
-            pipeline::motionBlurWindowCrossesBlockedPair(timestamps,actions,
-                sampleTimes.front(),sampleTimes.back());
-        std::optional<media::RifeSdrFrame> blended;
-        if (!blockedWindow) {
-            LinearLightAccumulator accumulator(frames.front()->prepared,firstFrame.prepared.sourceColor,sampleTimes.size(),stop);
-            bool safe = true;
-            for (const auto sampleTime : sampleTimes) {
-                checkStop(stop);
-                const auto location = pipeline::resolveMotionBlurSample(timestamps,actions,sampleTime);
-                if (location.blocked) { safe = false; break; }
-                if (location.sourceFrame) accumulator.add(frames[location.sourceIndex]->prepared);
-                else accumulator.add(interpolateSample(*frames[location.leftIndex],*frames[location.rightIndex],sampleTime));
-            }
-            if (safe) blended = accumulator.finish();
-        }
-        if (blended) {
-            auto restored = measure(result.timings.colorRestoreSeconds,[&] { return adapter.postprocess(*blended,stop); });
-            emit(std::move(restored));
-        } else if (centerLocation.sourceFrame) {
-            auto restored = measure(result.timings.colorRestoreSeconds,[&] {
-                return adapter.postprocess(frames[centerLocation.sourceIndex]->prepared,stop);
-            });
-            emit(std::move(restored));
-        } else {
-            auto restored = measure(result.timings.colorRestoreSeconds,[&] {
-                return adapter.postprocess(interpolateSample(*frames[centerLocation.leftIndex],*frames[centerLocation.rightIndex],center),stop);
-            });
-            emit(std::move(restored));
-        }
-        return centerLocation.sourceFrame;
+        timestamps.reserve(blurFrames.size());
+        for (const auto& frame : blurFrames) timestamps.push_back(*frame.source.timestamp);
+        return timestamps;
     };
-    const auto pair = [&](CachedFrame* priorFrame, const quality::SceneAnalysis* priorAnalysis,
-        CachedFrame& firstFrame, const quality::SceneAnalysis& analysis, CachedFrame& secondFrame,
-        CachedFrame* nextFrame, const quality::SceneAnalysis* followingAnalysis) {
+    const auto pruneBlurWindow = [&] {
+        if (blurFrames.empty()) return;
+        const auto timestamps = blurTimestamps();
+        const auto [start,end] = pipeline::motionBlurExposureBounds(clock->timestamp(),settings.targetRate,settings.motionBlur.shutterAngleDegrees);
+        (void)end;
+        auto discard = pipeline::motionBlurDiscardableFrames(timestamps,start);
+        while (discard > 0) {
+            blurFrames.pop_front(); blurAnalyses.pop_front(); blurBeginsAtSourceStart = false;
+            --discard;
+        }
+    };
+    const auto processBlurWindow = [&](bool endOfSource, std::optional<Rational> endExclusive) {
+        while (!blurFrames.empty() && (!endExclusive || clock->timestamp() < *endExclusive)) {
+            checkStop(stop);
+            const auto center = clock->timestamp();
+            const auto timestamps = blurTimestamps();
+            std::vector<quality::PairAction> actions;
+            actions.reserve(blurAnalyses.size());
+            for (const auto& analysis : blurAnalyses) actions.push_back(analysis.action);
+            const auto plan = pipeline::planMotionBlurExposure(timestamps,actions,center,settings.targetRate,
+                settings.motionBlur.shutterAngleDegrees,settings.motionBlur.sampleCount,blurBeginsAtSourceStart,endOfSource);
+            if (!plan.ready) break;
+            if (plan.center.blocked || center > timestamps.back()) ++result.heldFrames;
+            else if (plan.center.sourceFrame) ++result.originalFrames;
+            else ++result.aiFrames;
+            if (checkpointMode && clock->index() < completedOutputFrames) {
+                if (result.reusedFrames == std::numeric_limits<std::size_t>::max())
+                    throw std::overflow_error("Reused output frame counter exceeds the supported range");
+                ++result.reusedFrames; clock->advance();
+                notify("resuming",center,"Reusing a verified checkpoint segment");
+            } else if (!plan.fallbackReason.empty()) {
+                ++result.motionBlurFallbackFrames;
+                ++result.motionBlurFallbackReasons[plan.fallbackReason];
+                notify("quality",center,"Motion blur center hold: " + plan.fallbackReason);
+                if (plan.center.blocked) emit(blurFrames[plan.center.leftIndex].source);
+                else if (plan.center.sourceFrame) emit(blurFrames[plan.center.sourceIndex].source);
+                else {
+                    auto restored = measure(result.timings.colorRestoreSeconds,[&] {
+                        return adapter.postprocess(interpolateSample(blurFrames[plan.center.leftIndex],blurFrames[plan.center.rightIndex],center),stop);
+                    });
+                    emit(std::move(restored));
+                }
+            } else {
+                LinearLightAccumulator accumulator(blurFrames.front().prepared,blurFrames.front().prepared.sourceColor,plan.samples.size(),stop);
+                for (const auto& location : plan.samples) {
+                    checkStop(stop);
+                    if (location.sourceFrame) accumulator.add(blurFrames[location.sourceIndex].prepared);
+                    else {
+                        auto& first = blurFrames[location.leftIndex]; auto& second = blurFrames[location.rightIndex];
+                        const auto time = *first.source.timestamp + (*second.source.timestamp - *first.source.timestamp) * location.timestep;
+                        accumulator.add(interpolateSample(first,second,time));
+                    }
+                }
+                auto integrated = accumulator.finish();
+                auto restored = measure(result.timings.colorRestoreSeconds,[&] { return adapter.postprocess(integrated,stop); });
+                ++result.motionBlurredFrames;
+                if (plan.edgeHeld) ++result.motionBlurEdgeHeldFrames;
+                emit(std::move(restored));
+            }
+            pruneBlurWindow();
+        }
+        // Also prune between output ticks, while decoding toward the next
+        // shutter. This keeps memory bounded when downsampling dense sources.
+        pruneBlurWindow();
+    };
+    const auto pair = [&](CachedFrame& firstFrame, const quality::SceneAnalysis& analysis, CachedFrame& secondFrame) {
         if (analysis.action != quality::PairAction::interpolate) notify("quality",secondFrame.source.timestamp,std::string(quality::toString(analysis.action)));
         while (clock->timestamp() < *secondFrame.source.timestamp) {
             checkStop(stop);
@@ -613,7 +631,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             else if (rightDelta <= outputTickTolerance) coincident = &secondFrame.source;
             if (checkpointMode && clock->index() < completedOutputFrames) {
                 if (analysis.action != quality::PairAction::interpolate) ++result.heldFrames;
-                else if (motionBlurActive ? clock->timestamp() == *firstFrame.source.timestamp : coincident != nullptr) ++result.originalFrames;
+                else if (coincident != nullptr) ++result.originalFrames;
                 else ++result.aiFrames;
                 if (result.reusedFrames == std::numeric_limits<std::size_t>::max())
                     throw std::overflow_error("Reused output frame counter exceeds the supported range");
@@ -624,12 +642,6 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 continue;
             }
             if (analysis.action != quality::PairAction::interpolate) { ++result.heldFrames; emit(firstFrame.source); }
-            else if (motionBlurActive) {
-                const bool centerIsSource = clock->timestamp() == *firstFrame.source.timestamp;
-                if (centerIsSource) ++result.originalFrames; else ++result.aiFrames;
-                if (emitBlurred(clock->timestamp(),priorFrame,priorAnalysis,firstFrame,analysis,secondFrame,nextFrame,followingAnalysis) != centerIsSource)
-                    throw std::logic_error("Motion blur center classification differs from its source timeline");
-            }
             else if (coincident) { ++result.originalFrames; emit(*coincident); }
             else {
                 ++result.aiFrames;
@@ -641,12 +653,22 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     };
     const auto processSourceFrame = [&](media::DecodedFrame frame) {
         if (!frame.timestamp) throw std::runtime_error("Interpolation requires a known timestamp for every source frame");
+        if (motionBlurActive && blurFrames.size() >= blurWindowFrameLimit)
+            throw std::runtime_error("Motion blur full shutter exceeds the bounded source-window memory budget; lower the shutter angle or increase hostFloatBufferLimit");
         auto prepared = measure(result.timings.sourcePreparationSeconds,[&] { return adapter.preprocess(frame,settings.hostFloatBufferLimit,stop); });
         CachedFrame current{std::move(frame),std::move(prepared),{}};
         if (!clock) {
             origin = current.source.timestamp; clock.emplace(*origin,settings.targetRate);
             if (!segments.empty() && segments.front().contract.firstTimestamp != *origin)
                 throw std::runtime_error("Checkpoint source start timestamp changed; committed segments cannot be resumed");
+        }
+        if (motionBlurActive) {
+            if (!blurFrames.empty()) blurAnalyses.push_back(analyzePair(blurFrames.back(),current));
+            blurFrames.push_back(std::move(current));
+            result.motionBlurPeakWindowFrames = std::max(result.motionBlurPeakWindowFrames,blurFrames.size());
+            result.motionBlurPeakPreparedBytes = std::max(result.motionBlurPeakPreparedBytes,blurFrames.size() * preparedFrameBytes);
+            processBlurWindow(false,{});
+            return;
         }
         if (!left) {
             left = std::move(current);
@@ -655,10 +677,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             pairAnalysis = analyzePair(*left,*right);
         } else {
             auto nextAnalysis = analyzePair(*right,current);
-            pair(before ? &*before : nullptr,beforeAnalysis ? &*beforeAnalysis : nullptr,
-                *left,*pairAnalysis,*right,&current,&nextAnalysis);
-            before = std::move(*left);
-            beforeAnalysis = pairAnalysis;
+            pair(*left,*pairAnalysis,*right);
             left = std::move(*right);
             right = std::move(current);
             pairAnalysis = std::move(nextAnalysis);
@@ -706,25 +725,25 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.sourceDecodeAcceleration = decoded.acceleration;
     result.sourceDecodeFallbackReason = decoded.accelerationFallbackReason;
     if (temporalWindow) processTemporalRequests(temporalWindow->finish());
-    if (!left) throw std::runtime_error("Source produced no video frames");
-    if (right) {
-        pair(before ? &*before : nullptr,beforeAnalysis ? &*beforeAnalysis : nullptr,
-            *left,*pairAnalysis,*right,nullptr,nullptr);
-    }
-    CachedFrame& last = right ? *right : *left;
+    if (motionBlurActive ? blurFrames.empty() : !left) throw std::runtime_error("Source produced no video frames");
+    if (!motionBlurActive && right) pair(*left,*pairAnalysis,*right);
+    // Copy the decoder reference: draining/pruning the shutter window below
+    // may invalidate its deque element, but the true final boundary is fixed.
+    const auto last = motionBlurActive ? blurFrames.back().source : (right ? right->source : left->source);
     std::optional<Rational> boundary;
-    if (last.source.duration && *last.source.duration > Rational(0)) boundary = *last.source.timestamp + *last.source.duration;
+    if (last.duration && *last.duration > Rational(0)) boundary = *last.timestamp + *last.duration;
     result.sourceEndEvidence = "last_frame_duration";
     if (video->declaredEnd) {
-        if (*video->declaredEnd <= *last.source.timestamp || (boundary && absolute(*video->declaredEnd - *boundary) > video->timeBase))
+        if (*video->declaredEnd <= *last.timestamp || (boundary && absolute(*video->declaredEnd - *boundary) > video->timeBase))
             throw std::runtime_error("Declared video end contradicts the final frame boundary; explicit source normalization is required");
         boundary = video->declaredEnd; result.sourceEndEvidence = "declared_stream_end";
     }
     if (!boundary) throw std::runtime_error("Final source frame and stream lack a reliable end; cannot preserve duration");
     const auto end = *boundary;
-    while (clock->timestamp() < end) {
+    if (motionBlurActive) processBlurWindow(true,end);
+    else while (clock->timestamp() < end) {
         checkStop(stop);
-        const auto coincident = absolute(clock->timestamp() - *last.source.timestamp) <= outputTickTolerance;
+        const auto coincident = absolute(clock->timestamp() - *last.timestamp) <= outputTickTolerance;
         if (coincident) ++result.originalFrames;
         else ++result.heldFrames;
         if (checkpointMode && clock->index() < completedOutputFrames) {
@@ -736,13 +755,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             notify("resuming",timestamp,"Reusing a verified checkpoint segment");
             continue;
         }
-        if (motionBlurActive && right && pairAnalysis && pairAnalysis->action == quality::PairAction::interpolate && coincident) {
-            (void)emitBlurred(clock->timestamp(),before ? &*before : nullptr,
-                beforeAnalysis ? &*beforeAnalysis : nullptr,*left,*pairAnalysis,*right,nullptr,nullptr);
-        } else {
-            emit(last.source);
-        }
+        emit(last);
     }
+    if (motionBlurActive && result.motionBlurredFrames + result.motionBlurFallbackFrames != result.processedFrames)
+        throw std::logic_error("Motion blur exposure accounting does not match the newly processed output");
     if (!origin || end <= *origin) throw std::runtime_error("No valid final output frame boundary");
     if (!checkpointMode && (!pending || !pendingTime || end <= *pendingTime))
         throw std::runtime_error("No valid final output frame boundary");

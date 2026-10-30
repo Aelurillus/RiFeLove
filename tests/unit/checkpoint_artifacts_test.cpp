@@ -130,6 +130,13 @@ TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {
     changedMotionBlur["job"]["motionBlur"]["sampleCount"] = 8;
     EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(current.dump(),changedMotionBlur.dump()));
 
+    auto oldFourFrameBlur = currentV5;
+    oldFourFrameBlur["job"]["motionBlur"]["enabled"] = true;
+    auto fullPtsBlur = oldFourFrameBlur;
+    fullPtsBlur["job"]["motionBlur"]["algorithmVersion"] = 2;
+    EXPECT_FALSE(rifelove::application::CheckpointArtifacts::manifestMatches(oldFourFrameBlur.dump(),fullPtsBlur.dump()));
+    EXPECT_TRUE(rifelove::application::CheckpointArtifacts::manifestMatches(fullPtsBlur.dump(),fullPtsBlur.dump()));
+
     auto currentV6 = currentV5;
     currentV6["job"]["schemaVersion"] = 6;
     currentV6["job"]["encoding"] = {{"outputWidth",0},{"outputHeight",0}};
