@@ -40,3 +40,21 @@ jobs:
         run: cmake --build build/ci --parallel 4
       - name: Run CPU and native control tests
         run: ctest --test-dir build/ci --output-on-failure --parallel 2 -E '^CudaHardware\.'
+
+  model-tool-contracts:
+    name: Model-tool contracts / CPU only
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Python for development tests
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Install CPU-only test dependencies
+        run: python -m pip install --only-binary=:all: numpy==2.2.6 onnxruntime==1.22.0 pytest==8.4.2
+      - name: Test model-tool contracts without weights
+        run: python -m pytest tests/model_validation/test_stdf_tiling.py tests/model_validation/test_stdf_local_pack.py -q

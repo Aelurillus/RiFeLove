@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 GRAPH_SHA256 = "dcd09f22cbc42f02820135c471a00708b08933d6b228f996329bbe757aad0721"
+CHECKPOINT_SHA256 = "d28e0b30082ecbbaeb7b8436968079875c97d882101cc4a79114d33eca2e1ec7"
 SOURCE_COMMIT = "8bedc89e840117f2634cf5183a7eb9441c302360"
 ADAPTER = {"id": "stdf-r3-y7-luma-v1", "version": 1}
 PROFILE = "sdr8-fp32-stdf-r3-cpu-reference"
@@ -70,7 +71,7 @@ def create_pack(graph: Path, cpu_evidence: Path, cuda_evidence: Path,
     cuda, cuda_hash = document(cuda_evidence)
     native, native_hash = document(native_evidence)
     if (cpu.get("status") != "passed_cpu_feasibility" or cpu.get("graph_sha256") != GRAPH_SHA256
-            or cpu.get("source_commit") != SOURCE_COMMIT):
+            or cpu.get("source_commit") != SOURCE_COMMIT or cpu.get("checkpoint_sha256") != CHECKPOINT_SHA256):
         raise ValueError("CPU feasibility evidence does not match the reviewed graph and source")
     cpu_cases = require_cases(cpu, "model_cases")
     operator_cases = require_cases(cpu, "operator_cases")

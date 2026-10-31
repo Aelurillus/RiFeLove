@@ -7,6 +7,11 @@ control tests. CMake downloads the pinned development dependencies and verifies
 the SQLite archive hash. The workflow has read-only repository permissions and
 does not publish executables, model weights or user data.
 
+A separate CPU-only development-tools job checks tiling geometry, bounded
+output lifetime, and model-pack evidence validation with synthetic fixtures.
+Tests that require the local STDF graph or its private evaluation evidence are
+skipped when those files are absent; no model weights are downloaded by CI.
+
 The hosted run deliberately omits FFmpeg, ONNX Runtime CUDA, TensorRT and GPU
 hardware tests. Its native executable is an inspection shell, not the complete
 processing product. Green CI therefore does not validate encoding, model
