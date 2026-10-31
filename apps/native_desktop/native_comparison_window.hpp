@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -31,6 +32,7 @@ struct NativeComparisonImage final {
     Rational timestamp;
     std::optional<Rational> previous, next;
     std::vector<std::uint8_t> bgra;
+    std::optional<Rational> sampleAspectRatio;
 };
 
 inline NativeComparisonImage nativeComparisonImage(media::DecodedPreviewFrame frame) {
@@ -38,7 +40,21 @@ inline NativeComparisonImage nativeComparisonImage(media::DecodedPreviewFrame fr
         frame.rgba.size() != static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height) * 4)
         throw std::runtime_error("Invalid decoded comparison image");
     for (std::size_t i = 0; i < frame.rgba.size(); i += 4) std::swap(frame.rgba[i], frame.rgba[i + 2]);
-    return {frame.width, frame.height, frame.timestamp, frame.previousTimestamp, frame.nextTimestamp, std::move(frame.rgba)};
+    return {frame.width, frame.height, frame.timestamp, frame.previousTimestamp, frame.nextTimestamp, std::move(frame.rgba), frame.sampleAspectRatio};
+}
+
+// Fit the display aspect into the available pane without altering decoded pixels.
+inline std::pair<int, int> nativeComparisonFit(int width, int height, int paneWidth, int paneHeight,
+    const std::optional<Rational>& sampleAspectRatio) {
+    if (width <= 0 || height <= 0 || paneWidth <= 0 || paneHeight <= 0)
+        throw std::invalid_argument("Invalid comparison image or pane dimensions");
+    double ratio = static_cast<double>(width) / height;
+    if (sampleAspectRatio && *sampleAspectRatio > Rational(0))
+        ratio *= static_cast<double>(sampleAspectRatio->numerator()) / static_cast<double>(sampleAspectRatio->denominator());
+    const double paneRatio = static_cast<double>(paneWidth) / paneHeight;
+    if (ratio >= paneRatio)
+        return {paneWidth, std::clamp(static_cast<int>(std::lround(paneWidth / ratio)), 1, paneHeight)};
+    return {std::clamp(static_cast<int>(std::lround(paneHeight * ratio)), 1, paneWidth), paneHeight};
 }
 
 struct NativeComparisonRequest final {
@@ -79,9 +95,6 @@ inline const media::StreamInfo& nativeComparisonStream(const media::MediaInfo& i
     if ((stream->rotationDegrees && *stream->rotationDegrees != 0.0) ||
         (stream->displayMatrix && *stream->displayMatrix != identity))
         throw std::runtime_error("Rotated, mirrored or offset display-matrix comparison is not yet validated; no transformed substitute is shown");
-    // StreamInfo currently does not expose sample-aspect-ratio. The window
-    // explicitly says coded pixels / SAR uncalibrated rather than claiming
-    // physical display-aspect alignment for anamorphic material.
     return *stream;
 }
 
@@ -204,7 +217,7 @@ public:
         if (!source_.empty() && !output_.empty()) seek(Rational(0));
         else {
             invalidateRequests(false); busy_ = false;
-            setStatus(L"选择原片和已完成结果。支持同一相对时间的静音同步播放与逐帧比较；按编码像素显示，SAR 尚未校准。");
+            setStatus(L"选择原片和已完成结果。支持同一相对时间的静音同步播放与逐帧比较；未知像素比例时按编码像素显示。");
             updateControls();
         }
     }
@@ -404,7 +417,7 @@ private:
         const auto position = pair_->output.timestamp - pair_->outputOrigin;
         setStatus((playing_ ? std::wstring(L"同步播放 · 静音 · ") : ended ? std::wstring(L"播放结束 · 静音 · ") : std::wstring(L"已暂停 · 静音 · ")) +
             L"请求 " + seconds(pair_->requested) + L" · 原片 " + seconds(pair_->source.timestamp - pair_->sourceOrigin) +
-            L" · 结果 " + seconds(position) + L" · 预览最高 30 FPS，解码较慢时跳过预览帧；逐帧可查看全部帧。按编码像素显示，SAR 尚未校准。");
+            L" · 结果 " + seconds(position) + L" · 预览最高 30 FPS，解码较慢时跳过预览帧；逐帧可查看全部帧。未知像素比例时按编码像素显示。");
     }
     void playbackTick() {
         if (!playing_ || !playbackClockReady_ || busy_ || !ready()) return;
@@ -509,11 +522,13 @@ private:
             const auto* image = images[static_cast<std::size_t>(side)];
             if ((!ready() && !(playing_ && pair_ && error_.empty())) || !image) { text(busy_ ? L"正在读取…" : error_.empty() ? L"选择视频以显示画面" : L"当前帧不可用；请查看底部说明", imageArea, true); continue; }
             const auto origin = side == 0 ? pair_->sourceOrigin : pair_->outputOrigin;
-            text(std::to_wstring(image->width) + L" × " + std::to_wstring(image->height) + L"  ·  " + seconds(image->timestamp - origin),
+            const auto aspect = image->sampleAspectRatio
+                ? L"  ·  SAR " + std::to_wstring(image->sampleAspectRatio->numerator()) + L":" + std::to_wstring(image->sampleAspectRatio->denominator())
+                : L"  ·  SAR 未知";
+            text(std::to_wstring(image->width) + L" × " + std::to_wstring(image->height) + aspect + L"  ·  " + seconds(image->timestamp - origin),
                 RECT{title.left, title.bottom, title.right, title.bottom + px(23)});
-            const double scale = std::min(static_cast<double>(imageArea.right - imageArea.left) / image->width,
-                static_cast<double>(imageArea.bottom - imageArea.top) / image->height);
-            const int widthPixels = std::max(1, static_cast<int>(image->width * scale)), heightPixels = std::max(1, static_cast<int>(image->height * scale));
+            const auto [widthPixels, heightPixels] = nativeComparisonFit(image->width, image->height,
+                imageArea.right - imageArea.left, imageArea.bottom - imageArea.top, image->sampleAspectRatio);
             BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth = image->width;
             info.bmiHeader.biHeight = -image->height; info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
             SetStretchBltMode(dc, HALFTONE); SetBrushOrgEx(dc, 0, 0, nullptr);

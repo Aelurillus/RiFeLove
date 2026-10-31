@@ -75,9 +75,18 @@ void checkNativeComparison(Check check, Pump pump, HWND owner) {
         check(rejected, "comparison time rejects malformed input and excessive decimal precision");
     }
     media::DecodedPreviewFrame pixels;
-    pixels.width = 1; pixels.height = 1; pixels.rgba = {12, 34, 56, 255};
+    pixels.width = 1; pixels.height = 1; pixels.rgba = {12, 34, 56, 255}; pixels.sampleAspectRatio = Rational(4, 3);
     const auto converted = nativeComparisonImage(std::move(pixels));
     check(converted.bgra == std::vector<std::uint8_t>({56, 34, 12, 255}), "comparison display converts RGBA to native BGRA without swapping colors");
+    check(converted.sampleAspectRatio == Rational(4, 3), "comparison retains each decoded frame's sample aspect ratio");
+    check(nativeComparisonFit(720, 576, 400, 400, Rational(16, 15)) == std::pair<int, int>(400, 300),
+        "anamorphic 720x576 pixels at SAR 16:15 fit as a 4:3 picture");
+    check(nativeComparisonFit(720, 576, 400, 400, Rational(64, 45)) == std::pair<int, int>(400, 225),
+        "anamorphic 720x576 pixels at SAR 64:45 fit as a 16:9 picture");
+    check(nativeComparisonFit(720, 576, 400, 400, {}) == std::pair<int, int>(400, 320),
+        "unknown pixel aspect is displayed using coded dimensions");
+    check(nativeComparisonFit(720, 576, 160, 100, Rational(16, 15)) == std::pair<int, int>(133, 100),
+        "comparison letterboxes the display aspect inside a wide pane");
     media::MediaInfo metadata{}; metadata.preferredVideoStream = 0;
     media::StreamInfo stream{}; stream.index = 0; stream.type = "video"; stream.rotationDegrees = 0.0;
     const std::array<std::int32_t, 9> identity{65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824};

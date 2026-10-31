@@ -423,6 +423,9 @@ DecodedPreviewFrame MediaEngine::decodeFrameNearTime(const std::string& path, Ra
     if (selectedNextPts != AV_NOPTS_VALUE)
         output.nextTimestamp = detail::rational(stream->time_base) * Rational(selectedNextPts);
     output.color = std::move(color);
+    const auto sampleAspectRatio = av_guess_sample_aspect_ratio(input.context, stream, selected.get());
+    if (sampleAspectRatio.num > 0 && sampleAspectRatio.den > 0)
+        output.sampleAspectRatio = detail::rational(sampleAspectRatio);
     output.rgba.resize(static_cast<std::size_t>(pixels) * 4U);
     const std::uint8_t* source[4]{};
     int sourceStride[4]{};

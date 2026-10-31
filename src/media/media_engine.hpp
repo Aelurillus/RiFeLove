@@ -183,6 +183,8 @@ struct DecodedPreviewFrame {
     ColorInfo color;
     // Explicitly converted SDR display pixels; never aliases decoder storage.
     std::vector<std::uint8_t> rgba;
+    // Pixel width / height for this decoded frame, when declared by the media.
+    std::optional<Rational> sampleAspectRatio;
 };
 struct RemuxResult { std::size_t copiedStreams; std::size_t packetsWritten; };
 struct VideoSegmentContract {
