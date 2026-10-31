@@ -171,6 +171,48 @@ adaptive compression/detail controls, long videos, HDR, the hardware matrix,
 installer and redistribution acceptance remain open. No model, runtime, queue,
 video, generated image or cloud credential is part of the source commit.
 
+## Follow-up: r17 boundary correction and packaged recheck
+
+Final core review identified undefined intermediate pointer arithmetic when a
+short tile was cropped at a large global X coordinate. For example, a 3840x8
+source can produce a global-X intermediate pointer outside the prediction
+array even though subtracting the tile origin would bring it back inside.
+The adapter now computes the entire tile-local integer offset first and forms
+the pointer once. CPU packing/cropping and exact-coverage contracts additionally
+exercise 3840x8, 3839x7 and 8x3840; this is a static correctness fix, not a claim
+that a crash was observed.
+
+The rebuilt r17 EXE SHA-256 is
+`fe74d2c50c0492f21f55a2b8d1d1bcae27889dc21af85ae6f1e0a14c5630e0a7`.
+Release configure/build, all 211 CTest cases and all 44 Python model-tool tests
+passed again. The same seven serial native CUDA cases, including both UHD
+orientations, passed independent all-byte readback with maximum Y8 difference
+at most one. Fresh evidence is under
+`work/verification/stdf-tiled-boundary-20261031/`; the earlier measurements and
+evidence remain historical rather than being overwritten.
+
+Normal and Portable QA r17 packages independently verified 112 and 113 immutable
+file hashes respectively. Existing verified model/runtime files were reused
+through NTFS hard links; neither old packages nor the running r14 process were
+modified. The Normal package has empty package-local data, while the separate
+Portable QA package now contains its completed synthetic task.
+
+The actual packaged QA EXE repeated the explicitly selected STDF 50% tiled,
+1080p, 30-to-60 FPS, 0.4-second workflow through RIFE TensorRT/CUDA and H.264
+NVENC. Independent decoding confirmed 24 frames, correct color/timestamps and
+all five unchanged FLAC packet hashes/timestamps. Application elapsed time was
+51.252 seconds, including 42.171 seconds of restoration. Both inputs remain
+unchanged. Evidence is at
+`work/verification/native-r17-tiled-compression-20261031/result.json`.
+The experimental/default-off and incomplete product-acceptance limits above
+still apply.
+
+Only necessary source, tests, build/packaging configuration and documentation
+were committed. Preflight found no binary/model/media/database artifacts or
+credential patterns among the 39 staged files. Implementation commit
+`7bb3e43` passed both GitHub Actions jobs in run `41168197523`; those remote
+jobs are CPU/Windows checks, not remote GPU qualification.
+
 ## Local storage cleanup evidence
 
 Obsolete generated package files were removed only after checksum checks;
@@ -186,3 +228,9 @@ Deletion of their ZIP/weight files was nevertheless rejected by automatic
 approval with `blocked by policy`, including a narrower attempt preserving the
 ZIPs. Those 136,044,118 bytes remain untouched. Detailed evidence stays local
 under `work/verification/cleanup-audit-20261031/`.
+
+A later request to remove obsolete generated directories under `out/` was also
+rejected by automatic approval with `blocked by policy` before execution.
+No deletion occurred in that attempt, and it was not retried through another
+tool or agent. Do not count the candidate-size estimate as reclaimed space;
+hard-linked file lengths also do not equal independent physical allocation.
