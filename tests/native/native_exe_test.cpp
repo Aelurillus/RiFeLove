@@ -3,16 +3,25 @@
 #include <algorithm>
 #include <chrono>
 #include <array>
+#include <cerrno>
+#include <cmath>
 #include <cstdint>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <numeric>
+#include <optional>
 #include <string>
 
 namespace {
-struct FindWindowContext { DWORD processId; HWND result = nullptr; };
+struct FindWindowContext {
+    DWORD processId;
+    HWND result = nullptr;
+    const wchar_t* className = L"RifeLoveNativeDesktopWindow";
+};
 
 BOOL CALLBACK findTargetWindow(HWND window, LPARAM parameter) {
     auto& context = *reinterpret_cast<FindWindowContext*>(parameter);
@@ -20,7 +29,7 @@ BOOL CALLBACK findTargetWindow(HWND window, LPARAM parameter) {
     GetWindowThreadProcessId(window, &processId);
     wchar_t className[128]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));
-    if (processId == context.processId && std::wstring(className) == L"RifeLoveNativeDesktopWindow") {
+    if (processId == context.processId && std::wstring(className) == context.className) {
         context.result = window;
         return FALSE;
     }
@@ -243,8 +252,8 @@ bool freshPortableQa(const std::filesystem::path& executable) {
     return writable;
 }
 
-bool verifyAutomaticQueue(const std::filesystem::path& database, const std::filesystem::path& source,
-    const std::filesystem::path& output) {
+bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem::path& source,
+    const std::filesystem::path& output, bool automaticDenoise) {
     // Use the Windows SQLite API read-only; no new link/runtime dependency is
     // added to the product or to this standalone User32 test driver.
     HMODULE module = LoadLibraryExW(L"winsqlite3.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -272,7 +281,7 @@ bool verifyAutomaticQueue(const std::filesystem::path& database, const std::file
     const int status = open(path.c_str(), &raw, 1 /* SQLITE_OPEN_READONLY */, nullptr);
     std::unique_ptr<void, Close> db(raw, close);
     if (status != 0) { std::cerr << "Could not open the QA queue read-only.\n"; return false; }
-    constexpr auto sql =
+    const auto sql = automaticDenoise ?
         "SELECT COUNT(*) FROM tasks t JOIN task_details d ON d.task_id=t.id "
         "WHERE t.source_path=?1 AND t.output_path=?2 AND t.state='completed' "
         "AND json_extract(d.configuration,'$.schemaVersion')=9 "
@@ -285,6 +294,14 @@ bool verifyAutomaticQueue(const std::filesystem::path& database, const std::file
         "AND json_extract(d.result,'$.sourceDecodeAcceleration')='software' "
         "AND json_extract(d.result,'$.temporalRestorationBackend')<>'' "
         "AND json_extract(d.result,'$.outputFrames')>0 "
+        "AND json_extract(d.result,'$.validation.decodedFrames')=json_extract(d.result,'$.outputFrames')" :
+        "SELECT COUNT(*) FROM tasks t JOIN task_details d ON d.task_id=t.id "
+        "WHERE t.source_path=?1 AND t.output_path=?2 AND t.state='completed' "
+        "AND json_extract(d.configuration,'$.targetRate')='60/1' "
+        "AND json_extract(d.result,'$.modelId')<>'' AND json_extract(d.result,'$.backend')<>'' "
+        "AND json_extract(d.result,'$.encoder')='h264_nvenc' "
+        "AND json_extract(d.result,'$.sourceFrames')>1 AND json_extract(d.result,'$.aiFrames')>0 "
+        "AND json_extract(d.result,'$.inferenceCalls')>0 AND json_extract(d.result,'$.outputFrames')>1 "
         "AND json_extract(d.result,'$.validation.decodedFrames')=json_extract(d.result,'$.outputFrames')";
     // SQLITE_STATIC bindings stay alive until statement finalization.
     const auto input = utf8(source.c_str()), destination = utf8(output.c_str());
@@ -294,9 +311,159 @@ bool verifyAutomaticQueue(const std::filesystem::path& database, const std::file
     if (prepared != 0) { std::cerr << "Read-only QA query needs SQLite JSON support: " << error(raw) << '\n'; return false; }
     if (bind(statementRaw, 1, input.c_str(), -1, nullptr) != 0 || bind(statementRaw, 2, destination.c_str(), -1, nullptr) != 0 ||
         step(statementRaw) != 100 /* SQLITE_ROW */ || column(statementRaw, 0) != 1) {
-        std::cerr << "Completed QA queue record did not prove the selected automatic-denoise mode/result.\n"; return false;
+        std::cerr << "Completed QA queue record did not prove the selected processing mode/result.\n"; return false;
     }
-    std::cout << "QA queue confirms schema 9 automatic opt-in, selected temporal model, software decode and validated completed frame counts.\n";
+    std::cout << (automaticDenoise ? "QA queue confirms schema 9 automatic opt-in, selected temporal model, software decode and validated completed frame counts.\n" :
+        "QA queue confirms this source/output completed at 60 FPS with a selected model/backend, real AI calls, H.264 NVENC and matching validated frame counts.\n");
+    return true;
+}
+
+bool samePath(const std::filesystem::path& first, const std::filesystem::path& second) {
+    const auto a = first.lexically_normal().generic_wstring(), b = second.lexically_normal().generic_wstring();
+    return CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(), static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
+bool comparisonQaFixtures(const std::filesystem::path& executable, const std::filesystem::path& source,
+    const std::filesystem::path& output) {
+    const auto root = executable.parent_path(), fixtures = root / L"qa-fixtures";
+    // The marker is the caller's explicit synthetic-fixture declaration. It
+    // does not prove visual quality or permit reading arbitrary user videos.
+    if (executable.filename() != L"RifeLoveNative.exe" || !samePath(source.parent_path(), fixtures) ||
+        !samePath(output.parent_path(), fixtures) || source.filename() != L"synthetic-comparison-source.mp4" ||
+        output.filename() != L"synthetic-comparison-output.mkv") return false;
+    if (GetFileAttributesW(output.c_str()) != INVALID_FILE_ATTRIBUTES ||
+        (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND)) return false;
+    for (const auto& file : {fixtures, source, fixtures / L"synthetic-fixtures.txt", root / L"PACKAGE-MANIFEST.json", root / L"SHA256SUMS.txt"}) {
+        const auto attributes = GetFileAttributesW(file.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+        if (file != fixtures && (attributes & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    }
+    std::ifstream marker(fixtures / L"synthetic-fixtures.txt", std::ios::binary);
+    std::string line; std::getline(marker, line);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    std::error_code error;
+    const auto bytes = std::filesystem::file_size(source, error);
+    return line == "RifeLoveSyntheticComparison 1" && !error && bytes > 0 && bytes <= 16U * 1024U * 1024U;
+}
+
+std::optional<std::wstring> boundedControlText(HWND window) {
+    if (!window || !IsWindow(window)) return {};
+    wchar_t value[4096]{}; DWORD_PTR length = 0;
+    if (!SendMessageTimeoutW(window, WM_GETTEXT, static_cast<WPARAM>(std::size(value)), reinterpret_cast<LPARAM>(value),
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &length) || length >= std::size(value) - 1) return {};
+    return std::wstring(value);
+}
+
+struct ComparisonPosition {
+    std::int64_t numerator = 0, denominator = 1;
+    long double seconds() const { return static_cast<long double>(numerator) / denominator; }
+    bool operator==(const ComparisonPosition&) const = default;
+};
+
+std::optional<ComparisonPosition> comparisonPosition(HWND comparison) {
+    const auto text = boundedControlText(GetDlgItem(comparison, 1307));
+    if (!text || text->empty()) return {};
+    wchar_t* end = nullptr; errno = 0;
+    const auto numerator = std::wcstoll(text->c_str(), &end, 10);
+    if (errno || end == text->c_str() || numerator < 0 || numerator > 1000000000000LL) return {};
+    long long denominator = 1;
+    if (*end == L'/') {
+        const auto* begin = end + 1; errno = 0;
+        denominator = std::wcstoll(begin, &end, 10);
+        if (errno || end == begin || denominator <= 0 || denominator > 1000000000LL) return {};
+    }
+    if (*end) return {};
+    const auto divisor = std::gcd(numerator, denominator);
+    return ComparisonPosition{numerator / divisor, denominator / divisor};
+}
+
+bool comparisonAction(HWND comparison, int id) {
+    const HWND button = GetDlgItem(comparison, id); DWORD_PTR result = 0;
+    return button && IsWindowEnabled(button) && SendMessageTimeoutW(button, BM_CLICK, 0, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &result);
+}
+
+bool comparisonPaused(HWND comparison) {
+    const auto button = boundedControlText(GetDlgItem(comparison, 1312));
+    const auto status = boundedControlText(GetDlgItem(comparison, 1310));
+    return button && *button == L"播放 / 静音" && IsWindowEnabled(GetDlgItem(comparison, 1312)) &&
+        status && status->starts_with(L"已暂停 · 静音 · 请求 ") && comparisonPosition(comparison).has_value();
+}
+
+bool checkPackagedComparison(HDESK desktop, DWORD processId, HWND owner,
+    const std::filesystem::path& source, const std::filesystem::path& output) {
+    const auto fail = [](const char* reason) { std::cerr << "Packaged comparison failed: " << reason << '\n'; return false; };
+    const HWND action = GetDlgItem(owner, 1025); DWORD_PTR ignored = 0;
+    if (!action || !IsWindowEnabled(action) || !SendMessageTimeoutW(action, BM_CLICK, 0, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored)) return fail("main comparison action unavailable");
+    FindWindowContext context{processId, nullptr, L"RifeLoveNativeComparisonWindow"};
+    if (!waitUntil([&] { EnumDesktopWindows(desktop, findTargetWindow, reinterpret_cast<LPARAM>(&context)); return context.result != nullptr; },
+        std::chrono::seconds(10))) return fail("no comparison window in the launched package process");
+    const HWND comparison = context.result;
+    if (!GetDlgItem(comparison, 1312)) return fail("packaged executable does not contain the synchronized-playback control");
+    if (!waitUntil([&] { return comparisonPaused(comparison); }, std::chrono::seconds(30))) return fail("initial decoded pair never became ready");
+    const auto shownSource = boundedControlText(GetDlgItem(comparison, 1301)), shownOutput = boundedControlText(GetDlgItem(comparison, 1302));
+    const auto initial = comparisonPosition(comparison);
+    if (!shownSource || !shownOutput || !samePath(std::filesystem::path(*shownSource), source) ||
+        !samePath(std::filesystem::path(*shownOutput), output) || !initial || initial->numerator != 0)
+        return fail("loaded file paths or initial timestamp do not match this fresh QA task");
+    const auto explanation = boundedControlText(GetDlgItem(comparison, 1310));
+    if (!explanation || explanation->find(L"原片 ") == std::wstring::npos || explanation->find(L"结果 ") == std::wstring::npos ||
+        explanation->find(L"30 FPS") == std::wstring::npos) return fail("paired decode timestamps or preview limit are not observable");
+    if (!comparisonAction(comparison, 1312)) return fail("could not click Play");
+    ComparisonPosition first, second;
+    const auto advanced = [&](long double minimum, ComparisonPosition& observed) {
+        return waitUntil([&] {
+            const auto label = boundedControlText(GetDlgItem(comparison, 1312));
+            const auto status = boundedControlText(GetDlgItem(comparison, 1310));
+            const auto position = comparisonPosition(comparison);
+            if (!label || *label != L"暂停" || !status || !status->starts_with(L"同步播放 · 静音 · 请求 ") ||
+                !position || position->seconds() <= minimum) return false;
+            observed = *position; return true;
+        }, std::chrono::seconds(10));
+    };
+    if (!advanced(0.05L, first) || !advanced(first.seconds() + 0.04L, second)) return fail("successive decoded output timestamps did not advance while playing");
+    const auto secondPlayback = second;
+    if (!comparisonAction(comparison, 1312) || !waitUntil([&] { return comparisonPaused(comparison); }, std::chrono::seconds(5)))
+        return fail("Pause did not settle");
+    const auto frozen = comparisonPosition(comparison);
+    if (!frozen) return fail("paused presentation time is absent");
+    const auto frozenUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    do {
+        const auto position = comparisonPosition(comparison);
+        if (!comparisonPaused(comparison) || !position || *position != *frozen) return fail("a late decode changed the paused presentation time");
+        Sleep(20);
+    } while (std::chrono::steady_clock::now() < frozenUntil);
+    if (!comparisonAction(comparison, 1306) || !waitUntil([&] {
+        const auto position = comparisonPosition(comparison);
+        return comparisonPaused(comparison) && position && position->seconds() > frozen->seconds();
+    }, std::chrono::seconds(10))) return fail("next-frame decode did not advance");
+    const auto next = comparisonPosition(comparison);
+    // The output container may quantize a nominal 60 FPS stream to a millisecond
+    // time base (0, 17, 33, 50 ms ...). Comparing against 1/60 exactly would
+    // reject a correct adjacent frame. The product exposes the actual adjacent
+    // PTS through its next-frame action; prove adjacency by selecting the next
+    // frame, then requiring the previous action to return to the exact frozen
+    // rational position below. The read-only queue check separately proves that
+    // this QA job requested 60 FPS.
+    if (!next || next->seconds() <= frozen->seconds())
+        return fail("next-frame action did not select a later output PTS");
+    if (!comparisonAction(comparison, 1305) || !waitUntil([&] {
+        const auto position = comparisonPosition(comparison); return comparisonPaused(comparison) && position && *position == *frozen;
+    }, std::chrono::seconds(10))) return fail("previous-frame action did not return to the exact paused PTS");
+    if (!SendMessageTimeoutW(GetDlgItem(comparison, 1307), WM_SETTEXT, 0, reinterpret_cast<LPARAM>(L"1/2"),
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored) || !comparisonAction(comparison, 1308) || !waitUntil([&] {
+        const auto position = comparisonPosition(comparison);
+        return comparisonPaused(comparison) && position && *position == ComparisonPosition{1, 2};
+    }, std::chrono::seconds(10))) return fail("exact half-second seek did not decode the requested pair");
+    if (!comparisonAction(comparison, 1312) || !advanced(0.55L, second) || !comparisonAction(comparison, 1312) ||
+        !waitUntil([&] { return comparisonPaused(comparison); }, std::chrono::seconds(5))) return fail("playback did not resume and pause after exact seeking");
+    if (!PostMessageW(comparison, WM_CLOSE, 0, 0) || !waitUntil([&] { return !IsWindow(comparison); }, std::chrono::seconds(5)) || !IsWindow(owner))
+        return fail("comparison close did not preserve the main package window");
+    std::cout << "Actual packaged EXE comparison reports this source/result decoded, successive playback PTS " << first.numerator << '/' << first.denominator <<
+        " then " << secondPlayback.numerator << '/' << secondPlayback.denominator << ", frozen frame PTS " << frozen->numerator << '/' << frozen->denominator <<
+        ", next frame PTS " << next->numerator << '/' << next->denominator << ", a fixed 300 ms pause, actual adjacent 60 FPS-job forward/backward stepping and seek/resume.\n"
+        "Evidence is cross-process child-control state/PTS and a separate read-only queue check; no screenshot, framebuffer rendering or visual-quality claim is made.\n";
     return true;
 }
 } // namespace
@@ -305,7 +472,7 @@ bool verifyAutomaticQueue(const std::filesystem::path& database, const std::file
 // that is never switched to, so no user input or foreground window is touched.
 int wmain(int argc, wchar_t** argv) {
     if (argc != 4 && argc != 5) {
-        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --auto-denoise, --dual or --dual-blur; or native executable --capture-only new-client.bmp. --auto-denoise and --capture-only require a fresh writable portable QA package.\n";
+        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --auto-denoise, --dual, --dual-blur or --comparison; or native executable --capture-only new-client.bmp. --auto-denoise, --comparison and --capture-only require a fresh writable portable QA package. --comparison additionally requires qa-fixtures/synthetic-fixtures.txt declaring RifeLoveSyntheticComparison 1, synthetic-comparison-source.mp4 and new synthetic-comparison-output.mkv inside that package.\n";
         return 2;
     }
     const std::filesystem::path executable = std::filesystem::absolute(argv[1]).lexically_normal();
@@ -313,12 +480,17 @@ int wmain(int argc, wchar_t** argv) {
     const std::filesystem::path source = captureOnly ? std::filesystem::path{} : std::filesystem::absolute(argv[2]).lexically_normal();
     const std::filesystem::path output = std::filesystem::absolute(argv[3]).lexically_normal();
     const bool automaticDenoise = argc == 5 && std::wstring(argv[4]) == L"--auto-denoise";
+    const bool comparison = argc == 5 && std::wstring(argv[4]) == L"--comparison";
     if (!std::filesystem::is_regular_file(executable) || (!captureOnly && !std::filesystem::is_regular_file(source)) ||
         std::filesystem::exists(output)) {
         std::cerr << "Executable/fixture is missing or output already exists.\n";
         return 2;
     }
-    if ((automaticDenoise || captureOnly) && !freshPortableQa(executable)) {
+    if (comparison && !comparisonQaFixtures(executable, source, output)) {
+        std::cerr << "Comparison QA requires a packaged RifeLoveNative.exe with manifest/checksums and declared small synthetic fixtures inside its qa-fixtures directory; arbitrary videos, links and existing outputs are refused before launch.\n";
+        return 2;
+    }
+    if ((automaticDenoise || captureOnly || comparison) && !freshPortableQa(executable)) {
         std::cerr << "This EXE QA mode requires a local portable-mode.txt and absent/empty writable data directory; existing queues are never used.\n";
         return 2;
     }
@@ -395,6 +567,14 @@ int wmain(int argc, wchar_t** argv) {
                 const bool dual = option == L"--dual" || option == L"--dual-blur";
                 const bool denoise = argc == 5 && (std::wstring(argv[4]) == L"--denoise" || dual || automaticDenoise);
                 const bool highRate = argc == 5 && (std::wstring(argv[4]) == L"--300" || std::wstring(argv[4]) == L"--360" || std::wstring(argv[4]) == L"--480" || std::wstring(argv[4]) == L"--600");
+                if (comparison && !selectComboItemByLabel(context.result, 1005, L"60 FPS")) {
+                    std::cerr << "Comparison QA requires an explicitly selected 60 FPS output.\n";
+                    PostMessageW(context.result, WM_CLOSE, 0, 0);
+                    if (WaitForSingleObject(process.hProcess, 10000) != WAIT_OBJECT_0) {
+                        TerminateProcess(process.hProcess, 1); WaitForSingleObject(process.hProcess, 5000);
+                    }
+                    CloseHandle(process.hProcess); CloseDesktop(desktop); return 1;
+                }
                 if (denoise) {
                     const HWND temporal = GetDlgItem(context.result, 1024);
                     if (!temporal || !selectComboItemByLabel(context.result, 1024, L"FastDVDnet")) {
@@ -484,13 +664,13 @@ int wmain(int argc, wchar_t** argv) {
                         return 1;
                     }
                 }
-                if (argc == 5 && !blur && !highRate && !denoise && !captureTarget(context.result, std::filesystem::absolute(argv[4])))
+                if (argc == 5 && !blur && !highRate && !denoise && !comparison && !captureTarget(context.result, std::filesystem::absolute(argv[4])))
                     std::cerr << "Could not capture the target window on the isolated desktop.\n";
                 SendMessageW(start, BM_CLICK, 0, 0);
                 if (waitUntil([&] { return std::filesystem::is_regular_file(output) && !IsWindowEnabled(cancel); },
                               std::chrono::seconds(automaticDenoise ? 300 : 120))) {
                     std::cout << "Actual native EXE published the test video through its start button.\n";
-                    result = 0;
+                    result = comparison ? (checkPackagedComparison(desktop, process.dwProcessId, context.result, source, output) ? 0 : 1) : 0;
                 } else std::cerr << "Target did not publish a completed test video.\n";
             } else {
                 if (!testOption.empty() && !testOption.starts_with(L"--"))
@@ -508,7 +688,7 @@ int wmain(int argc, wchar_t** argv) {
         WaitForSingleObject(process.hProcess, 5000);
         result = 1;
     }
-    if (result == 0 && automaticDenoise && !verifyAutomaticQueue(executable.parent_path() / L"data" / L"queue.sqlite", source, output))
+    if (result == 0 && (automaticDenoise || comparison) && !verifyQaQueue(executable.parent_path() / L"data" / L"queue.sqlite", source, output, automaticDenoise))
         result = 1;
     CloseHandle(process.hProcess);
     CloseDesktop(desktop);

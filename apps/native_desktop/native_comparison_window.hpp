@@ -8,6 +8,7 @@
 #include <dwmapi.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -99,7 +100,9 @@ inline Rational nativeComparisonAbsoluteTime(Rational origin, Rational relativeT
     throw std::invalid_argument("该定位时间与视频起始 PTS 的精确组合超出当前比较精度；请减少秒数小数位或使用相邻帧按钮。未显示替代时间。");
 }
 
-// Modeless, read-only, same-time static comparison. A single persistent worker
+// Modeless, read-only comparison driven by one relative-time playback clock.
+// Playback is muted and capped at 30 preview requests/second; exact stepping
+// remains available at the video's full frame rate. A single persistent worker
 // coalesces requests; neither seeking nor closing joins a decoder on the UI
 // thread. Completions live in shared state rather than raw message pointers.
 class NativeComparisonWindow final {
@@ -148,6 +151,7 @@ public:
 
     [[nodiscard]] HWND window() const noexcept { return window_; }
     [[nodiscard]] bool busy() const noexcept { return busy_; }
+    [[nodiscard]] bool playing() const noexcept { return playing_; }
     [[nodiscard]] bool ready() const noexcept { return pair_.has_value() && !busy_ && error_.empty(); }
     [[nodiscard]] const std::wstring& error() const noexcept { return error_; }
     [[nodiscard]] const std::optional<NativeComparisonPair>& pair() const noexcept { return pair_; }
@@ -164,7 +168,7 @@ public:
             const int dpi = static_cast<int>(owner ? GetDpiForWindow(owner) : GetDpiForSystem());
             const int width = std::min(MulDiv(1180, dpi ? dpi : 96, 96), static_cast<int>(monitor.rcWork.right - monitor.rcWork.left));
             const int height = std::min(MulDiv(760, dpi ? dpi : 96, 96), static_cast<int>(monitor.rcWork.bottom - monitor.rcWork.top));
-            window_ = CreateWindowExW(WS_EX_APPWINDOW, cls.lpszClassName, L"RifeLove · 逐帧比较",
+            window_ = CreateWindowExW(WS_EX_APPWINDOW, cls.lpszClassName, L"RifeLove · 同步比较",
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                 monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - width) / 2,
                 monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - height) / 2,
@@ -181,6 +185,7 @@ public:
     }
 
     void close() {
+        pause();
         invalidateRequests();
         if (window_ && IsWindow(window_)) DestroyWindow(window_);
         window_ = nullptr;
@@ -190,6 +195,7 @@ public:
     }
 
     void setFiles(const std::filesystem::path& source, const std::filesystem::path& output) {
+        pause();
         source_ = source; output_ = output; pair_.reset(); error_.clear();
         if (window_) {
             SetWindowTextW(GetDlgItem(window_, sourcePathId), source_.c_str());
@@ -198,12 +204,48 @@ public:
         if (!source_.empty() && !output_.empty()) seek(Rational(0));
         else {
             invalidateRequests(false); busy_ = false;
-            setStatus(L"选择原片和已完成结果。按编码像素显示，SAR 尚未校准；同一相对时间的静态逐帧比较，不含播放或音频。");
+            setStatus(L"选择原片和已完成结果。支持同一相对时间的静音同步播放与逐帧比较；按编码像素显示，SAR 尚未校准。");
             updateControls();
         }
     }
 
     void seek(Rational relativeTime, std::optional<Rational> previousBefore = {}) {
+        pause();
+        if (window_) KillTimer(window_, seekTimer);
+        requestPair(relativeTime, previousBefore);
+    }
+
+    void play() {
+        if (playing_ || !ready() || !window_) return;
+        KillTimer(window_, seekTimer);
+        playing_ = true;
+        playbackAnchor_ = pair_->requested;
+        playbackStarted_ = std::chrono::steady_clock::now();
+        const bool atEnd = !pair_->output.next || (pair_->duration ? pair_->requested >= *pair_->duration : !pair_->source.next);
+        playbackClockReady_ = !atEnd;
+        if (!SetTimer(window_, playbackTimer, 34, nullptr)) {
+            playing_ = false;
+            setStatus(L"无法启动播放计时器；仍可逐帧查看。");
+            updateControls();
+            return;
+        }
+        if (atEnd) requestPair(Rational(0));
+        else { showPairStatus(); updateControls(); }
+    }
+
+    void pause() {
+        if (!playing_) return;
+        playing_ = false;
+        if (window_) KillTimer(window_, playbackTimer);
+        // Freeze the last atomically published pair. A slow in-flight decode
+        // must not advance the picture after the user has pressed Pause.
+        if (busy_) { invalidateRequests(false); busy_ = false; }
+        showPairStatus();
+        updateControls();
+    }
+
+private:
+    void requestPair(Rational relativeTime, std::optional<Rational> previousBefore = {}) {
         if (!window_ || source_.empty() || output_.empty()) return;
         if (relativeTime < Rational(0)) relativeTime = Rational(0);
         if (pair_ && pair_->duration && relativeTime > *pair_->duration) relativeTime = *pair_->duration;
@@ -216,12 +258,15 @@ public:
             shared_->completed.reset();
         }
         busy_ = true; error_.clear();
-        setStatus(previousBefore ? L"正在查找前一呈现帧… 可继续定位或关闭。" : L"正在读取同一时间点的原片和处理结果… 可继续定位或关闭。");
+        if (!playing_) setStatus(previousBefore ? L"正在查找前一呈现帧… 可继续定位或关闭。" : L"正在读取同一时间点的原片和处理结果… 可继续定位或关闭。");
         updateControls(); shared_->wake.notify_all();
     }
 
+public:
     void step(int direction) {
-        if (!ready() || direction == 0) return;
+        if (direction == 0) return;
+        pause();
+        if (!ready()) return;
         const auto& output = pair_->output;
         const auto adjacent = direction > 0 ? output.next : output.previous;
         if (adjacent) seek(*adjacent - pair_->outputOrigin);
@@ -234,6 +279,13 @@ public:
         if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) { close(); return true; }
         if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN && message.hwnd == GetDlgItem(window_, timeId)) {
             SendMessageW(GetDlgItem(window_, goId), BM_CLICK, 0, 0); return true;
+        }
+        if (message.message == WM_KEYDOWN && message.wParam == VK_SPACE &&
+            message.hwnd != GetDlgItem(window_, timeId) && message.hwnd != GetDlgItem(window_, sourcePathId) && message.hwnd != GetDlgItem(window_, outputPathId) &&
+            message.hwnd != GetDlgItem(window_, statusId)) {
+            if ((message.lParam & (static_cast<LPARAM>(1) << 30)) != 0) return true;
+            if (playing_) pause(); else play();
+            return true;
         }
         if (message.message == WM_KEYDOWN && (message.wParam == VK_LEFT || message.wParam == VK_RIGHT) &&
             message.hwnd != GetDlgItem(window_, timeId) && message.hwnd != GetDlgItem(window_, sourcePathId) && message.hwnd != GetDlgItem(window_, outputPathId)) {
@@ -306,8 +358,10 @@ public:
 private:
     static constexpr UINT loadedMessage = WM_APP + 73;
     static constexpr UINT_PTR seekTimer = 73;
+    static constexpr UINT_PTR playbackTimer = 74;
     static constexpr int sourcePathId = 1301, outputPathId = 1302, sourceBrowseId = 1303, outputBrowseId = 1304;
     static constexpr int previousId = 1305, nextId = 1306, timeId = 1307, goId = 1308, sliderId = 1309, statusId = 1310, closeId = 1311;
+    static constexpr int playId = 1312;
     struct Completion { std::uint64_t generation = 0; std::optional<NativeComparisonPair> pair; std::wstring error; };
     struct Shared {
         std::mutex mutex;
@@ -337,11 +391,35 @@ private:
     void setStatus(const std::wstring& text) { if (window_) SetWindowTextW(GetDlgItem(window_, statusId), text.c_str()); }
     void updateControls() {
         if (!window_) return;
+        EnableWindow(GetDlgItem(window_, playId), playing_ || ready());
+        SetWindowTextW(GetDlgItem(window_, playId), playing_ ? L"暂停" : L"播放 / 静音");
         EnableWindow(GetDlgItem(window_, previousId), ready() && (pair_->output.previous || pair_->output.timestamp > pair_->outputOrigin));
         EnableWindow(GetDlgItem(window_, nextId), ready() && pair_->output.next.has_value());
         EnableWindow(GetDlgItem(window_, sliderId), pair_ && pair_->duration && *pair_->duration > Rational(0));
         EnableWindow(GetDlgItem(window_, goId), !source_.empty() && !output_.empty());
         InvalidateRect(window_, nullptr, FALSE);
+    }
+    void showPairStatus(bool ended = false) {
+        if (!pair_ || !error_.empty()) return;
+        const auto position = pair_->output.timestamp - pair_->outputOrigin;
+        setStatus((playing_ ? std::wstring(L"同步播放 · 静音 · ") : ended ? std::wstring(L"播放结束 · 静音 · ") : std::wstring(L"已暂停 · 静音 · ")) +
+            L"请求 " + seconds(pair_->requested) + L" · 原片 " + seconds(pair_->source.timestamp - pair_->sourceOrigin) +
+            L" · 结果 " + seconds(position) + L" · 预览最高 30 FPS，解码较慢时跳过预览帧；逐帧可查看全部帧。按编码像素显示，SAR 尚未校准。");
+    }
+    void playbackTick() {
+        if (!playing_ || !playbackClockReady_ || busy_ || !ready()) return;
+        // Do not cancel and restart a slow decode on every tick. Both pictures
+        // publish together, then the next request catches up to the same
+        // monotonic clock; no independent source/output timers can drift.
+        try {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - playbackStarted_).count();
+            auto time = playbackAnchor_ + Rational(std::max<std::int64_t>(0, elapsed), 1000);
+            if (pair_->duration) time = std::min(time, *pair_->duration);
+            if (time > pair_->requested) requestPair(time);
+        } catch (const std::exception& error) {
+            pause(); error_ = wide(error.what());
+            setStatus(L"播放时间轴无法继续：" + error_); updateControls();
+        }
     }
     void receive() {
         std::optional<Completion> result;
@@ -350,6 +428,7 @@ private:
         { std::lock_guard lock(shared_->mutex); if (result->generation != shared_->generation) return; }
         busy_ = false; error_ = std::move(result->error); pair_ = std::move(result->pair);
         if (!error_.empty() || !pair_) {
+            playing_ = false; KillTimer(window_, playbackTimer);
             pair_.reset(); if (error_.empty()) error_ = L"未返回比较帧";
             setStatus(L"无法显示比较帧：" + error_);
         } else {
@@ -358,12 +437,20 @@ private:
             SetWindowTextW(GetDlgItem(window_, timeId), value.c_str());
             if (pair_->duration && *pair_->duration > Rational(0))
                 SetScrollPos(GetDlgItem(window_, sliderId), SB_CTL, static_cast<int>(std::clamp((position / *pair_->duration).toLongDouble() * 10000.0L, 0.0L, 10000.0L)), TRUE);
-            setStatus(L"请求 " + seconds(pair_->requested) + L" · 原片 " + seconds(pair_->source.timestamp - pair_->sourceOrigin) +
-                L" · 结果 " + seconds(position) + L" · 最近呈现帧，按编码像素显示，SAR 尚未校准；静态比较，不含播放或音频。");
+            if (playing_ && !playbackClockReady_) {
+                playbackAnchor_ = pair_->requested;
+                playbackStarted_ = std::chrono::steady_clock::now();
+                playbackClockReady_ = true;
+            }
+            const bool ended = playing_ && (pair_->duration ? pair_->requested >= *pair_->duration :
+                !pair_->source.next || !pair_->output.next);
+            if (ended) { playing_ = false; KillTimer(window_, playbackTimer); }
+            showPairStatus(ended);
         }
         updateControls();
     }
     void choose(bool output) {
+        pause();
         wchar_t path[32768]{};
         OPENFILENAMEW dialog{}; dialog.lStructSize = sizeof(dialog); dialog.hwndOwner = window_;
         dialog.lpstrFile = path; dialog.nMaxFile = static_cast<DWORD>(std::size(path));
@@ -378,7 +465,7 @@ private:
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
         RECT client{}; GetClientRect(window_, &client);
         const int w = client.right, h = client.bottom;
-        const bool compact = w < px(600);
+        const bool compact = w < px(760);
         const auto move = [&](int id, int x, int y, int width, int height) {
             const HWND control = GetDlgItem(window_, id);
             SetWindowPos(control, nullptr, x, y, std::max(1, width), std::max(1, height), SWP_NOZORDER | SWP_NOACTIVATE);
@@ -391,8 +478,9 @@ private:
         move(sliderId, px(20), h - px(compact ? 168 : 126), w - px(40), px(20));
         move(previousId, px(20), h - px(compact ? 136 : 94), px(96), px(34));
         move(nextId, px(124), h - px(compact ? 136 : 94), px(96), px(34));
-        move(timeId, px(compact ? 20 : 236), h - px(92), px(128), px(30));
-        move(goId, px(compact ? 156 : 372), h - px(94), px(80), px(34));
+        move(playId, px(228), h - px(compact ? 136 : 94), px(96), px(34));
+        move(timeId, px(compact ? 20 : 340), h - px(92), px(128), px(30));
+        move(goId, px(compact ? 156 : 476), h - px(94), px(80), px(34));
         move(closeId, w - px(116), h - px(compact ? 136 : 94), px(96), px(34));
         move(statusId, px(20), h - px(49), w - px(40), px(42));
         InvalidateRect(window_, nullptr, FALSE);
@@ -404,10 +492,10 @@ private:
         const auto text = [&](const std::wstring& value, RECT rect, bool wrap = false) {
             DrawTextW(dc, value.c_str(), static_cast<int>(value.size()), &rect, DT_LEFT | DT_NOPREFIX | (wrap ? DT_WORDBREAK : DT_SINGLELINE | DT_END_ELLIPSIS));
         };
-        text(L"逐帧比较  /  同一相对时间 · 编码像素", RECT{px(20), px(15), client.right - px(20), px(42)});
+        text(L"同步比较  /  同一相对时间 · 静音播放 · 精确逐帧", RECT{px(20), px(15), client.right - px(20), px(42)});
         text(L"原片", RECT{px(20), px(65), px(66), px(88)});
         text(L"结果", RECT{px(20), px(105), px(66), px(128)});
-        const bool compact = client.right < px(600);
+        const bool compact = client.right < px(760);
         const int gap = px(14), inset = px(20), width = std::max(1, (static_cast<int>(client.right) - inset * 2 - gap) / 2);
         const std::array<const NativeComparisonImage*, 2> images{pair_ ? &pair_->source : nullptr, pair_ ? &pair_->output : nullptr};
         for (int side = 0; side < 2; ++side) {
@@ -419,7 +507,7 @@ private:
             RECT imageArea{pane.left + px(8), pane.top + px(58), pane.right - px(8), pane.bottom - px(8)};
             if (imageArea.right <= imageArea.left || imageArea.bottom <= imageArea.top) continue;
             const auto* image = images[static_cast<std::size_t>(side)];
-            if (!ready() || !image) { text(busy_ ? L"正在读取…" : error_.empty() ? L"选择视频以显示画面" : L"当前帧不可用；请查看底部说明", imageArea, true); continue; }
+            if ((!ready() && !(playing_ && pair_ && error_.empty())) || !image) { text(busy_ ? L"正在读取…" : error_.empty() ? L"选择视频以显示画面" : L"当前帧不可用；请查看底部说明", imageArea, true); continue; }
             const auto origin = side == 0 ? pair_->sourceOrigin : pair_->outputOrigin;
             text(std::to_wstring(image->width) + L" × " + std::to_wstring(image->height) + L"  ·  " + seconds(image->timestamp - origin),
                 RECT{title.left, title.bottom, title.right, title.bottom + px(23)});
@@ -454,11 +542,12 @@ private:
             control(L"BUTTON", L"选择结果…", WS_TABSTOP | BS_OWNERDRAW, outputBrowseId);
             control(L"BUTTON", L"← 上一帧", WS_TABSTOP | BS_OWNERDRAW, previousId);
             control(L"BUTTON", L"下一帧 →", WS_TABSTOP | BS_OWNERDRAW, nextId);
+            control(L"BUTTON", L"播放 / 静音", WS_TABSTOP | BS_OWNERDRAW, playId);
             control(L"EDIT", L"0", WS_TABSTOP | ES_AUTOHSCROLL, timeId);
             control(L"BUTTON", L"定位 / 秒", WS_TABSTOP | BS_OWNERDRAW, goId);
             control(L"BUTTON", L"关闭", WS_TABSTOP | BS_OWNERDRAW, closeId);
             control(L"SCROLLBAR", L"比较位置", WS_TABSTOP | SBS_HORZ, sliderId);
-            control(L"EDIT", L"选择原片和已完成结果；静态逐帧比较，不含播放或音频。", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, statusId);
+            control(L"EDIT", L"选择原片和已完成结果；支持静音同步播放与精确逐帧。", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, statusId);
             SetScrollRange(GetDlgItem(window, sliderId), SB_CTL, 0, 10000, FALSE);
             self->layout(); self->updateControls(); return 0;
         }
@@ -482,6 +571,7 @@ private:
                 case outputBrowseId: self->choose(true); return 0;
                 case previousId: self->step(-1); return 0;
                 case nextId: self->step(1); return 0;
+                case playId: if (self->playing_) self->pause(); else self->play(); return 0;
                 case closeId: self->close(); return 0;
                 case goId: {
                     wchar_t value[256]{}; GetWindowTextW(GetDlgItem(window, timeId), value, static_cast<int>(std::size(value)));
@@ -494,6 +584,7 @@ private:
             break;
         case WM_HSCROLL:
             if (reinterpret_cast<HWND>(lParam) == GetDlgItem(window, sliderId) && self->pair_ && self->pair_->duration) {
+                self->pause();
                 const int action = LOWORD(wParam);
                 if (action == SB_LINELEFT || action == SB_LINERIGHT) { self->step(action == SB_LINELEFT ? -1 : 1); return 0; }
                 int position = GetScrollPos(GetDlgItem(window, sliderId), SB_CTL);
@@ -509,7 +600,10 @@ private:
                 return 0;
             }
             break;
-        case WM_TIMER: if (wParam == seekTimer) { KillTimer(window, seekTimer); self->seek(self->pendingTime_); return 0; } break;
+        case WM_TIMER:
+            if (wParam == seekTimer) { KillTimer(window, seekTimer); self->seek(self->pendingTime_); return 0; }
+            if (wParam == playbackTimer) { self->playbackTick(); return 0; }
+            break;
         case loadedMessage: self->receive(); return 0;
         case WM_DRAWITEM: {
             const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam); if (!item) return FALSE;
@@ -534,7 +628,8 @@ private:
         case WM_NCDESTROY:
             self->invalidateRequests(); self->window_ = nullptr; self->pair_.reset(); self->busy_ = false;
             self->source_.clear(); self->output_.clear(); self->error_.clear(); self->pendingTime_ = Rational(0);
-            KillTimer(window, seekTimer); SetWindowLongPtrW(window, GWLP_USERDATA, 0); break;
+            self->playing_ = false;
+            KillTimer(window, seekTimer); KillTimer(window, playbackTimer); SetWindowLongPtrW(window, GWLP_USERDATA, 0); break;
         }
         return DefWindowProcW(window, message, wParam, lParam);
     }
@@ -547,6 +642,9 @@ private:
     std::optional<NativeComparisonPair> pair_;
     std::wstring error_;
     Rational pendingTime_;
+    Rational playbackAnchor_;
+    std::chrono::steady_clock::time_point playbackStarted_;
+    bool playing_ = false, playbackClockReady_ = false;
     bool busy_ = false;
     std::jthread worker_;
 };

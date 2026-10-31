@@ -181,12 +181,12 @@ void checkNativeComparison(Check check, Pump pump, HWND owner) {
         SetWindowPos(window, nullptr, bounds.left, bounds.top, px(width), px(520), SWP_NOZORDER | SWP_NOACTIVATE);
         RECT client{}; GetClientRect(window, &client);
         std::vector<RECT> actions;
-        for (const int id : {1303, 1304, 1305, 1306, 1307, 1308, 1309, 1310, 1311}) {
+        for (const int id : {1303, 1304, 1305, 1306, 1307, 1308, 1309, 1310, 1311, 1312}) {
             RECT field{}; GetWindowRect(GetDlgItem(window, id), &field);
             MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&field), 2);
             check(IsWindowVisible(GetDlgItem(window, id)) && field.left >= 0 && field.top >= 0 && field.right <= client.right && field.bottom <= client.bottom,
                 "comparison controls remain visible inside resized native windows");
-            if (id == 1305 || id == 1306 || id == 1307 || id == 1308 || id == 1311) actions.push_back(field);
+            if (id == 1305 || id == 1306 || id == 1307 || id == 1308 || id == 1311 || id == 1312) actions.push_back(field);
         }
         for (std::size_t first = 0; first < actions.size(); ++first)
             for (std::size_t second = first + 1; second < actions.size(); ++second) {
@@ -219,6 +219,125 @@ void checkNativeComparison(Check check, Pump pump, HWND owner) {
     check(afterExternalClose && !IsWindowEnabled(GetDlgItem(afterExternalClose, 1308)) && !comparison.busy(),
         "owner-driven destruction also clears internal paths before an empty reopen");
     comparison.close();
+
+    struct PlaybackCounters {
+        std::atomic<int> calls{0}, slowStarted{0}, cancelled{0};
+        std::atomic<bool> slowNext{false}, failNext{false}, durationKnown{true};
+    };
+    const auto playbackCounters = std::make_shared<PlaybackCounters>();
+    NativeComparisonWindow playback([playbackCounters](const NativeComparisonRequest& request, std::stop_token stop) {
+        ++playbackCounters->calls;
+        if (playbackCounters->slowNext.exchange(false)) {
+            ++playbackCounters->slowStarted;
+            for (int count = 0; count < 250; ++count) {
+                if (stop.stop_requested()) { ++playbackCounters->cancelled; throw std::runtime_error("cancelled playback fixture"); }
+                std::this_thread::sleep_for(2ms);
+            }
+        }
+        if (playbackCounters->failNext.exchange(false)) throw std::runtime_error("playback fixture failure");
+        NativeComparisonPair pair;
+        pair.sourceOrigin = Rational(-3, 2); pair.outputOrigin = Rational(23, 7);
+        pair.requested = request.relativeTime;
+        if (playbackCounters->durationKnown) pair.duration = Rational(3, 5);
+        const auto image = [&](Rational origin, std::int64_t fps, std::uint8_t red) {
+            const auto target = request.relativeTime * Rational(fps);
+            const auto last = fps * 3 / 5 - 1;
+            const auto index = std::clamp<std::int64_t>(target.numerator() / target.denominator(), 0, last);
+            media::DecodedPreviewFrame frame; frame.width = 8; frame.height = 4;
+            frame.timestamp = origin + Rational(index, fps);
+            if (index > 0) frame.previousTimestamp = frame.timestamp - Rational(1, fps);
+            if (index < last) frame.nextTimestamp = frame.timestamp + Rational(1, fps);
+            for (int pixel = 0; pixel < 32; ++pixel) frame.rgba.insert(frame.rgba.end(), {red, 80, 140, 255});
+            return nativeComparisonImage(std::move(frame));
+        };
+        pair.source = image(pair.sourceOrigin, 30, 60); pair.output = image(pair.outputOrigin, 120, 180);
+        return pair;
+    });
+    const HWND transport = playback.open(owner, L"C:\\playback-source.mp4", L"C:\\playback-result.mkv");
+    check(transport && pump([&] { return playback.ready(); }, 5s), "synchronized playback initializes two different-frame-rate streams");
+    if (!playback.ready()) { playback.close(); return; }
+    const auto waitFor = [&](auto delay) {
+        const auto until = std::chrono::steady_clock::now() + delay;
+        return pump([&] { return std::chrono::steady_clock::now() >= until; }, 3s);
+    };
+    wchar_t notice[1024]{};
+    GetWindowTextW(GetDlgItem(transport, 1310), notice, static_cast<int>(std::size(notice)));
+    check(std::wstring(notice).find(L"静音") != std::wstring::npos && std::wstring(notice).find(L"30 FPS") != std::wstring::npos,
+        "comparison discloses muted playback and the preview frame-rate limit");
+    SendMessageW(GetDlgItem(transport, 1312), BM_CLICK, 0, 0);
+    check(playback.playing() && pump([&] { return playback.ready() && playback.pair()->requested >= Rational(1, 10); }, 5s),
+        "native Play button advances both pictures on a shared relative timeline");
+    if (!playback.ready()) { playback.close(); return; }
+    const auto time = playback.pair()->requested;
+    check(std::abs((playback.pair()->source.timestamp - playback.pair()->sourceOrigin - time).toLongDouble()) <= 1.0L / 30.0L &&
+        std::abs((playback.pair()->output.timestamp - playback.pair()->outputOrigin - time).toLongDouble()) <= 1.0L / 120.0L,
+        "30/120 FPS playback respects distinct and negative stream origins without introducing separate clocks");
+    MSG space{}; space.hwnd = transport; space.message = WM_KEYDOWN; space.wParam = VK_SPACE;
+    check(playback.handleDialogMessage(space) && !playback.playing(), "Space pauses synchronized playback outside text fields");
+    space.lParam = static_cast<LPARAM>(1) << 30;
+    check(playback.handleDialogMessage(space) && !playback.playing(), "holding Space does not repeatedly toggle playback through key repeat");
+    space.lParam = 0;
+    const auto frozen = playback.pair()->requested;
+    check(waitFor(120ms) && playback.ready() && playback.pair()->requested == frozen,
+        "paused comparison remains fixed after queued timer and completion messages are pumped");
+    space.hwnd = GetDlgItem(transport, 1307);
+    (void)playback.handleDialogMessage(space);
+    check(!playback.playing(), "Space in the time field does not start playback");
+
+    playback.play(); playback.seek(Rational(1, 5));
+    check(!playback.playing() && pump([&] { return playback.ready(); }, 5s) && playback.pair()->requested == Rational(1, 5),
+        "explicit seeking pauses the playback clock and publishes the requested frame pair");
+    playback.play(); playback.step(1);
+    check(!playback.playing() && pump([&] { return playback.ready(); }, 5s) && playback.pair()->requested == Rational(5, 24),
+        "frame stepping pauses playback and preserves the exact adjacent output timestamp");
+
+    const int cancelledBefore = playbackCounters->cancelled.load();
+    playbackCounters->slowNext = true; playback.play();
+    check(pump([&] { return playbackCounters->slowStarted.load() > 0; }, 5s), "slow playback decode starts off the UI thread");
+    check(waitFor(100ms) && playback.playing() && playback.busy() && playbackCounters->cancelled.load() == cancelledBefore,
+        "playback ticks do not cancel and starve an in-flight slow decoder");
+    const auto beforePause = std::chrono::steady_clock::now(); playback.pause();
+    check(std::chrono::steady_clock::now() - beforePause < 250ms && playback.ready(), "pausing a slow decoder stays responsive and retains the last valid pair");
+    const auto slowFrozen = playback.pair()->requested;
+    check(pump([&] { return playbackCounters->cancelled.load() > cancelledBefore; }, 5s) && waitFor(120ms) &&
+        playback.ready() && playback.pair()->requested == slowFrozen,
+        "a cancelled playback decode cannot publish a late pair after Pause");
+
+    playback.seek(Rational(11, 20));
+    check(pump([&] { return playback.ready(); }, 5s), "comparison seeks near its common playback boundary");
+    playback.play();
+    check(pump([&] { return !playback.playing() && !playback.busy(); }, 5s) && playback.ready() && playback.pair()->requested == Rational(3, 5) &&
+        !playback.pair()->output.next, "known-duration playback publishes the last frame and stops exactly at the common duration");
+    const int callsAtEnd = playbackCounters->calls.load();
+    check(waitFor(100ms) && playbackCounters->calls.load() == callsAtEnd, "end-of-playback removes the timer instead of repeatedly decoding EOF");
+    playback.seek(Rational(71, 120));
+    check(pump([&] { return playback.ready(); }, 5s) && !playback.pair()->output.next,
+        "exact stepping can select the final output frame before the stream duration boundary");
+    playback.play();
+    check(pump([&] { return playback.ready() && playback.pair()->requested > Rational(0) && playback.pair()->requested < Rational(3, 5); }, 5s),
+        "Play at EOF restarts from the beginning and starts its clock after the first pair is ready");
+    playback.pause();
+    playbackCounters->failNext = true; playback.play();
+    check(pump([&] { return !playback.playing() && !playback.busy(); }, 5s) && !playback.pair() && !playback.error().empty(),
+        "a playback decode error stops transport and clears both stale pictures");
+    const int callsAfterError = playbackCounters->calls.load();
+    check(waitFor(100ms) && playbackCounters->calls.load() == callsAfterError, "playback failure does not retry in an uncontrolled timer loop");
+    playbackCounters->durationKnown = false; playback.seek(Rational(11, 20));
+    check(pump([&] { return playback.ready(); }, 5s), "unknown-duration fixture can recover after a playback error");
+    playback.play();
+    check(pump([&] { return !playback.playing() && !playback.busy(); }, 5s) && playback.ready() &&
+        (!playback.pair()->source.next || !playback.pair()->output.next), "unknown-duration playback stops at an actual decoded stream boundary");
+
+    playback.seek(Rational(0)); check(pump([&] { return playback.ready(); }, 5s), "comparison returns to its first pair before close regression");
+    playbackCounters->slowNext = true; playback.play();
+    check(pump([&] { return playbackCounters->slowStarted.load() > 1; }, 5s), "playback starts a second cancellable slow request");
+    const auto closeStarted = std::chrono::steady_clock::now(); DestroyWindow(transport);
+    check(std::chrono::steady_clock::now() - closeStarted < 250ms && !playback.window() && !playback.playing(),
+        "owner-driven destruction stops playback and cancels slow work without blocking the UI");
+    const HWND reset = playback.open(owner);
+    check(reset && !playback.pair() && !playback.busy() && !IsWindowEnabled(GetDlgItem(reset, 1312)) && waitFor(120ms),
+        "reopened empty comparison has no playback timer, hidden old files or late pictures");
+    playback.close();
 }
 
 template<class Check, class Pump, class Capture>
@@ -282,6 +401,22 @@ void checkNativeComparisonFiles(Check check, Pump pump, Capture capture, HWND ow
         }
     }
     comparison.seek(Rational(0)); check(settled(), "real comparison returns to the beginning after end-of-file navigation");
+    comparison.play();
+    check(pump([&] { return comparison.ready() && comparison.pair()->requested > Rational(0); }, 30s),
+        "real media plays successive atomically decoded source/output frame pairs");
+    if (comparison.ready() && !screenshot.empty()) {
+        auto playing = screenshot; playing.replace_filename(playing.stem().wstring() + L"-playing" + playing.extension().wstring());
+        check(capture(window, playing), "capture the real synchronized playback and Pause control");
+    }
+    comparison.pause();
+    if (comparison.ready()) {
+        const auto playbackTime = comparison.pair()->requested;
+        check(aligned(playbackTime), "real playback retains the same relative presentation time in both panes");
+        const auto until = std::chrono::steady_clock::now() + 120ms;
+        check(pump([&] { return std::chrono::steady_clock::now() >= until; }, 3s) && comparison.ready() && comparison.pair()->requested == playbackTime,
+            "real playback remains fixed after Pause while asynchronous messages continue");
+    }
+    comparison.seek(Rational(0)); check(settled(), "real comparison returns to exact frame navigation after playback");
     if (!screenshot.empty()) {
         check(capture(window, screenshot), "capture the real native comparison with decoded video frames");
         const UINT dpi = GetDpiForWindow(window); RECT bounds{}; GetWindowRect(window, &bounds);
