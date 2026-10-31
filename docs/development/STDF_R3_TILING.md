@@ -146,7 +146,7 @@ The runner now compares halo policies one tile at a time. Its earlier prototype
 kept NumPy views for every tile, which retained the corresponding complete
 output allocations and made memory grow with image size. The new
 `peak_tracked_host_tensor_bytes` includes the live source and output tensors
-and the copied comparison core; generator temporaries, any whole-frame oracle,
+and the copied comparison core; generator and metric temporaries, any whole-frame oracle,
 and provider allocations remain outside that estimate. A 192×128 checkerboard
 oracle run covered all six 64×64 tiles; halo 48 reached a maximum FP32 error of
 `5.22e-6` and no changed rounded 8-bit pixels. This is a small regression check,

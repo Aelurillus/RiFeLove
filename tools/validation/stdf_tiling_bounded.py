@@ -262,7 +262,7 @@ def run(args: argparse.Namespace) -> dict:
         "halos": args.halo,
         "cases": args.case,
         "reference_shape": list(reference_shape) if reference_shape else None,
-        "memory_accounting": "peak_host_tensor_bytes counts the source and full output tile; peak_tracked_host_tensor_bytes also includes the copied comparison core. Generator temporaries, any whole-frame oracle and provider arena are excluded",
+        "memory_accounting": "peak_host_tensor_bytes counts the source and full output tile; peak_tracked_host_tensor_bytes also includes the copied comparison core. Generator and metric temporaries, any whole-frame oracle and provider arena are excluded",
         "shapes": [],
         "limitations": [
             "The generated cases are deterministic Y-like tensors, not real encoded video",
