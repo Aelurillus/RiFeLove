@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -21,10 +22,21 @@ double quantile(std::vector<float>& values, std::size_t index) {
     return values[index];
 }
 
+// A stable mixed offset per stratum prevents the fixed raster stride from
+// sampling the same phase of a periodic texture in every row. It is independent
+// of frame number so static content does not flicker due to the sampler.
+std::uint64_t stratumHash(std::uint64_t value) {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31);
+}
+
 DynamicSettings dynamicSettings(const AutomaticDenoiseSettings& settings) {
     if (!std::isfinite(settings.relativeAdjustment) || settings.relativeAdjustment < -1.0 || settings.relativeAdjustment > 1.0 ||
         !std::isfinite(settings.maximumSigmaChangePerSecond) || settings.maximumSigmaChangePerSecond <= 0.0 ||
-        !std::isfinite(settings.minimumConfidence) || settings.minimumConfidence < 0.0 || settings.minimumConfidence > 1.0)
+        !std::isfinite(settings.minimumConfidence) || settings.minimumConfidence < 0.0 || settings.minimumConfidence > 1.0 ||
+        (settings.algorithmVersion != 1 && settings.algorithmVersion != 2))
         throw std::invalid_argument("Invalid automatic Gaussian-denoise settings");
     DynamicSettings result;
     result.effects[0].enabled = false;
@@ -39,8 +51,10 @@ DynamicSettings dynamicSettings(const AutomaticDenoiseSettings& settings) {
 }
 }
 
-GaussianNoiseEstimate estimateGaussianNoise(const media::RifeSdrFrame& frame, std::stop_token stop) {
+GaussianNoiseEstimate estimateGaussianNoise(const media::RifeSdrFrame& frame, std::stop_token stop, int algorithmVersion) {
     cancelled(stop);
+    if (algorithmVersion != 1 && algorithmVersion != 2)
+        throw std::invalid_argument("Unsupported Gaussian-noise analyzer version");
     if (frame.width <= 0 || frame.height <= 0 || frame.width > 8192 || frame.height > 8192 ||
         frame.paddedWidth < frame.width || frame.paddedHeight < frame.height || frame.paddedWidth > 8192 || frame.paddedHeight > 8192)
         throw std::invalid_argument("Invalid Gaussian-noise analysis dimensions");
@@ -55,11 +69,15 @@ GaussianNoiseEstimate estimateGaussianNoise(const media::RifeSdrFrame& frame, st
     const int columns = frame.width / 3, rows = frame.height / 3;
     const auto candidates = static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows);
     const auto stride = std::max<std::size_t>(1,(candidates + maximumSamples - 1) / maximumSamples);
+    const auto sampleCount = algorithmVersion == 1 ? (candidates + stride - 1) / stride : std::min(candidates,maximumSamples);
     std::array<std::vector<float>,3> residuals;
     for (auto& channel : residuals) channel.reserve(std::min(candidates,maximumSamples));
     std::size_t examined = 0;
-    for (std::size_t sample = 0; sample < candidates; sample += stride) {
+    for (std::size_t stratum = 0; stratum < sampleCount; ++stratum) {
         if ((examined++ & 255U) == 0) cancelled(stop);
+        const auto begin = stratum * candidates / sampleCount;
+        const auto end = (stratum + 1) * candidates / sampleCount;
+        const auto sample = algorithmVersion == 1 ? stratum * stride : begin + stratumHash(stratum) % (end - begin);
         const auto x = static_cast<int>(sample % static_cast<std::size_t>(columns)) * 3;
         const auto y = static_cast<int>(sample / static_cast<std::size_t>(columns)) * 3;
         std::array<float,3> coefficients{};
@@ -106,7 +124,7 @@ GaussianNoiseEstimate estimateGaussianNoise(const media::RifeSdrFrame& frame, st
 }
 
 AutomaticDenoiseController::AutomaticDenoiseController(AutomaticDenoiseSettings settings)
-    : settings_(settings),control_(dynamicSettings(settings),"gaussian-rgb-laplacian-mad-v1") {}
+    : settings_(settings),control_(dynamicSettings(settings),"gaussian-rgb-laplacian-mad-v" + std::to_string(settings.algorithmVersion)) {}
 
 AutomaticDenoiseValue AutomaticDenoiseController::update(
     Rational timestamp, const GaussianNoiseEstimate& estimate, bool sceneCut) {

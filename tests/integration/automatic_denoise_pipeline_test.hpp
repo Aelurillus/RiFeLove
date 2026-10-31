@@ -287,12 +287,14 @@ protected:
         const auto output = directory / "automatic.mkv";
         const auto result = rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend);
         EXPECT_TRUE(result.automaticTemporalDenoiseActive);
+        EXPECT_EQ(result.automaticDenoiseAlgorithmVersion,2);
         EXPECT_EQ(result.automaticDenoiseAnalyzedFrames,12U);
         EXPECT_EQ(result.automaticDenoiseConfidentFrames,12U);
         EXPECT_EQ(result.automaticDenoiseAppliedFrames,6U);
         const auto report = nlohmann::json::parse(rifelove::application::serializeResult(result));
         const auto& automaticReport = report.at("automaticGaussianDenoise");
         EXPECT_TRUE(automaticReport.at("active").get<bool>());
+        EXPECT_EQ(automaticReport.at("algorithmVersion"),2);
         EXPECT_EQ(automaticReport.at("analyzedSourceFrames"),12U);
         EXPECT_EQ(automaticReport.at("confidentSourceFrames"),12U);
         EXPECT_EQ(automaticReport.at("conditionedSourceFrames"),6U);
@@ -308,6 +310,21 @@ protected:
         EXPECT_EQ(result.sceneCuts,1U);
         EXPECT_EQ(result.validation.decodedFrames,24U);
         const auto automatic = readExposurePixels(output);
+        const auto v2Sigmas = temporal->sigmas;
+        config.automaticTemporalDenoise->algorithmVersion = 1;
+        temporal->sigmas.clear(); temporal->timestamps.clear();
+        const auto legacyOutput = directory / "automatic-legacy.mkv";
+        const auto legacy = rifelove::interpolateVideo(source.string(),legacyOutput.string(),config,*device,backend);
+        EXPECT_EQ(legacy.automaticDenoiseAlgorithmVersion,1);
+        EXPECT_EQ(nlohmann::json::parse(rifelove::application::serializeResult(legacy))
+            .at("automaticGaussianDenoise").at("algorithmVersion"),1);
+        EXPECT_EQ(legacy.validation.decodedFrames,24U);
+        EXPECT_EQ(temporal->timestamps,original.timestamps);
+        // This small frame samples every support in both versions.
+        EXPECT_EQ(temporal->sigmas,v2Sigmas);
+        const auto legacyPixels = readExposurePixels(legacyOutput);
+        EXPECT_EQ(legacyPixels.timestamps,automatic.timestamps);
+        EXPECT_EQ(legacyPixels.frames,automatic.frames);
         config.automaticTemporalDenoise.reset();
         temporal->sigmas.clear(); temporal->timestamps.clear();
         const auto fixed = directory / "fixed.mkv";

@@ -8,7 +8,7 @@
 
 namespace rifelove::restoration {
 
-inline constexpr int automaticDenoiseAlgorithmVersion = 1;
+inline constexpr int automaticDenoiseAlgorithmVersion = 2;
 inline constexpr const char* automaticDenoiseReplayPolicy = "software-source-pts-from-start-v1";
 
 struct GaussianNoiseEstimate {
@@ -21,7 +21,8 @@ struct GaussianNoiseEstimate {
 // (unpadded) nonlinear RGB image. It is not a texture/compression classifier.
 // Insufficient, clipped or strongly non-Gaussian samples have low confidence.
 [[nodiscard]] GaussianNoiseEstimate estimateGaussianNoise(
-    const media::RifeSdrFrame& frame, std::stop_token stop = {});
+    const media::RifeSdrFrame& frame, std::stop_token stop = {},
+    int algorithmVersion = automaticDenoiseAlgorithmVersion);
 
 struct AutomaticDenoiseSettings {
     double relativeAdjustment = 0.0;
@@ -29,6 +30,8 @@ struct AutomaticDenoiseSettings {
     // Maximum change in sigma (8-bit levels) per source-video second.
     double maximumSigmaChangePerSecond = 27.5;
     double minimumConfidence = 0.6;
+    // Persisted jobs retain v1; new jobs use the bounded stratified v2 sampler.
+    int algorithmVersion = automaticDenoiseAlgorithmVersion;
 };
 
 struct AutomaticDenoiseValue {

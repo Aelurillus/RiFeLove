@@ -33,8 +33,12 @@ Gaussian median-absolute constant; the median of the three channel estimates
 is used for a single conditioning map.
 
 At most 16,384 non-overlapping supports per channel are retained, using at most
-192 KiB of sample elements plus vector/container overhead. Traversal is
-deterministic and cancellation-aware. It reuses the RGB preparation already
+192 KiB of sample elements plus vector/container overhead. The default analyzer
+is version 2, which uses deterministic stratified sampling to avoid repeatedly
+observing the same phase of a periodic texture. Version 1 retains its original
+fixed-stride sampling for persisted tasks; it is not silently upgraded when a
+task is loaded, saved or resumed. Traversal is deterministic and
+cancellation-aware. It reuses the RGB preparation already
 performed by the source scene analysis and does not allocate another full
 prepared frame. Replicated image padding is excluded. Saturated supports are
 excluded; insufficient support coverage and a strongly non-Gaussian absolute
@@ -70,7 +74,7 @@ Job schema 9 always writes `automaticTemporalDenoise`. Fixed mode writes
 
 ```json
 {
-  "algorithmVersion": 1,
+  "algorithmVersion": 2,
   "replayPolicy": "software-source-pts-from-start-v1",
   "relativeAdjustment": 0.0,
   "smoothingSeconds": 0.35,
@@ -79,10 +83,14 @@ Job schema 9 always writes `automaticTemporalDenoise`. Fixed mode writes
 }
 ```
 
+New jobs use algorithm version 2. Version 1 and version 2 are both accepted;
+loading and serializing a version-1 configuration preserves its version and
+all independent settings, including migration from the original job schema 9.
 Unknown versions, unknown policies, extra fields and invalid settings are
 rejected. Full job comparison binds these fields together with the existing
 source, model, adapter and runtime identities. Changing any parameter rejects
-checkpoint reuse. Schema 8 and older fixed-mode jobs may migrate only to a
+checkpoint reuse, including a change between supported algorithm versions.
+Schema 8 and older fixed-mode jobs may migrate only to a
 fixed-mode job with automatic settings absent; historical fixed output cannot
 be reused as automatic output. An unverified restoration checkpoint is rejected
 before output publication. The pipeline relies on the queue's verified manifest
@@ -101,7 +109,9 @@ change to this policy must version the replay identity and requalify recovery.
 
 The result's `automaticGaussianDenoise` object contains `active`,
 `algorithmVersion`, `analyzedSourceFrames`, `confidentSourceFrames`,
-`conditionedSourceFrames` and `countsScope: "current_execution"`. Counts include
+`conditionedSourceFrames` and `countsScope: "current_execution"`. The version is
+the selected task's actual analyzer version, not the current application
+default, so legacy executions remain auditable. Counts include
 the replayed prefix and are not newly encoded output-frame counts. Processing
 reports carry the same object.
 
@@ -121,6 +131,7 @@ stage entirely. Automatic parameter defaults and validation are:
 | `smoothingSeconds` | `0.35` | finite, strictly positive, source seconds |
 | `maximumSigmaChangePerSecond` | `27.5` | finite, strictly positive, sigma levels/source second |
 | `minimumConfidence` | `0.6` | finite, [0, 1], heuristic threshold |
+| `algorithmVersion` | `2` | persisted integer, 1 or 2; retained on load |
 
 The application, not the user, supplies the algorithm version and replay policy
 through serialization. Automatic mode requires a selected source-rate
@@ -166,11 +177,24 @@ requested sigma: both all source PTS/sigma requests and final decoded output
 pixels/PTS must exactly match the uninterrupted run. These protocol fixtures
 make no neural-quality claim.
 
-Serialization tests round-trip all independent parameters, reject incompatible
-versions/settings, and reject every changed automatic parameter or fixed-mode
-history when matching automatic checkpoints.
+Serialization tests round-trip all independent parameters, preserve version-1
+history, verify version 2 as the new-job default, report the actual selected
+version, reject unsupported versions/settings, and reject every changed
+automatic parameter or fixed-mode history when matching automatic checkpoints.
 
 ## Actual local CUDA evidence, 2026-10-31
+
+The CUDA quality runs below used analyzer version 1. They are historical
+evidence for that version and do not qualify version 2's perceptual quality.
+Separately, the isolated r25 native EXE processed a generated 192x128,
+12-frame noisy/clean-cut SDR clip with FLAC audio through its actual GUI. Its
+SQLite result reports analyzer v2, 12 analyzed and 12 confident source frames,
+6 conditioned frames, TensorRT/CUDA for both RIFE and FastDVDnet, and H.264
+NVENC; FFprobe found 24 video frames at 60 FPS and the retained FLAC stream.
+The decoded audio PCM SHA-256 matched the source.
+The result reports a 1 ms duration error and a maximum timestamp error of
+1/3000 s from container quantization. This short synthetic workflow verifies
+integration, not perceptual quality, long-video recovery or real-media safety.
 
 The native validation executable was run with the existing local evaluation
 pack `models/cache/fastdvdnet-clipped-five-frame-sdr8-eval`, graph SHA-256

@@ -458,6 +458,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::optional<restoration::TemporalWindow> temporalWindow;
     if (temporalCapabilities) temporalWindow.emplace(*temporalCapabilities);
     result.automaticTemporalDenoiseActive = automaticDenoise.has_value();
+    if (settings.automaticTemporalDenoise)
+        result.automaticDenoiseAlgorithmVersion = settings.automaticTemporalDenoise->algorithmVersion;
     result.automaticCompressionRestorationActive = automaticCompression.has_value();
     struct SourceNoiseObservation {
         std::size_t index;
@@ -765,7 +767,9 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             cut = analysis.action == quality::PairAction::sceneCutHold;
         }
         if (automaticDenoise) {
-            auto estimate = measure(result.timings.sceneAnalysisSeconds,[&] { return restoration::estimateGaussianNoise(prepared,stop); });
+            auto estimate = measure(result.timings.sceneAnalysisSeconds,[&] {
+                return restoration::estimateGaussianNoise(prepared,stop,settings.automaticTemporalDenoise->algorithmVersion);
+            });
             sourceNoise.push_back({frame.index,estimate,cut});
             if (sourceNoise.size() > 64)
                 throw std::logic_error("Automatic denoise source observations exceeded the bounded restoration pipeline window");

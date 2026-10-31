@@ -280,6 +280,39 @@ TEST(GaussianNoiseAnalysis, SamplingStorageIsBoundedAndCancellationAndInvalidTen
     EXPECT_THROW((void)estimateGaussianNoise(image),std::invalid_argument);
 }
 
+TEST(GaussianNoiseAnalysis, SparsePeriodicTextureCannotAlignWithEverySample) {
+    // One in six 3x3 blocks contains a random texture; the rest is clean.
+    // At this resolution the former fixed stride sampled only those blocks,
+    // producing a spurious high-confidence full-frame noise estimate.
+    for (int phase = 0; phase < 6; ++phase) {
+        auto image = noiseFrame(1024,768);
+        const auto plane = static_cast<std::size_t>(image.paddedWidth) * image.paddedHeight;
+        const int columns = image.width / 3, rows = image.height / 3;
+        std::mt19937 random(6271);
+        std::normal_distribution<float> normal(0.0F,20.0F / 255.0F);
+        for (int row = 0; row < rows; ++row) for (int column = 0; column < columns; ++column) {
+            if ((row * columns + column) % 6 != phase) continue;
+            for (std::size_t channel = 0; channel < 3; ++channel)
+                for (int dy = 0; dy < 3; ++dy) for (int dx = 0; dx < 3; ++dx) {
+                    const auto offset = channel * plane + static_cast<std::size_t>(row * 3 + dy) * image.paddedWidth + column * 3 + dx;
+                    image.pixels[offset] = std::clamp(0.5F + normal(random),0.0F,1.0F);
+                }
+        }
+        if (phase == 0) {
+            const auto legacy = estimateGaussianNoise(image,{},1);
+            EXPECT_GT(legacy.sigma255,15.0);
+            EXPECT_GT(legacy.confidence,0.9);
+        }
+        const auto result = estimateGaussianNoise(image,{},2);
+        EXPECT_LT(result.sigma255,5.0) << "phase=" << phase;
+        const auto replay = estimateGaussianNoise(image,{},2);
+        EXPECT_DOUBLE_EQ(result.sigma255,replay.sigma255);
+        EXPECT_DOUBLE_EQ(result.confidence,replay.confidence);
+        EXPECT_EQ(result.samplesPerChannel,replay.samplesPerChannel);
+        EXPECT_THROW((void)estimateGaussianNoise(image,{},3),std::invalid_argument);
+    }
+}
+
 TEST(AutomaticGaussianDenoise, SmoothsInSourceTimeResetsAtCutsAndBypassesAmbiguousFrames) {
     AutomaticDenoiseSettings settings;
     settings.maximumSigmaChangePerSecond = 15.0;

@@ -293,10 +293,11 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
     EXPECT_EQ(document.at("schemaVersion"),12);
-    EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),1);
+    EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),2);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("replayPolicy"),"software-source-pts-from-start-v1");
     const auto restored = parseJob(job.source,job.output,encoded);
     ASSERT_TRUE(restored.settings.automaticTemporalDenoise);
+    EXPECT_EQ(restored.settings.automaticTemporalDenoise->algorithmVersion,2);
     EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->relativeAdjustment,-0.25);
     EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->smoothingSeconds,0.7);
     EXPECT_DOUBLE_EQ(restored.settings.automaticTemporalDenoise->maximumSigmaChangePerSecond,12.0);
@@ -306,7 +307,7 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
         auto bad = document; bad["automaticTemporalDenoise"].erase(field);
         EXPECT_ANY_THROW((void)parseJob(job.source,job.output,bad.dump()));
     }
-    auto bad = document; bad["automaticTemporalDenoise"]["algorithmVersion"] = 2;
+    auto bad = document; bad["automaticTemporalDenoise"]["algorithmVersion"] = 3;
     EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
     bad = document; bad["automaticTemporalDenoise"]["replayPolicy"] = "seek-to-last-frame";
     EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
@@ -317,6 +318,43 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     const auto fixed = parseJob(job.source,job.output,legacy.dump());
     EXPECT_FALSE(fixed.settings.automaticTemporalDenoise);
     EXPECT_FLOAT_EQ(fixed.settings.temporalDenoiseSigma255,17.5F);
+}
+
+TEST(AutomaticDenoiseConfiguration, RetainsLegacyAlgorithmVersionAcrossSaveAndResume) {
+    auto job = configuredJob();
+    job.settings.automaticTemporalDenoise = rifelove::restoration::AutomaticDenoiseSettings{-0.25,0.7,12.0,0.8,1};
+    const auto encoded = serializeJob(job);
+    const auto document = nlohmann::json::parse(encoded);
+    EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),1);
+    const auto restored = parseJob(job.source,job.output,encoded);
+    ASSERT_TRUE(restored.settings.automaticTemporalDenoise);
+    EXPECT_EQ(restored.settings.automaticTemporalDenoise->algorithmVersion,1);
+    EXPECT_EQ(serializeJob(restored),encoded);
+    auto historical = document;
+    historical["schemaVersion"] = 9;
+    const auto restoredHistorical = parseJob(job.source,job.output,historical.dump());
+    ASSERT_TRUE(restoredHistorical.settings.automaticTemporalDenoise);
+    EXPECT_EQ(restoredHistorical.settings.automaticTemporalDenoise->algorithmVersion,1);
+    EXPECT_EQ(nlohmann::json::parse(serializeJob(restoredHistorical)).at("automaticTemporalDenoise"),
+        document.at("automaticTemporalDenoise"));
+    for (const auto version : {-1,0,3,999}) {
+        auto unsupported = job;
+        unsupported.settings.automaticTemporalDenoise->algorithmVersion = version;
+        EXPECT_THROW((void)serializeJob(unsupported),std::invalid_argument) << version;
+        auto invalidDocument = document;
+        invalidDocument["automaticTemporalDenoise"]["algorithmVersion"] = version;
+        EXPECT_THROW((void)parseJob(job.source,job.output,invalidDocument.dump()),std::invalid_argument) << version;
+    }
+}
+
+TEST(AutomaticDenoiseConfiguration, ResultReportsSelectedAlgorithmRatherThanCurrentDefault) {
+    for (const auto version : {1,2}) {
+        PipelineResult result{};
+        result.automaticTemporalDenoiseActive = true;
+        result.automaticDenoiseAlgorithmVersion = version;
+        const auto report = nlohmann::json::parse(serializeResult(result));
+        EXPECT_EQ(report.at("automaticGaussianDenoise").at("algorithmVersion"),version);
+    }
 }
 
 TEST(AutomaticCompressionConfiguration, IsExplicitOptInAndPinsEveryAnalyzerAndReplayParameter) {

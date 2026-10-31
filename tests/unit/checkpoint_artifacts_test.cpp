@@ -437,8 +437,10 @@ TEST(CheckpointArtifacts, AutomaticNoiseIdentityRejectsEveryChangedParameterAndF
         changed["job"]["automaticTemporalDenoise"][field] = 0.12345;
         EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump())) << field;
     }
-    auto changed = automatic; changed["job"]["automaticTemporalDenoise"]["algorithmVersion"] = 2;
+    auto changed = automatic; changed["job"]["automaticTemporalDenoise"]["algorithmVersion"] = 1;
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),automatic.dump()));
     changed = automatic; changed["job"]["automaticTemporalDenoise"]["replayPolicy"] = "other-decoder";
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
     changed = automatic; changed["identity"]["source"] = "changed source";

@@ -167,6 +167,7 @@ struct PipelineResult {
     int temporalRestorationScaleNumerator = 1;
     int temporalRestorationScaleDenominator = 1;
     bool automaticTemporalDenoiseActive = false;
+    int automaticDenoiseAlgorithmVersion = restoration::automaticDenoiseAlgorithmVersion;
     std::size_t automaticDenoiseAnalyzedFrames = 0;
     std::size_t automaticDenoiseConfidentFrames = 0;
     std::size_t automaticDenoiseAppliedFrames = 0;
