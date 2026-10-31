@@ -571,6 +571,19 @@ if(RIFELOVE_BUILD_TESTS)
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/package_helpers_test.ps1")
       set_tests_properties(Packaging.LocalUpgradeState PROPERTIES TIMEOUT 30)
     endif()
+    # These contracts use tiny generated fixtures, not private weights or a
+    # GPU/runtime SDK. PowerShell 7 is required by their JSON/UTF-8 handling.
+    find_program(RIFELOVE_PWSH_EXECUTABLE NAMES pwsh)
+    if(RIFELOVE_PWSH_EXECUTABLE)
+      add_test(NAME Packaging.NativeModelReuse
+        COMMAND "${RIFELOVE_PWSH_EXECUTABLE}" -NoProfile -ExecutionPolicy Bypass -File
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/native_model_reuse_test.ps1")
+      add_test(NAME Packaging.NativeDataMode
+        COMMAND "${RIFELOVE_PWSH_EXECUTABLE}" -NoProfile -ExecutionPolicy Bypass -File
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/native_portable_package_test.ps1")
+      set_tests_properties(Packaging.NativeModelReuse Packaging.NativeDataMode PROPERTIES
+        TIMEOUT 60 LABELS "packaging;cpu-only")
+    endif()
   endif()
   if(TARGET rifelove-desktop)
     add_test(NAME Desktop.Smoke COMMAND rifelove-desktop --smoke-screenshot "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke.png" --data-dir "${CMAKE_CURRENT_BINARY_DIR}/desktop-smoke-data")

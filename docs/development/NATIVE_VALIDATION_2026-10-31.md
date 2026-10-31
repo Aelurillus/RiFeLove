@@ -77,3 +77,57 @@ engine fixture; they are not long-video or real-GPU failure qualification.
 The prior preview should not be used for formal processing where this
 validation-progress error may occur. These checks remain synthetic, local,
 and do not establish stable-release acceptance.
+
+## Follow-up: r15 native compression controls and package contracts
+
+The r15 native EXE SHA-256 is
+`c906412ff8c66c851de039c446f6dfdddba3510d27827b98e2a7e0989fd60c62`.
+The Release build completed and all **200 CTest cases passed**, with no skipped
+cases. This includes the CPU-only model-reuse and Normal/Portable data-mode
+packaging contracts. The real r14 four-model reuse check passed 60 assertions;
+clean-checkout fixtures passed 57 without local weights or pre-existing output.
+
+Independent package verification checked every immutable-file checksum and
+matched both r15 EXEs to the build: 112 files in the Normal package, 113 in the
+Portable QA package. Both initially contained empty package-local data; Normal
+mode continues to resolve user data through `%LOCALAPPDATA%\RifeLove`, while
+Portable mode requires its explicit marker. The older r14 package was preserved.
+
+The actual Portable QA EXE was driven on a separate desktop with an isolated,
+initially empty queue. The independent compression model and strength controls
+started off, then selected STDF at 50%, with denoise and super-resolution off.
+It completed a 192x128, 30-to-60 FPS, 0.4-second synthetic FFV1/FLAC fixture.
+The read-only queue check confirmed schema 10, pinned STDF descriptor identity,
+software source decode, real RIFE inference and validated completed counters.
+The output used H.264 NVENC and contained 24 independently decoded frames,
+BT.709 limited-range SDR8, a 0.4-second duration and maximum PTS error of
+0.334 ms. All five audio packet hashes and timestamps matched the source.
+
+The first fixture was refused before processing because its container lacked
+color primaries and transfer tags. A separate lossless fixture with all four
+color properties explicitly set passed; the original was preserved unchanged.
+Evidence is local at
+`work/verification/native-r15-compression-20261031/result.json`. No videos,
+weights, runtime libraries or user queues are part of the source commit.
+
+This remains a small-frame functional evaluation, limited to qualified CUDA,
+tagged BT.709 limited-range `yuv420p` inputs no larger than 384x256. It does not
+qualify full-resolution temporal restoration, real-footage perceptual quality,
+long-video reliability or a stable release. No usable new rendered screenshot
+was captured, so rendered visual acceptance is still outstanding.
+
+## Local storage cleanup evidence
+
+Obsolete generated package files were removed only after checksum checks;
+remaining model/runtime copies were deduplicated where verified hard links
+were safe. User data, results, checkpoint identities and the runnable current
+package were preserved. Three measured cleanup phases increased free space by
+33,067,008 + 52,613,120 + 5,064,253,440 bytes, approximately 4.80 GiB total;
+parallel builds can affect the live drive-wide balance.
+
+A separate check of 40 database files (25 actual SQLite databases) and 15
+checkpoint JSON files found no references to three retired candidate models.
+Deletion of their ZIP/weight files was nevertheless rejected by automatic
+approval with `blocked by policy`, including a narrower attempt preserving the
+ZIPs. Those 136,044,118 bytes remain untouched. Detailed evidence stays local
+under `work/verification/cleanup-audit-20261031/`.

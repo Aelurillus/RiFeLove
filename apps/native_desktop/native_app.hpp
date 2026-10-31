@@ -12,6 +12,7 @@
 #include "native_output_target.hpp"
 #include "native_model_store.hpp"
 #include "native_data_directory.hpp"
+#include "native_compression_settings.hpp"
 #include "core/pipeline/video_pipeline.hpp"
 
 #include <array>
@@ -66,8 +67,17 @@ public:
     HWND testShowComparison() { showComparison(); return comparisonWindow_ ? comparisonWindow_->window() : nullptr; }
     bool testSetAutomaticDenoise(bool enabled) { return setAutomaticDenoise(enabled); }
     bool testCaptureRestorationDescriptors(application::ProcessingJob& job,
-        const restoration::ModelPack* temporal, const restoration::ModelPack* spatial) {
-        return captureRestorationDescriptors(job, temporal, spatial);
+        const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
+        const restoration::ModelPack* compression = nullptr, float strength = 0.0F) {
+        return captureRestorationDescriptors(job, temporal, spatial, compression, strength);
+    }
+    bool testCaptureSelectedRestoration(application::ProcessingJob& job) { return captureSelectedRestoration(job); }
+    // Descriptor-only fixture injection. It never creates an inference session
+    // or claims the tiny synthetic graph is a qualified model.
+    void testSetCompressionModels(std::vector<restoration::ModelPack> models) {
+        compressionRestorationModels_ = std::move(models);
+        syncRestorationSelectors();
+        updateView();
     }
     void testSetSourceDimensions(int width, int height) {
         sourceWidth_ = width;
@@ -111,6 +121,8 @@ private:
     static constexpr int kTemporalRestorationCombo = 1024;
     static constexpr int kComparison = 1025;
     static constexpr int kAutomaticDenoise = 1026;
+    static constexpr int kCompressionRestorationCombo = 1027;
+    static constexpr int kCompressionStrengthCombo = 1028;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -211,7 +223,9 @@ private:
     void postQueueNotice(NativeQueueNotice notice);
     void startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex);
     bool captureRestorationDescriptors(application::ProcessingJob& job,
-        const restoration::ModelPack* temporal, const restoration::ModelPack* spatial);
+        const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
+        const restoration::ModelPack* compression = nullptr, float strength = 0.0F);
+    bool captureSelectedRestoration(application::ProcessingJob& job);
     void stopQueuedProcessing();
     void toggleQueuedPause();
     [[nodiscard]] bool hasBatchSelection() const noexcept;
@@ -269,6 +283,8 @@ private:
     HWND samplesEdit_ = nullptr;
     HWND advancedButton_ = nullptr;
     HWND temporalRestorationCombo_ = nullptr;
+    HWND compressionRestorationCombo_ = nullptr;
+    HWND compressionStrengthCombo_ = nullptr;
     HWND restorationCombo_ = nullptr;
     HWND outputSizeCombo_ = nullptr;
     HWND shutterLabel_ = nullptr;
@@ -345,6 +361,7 @@ private:
     std::uint64_t historyGeneration_ = 0;
     std::vector<restoration::ModelPack> temporalRestorationModels_;
     std::vector<restoration::ModelPack> spatialRestorationModels_;
+    std::vector<restoration::ModelPack> compressionRestorationModels_;
     std::optional<restoration::ModelPack> restorationModelPack_;
     std::optional<restoration::ModelPack> temporalRestorationModelPack_;
 #endif
@@ -368,6 +385,7 @@ private:
     bool sourceInspected_ = false;
     bool sourceColorSupported_ = false;
     std::string sourceInputProfile_;
+    media::ColorInfo sourceColor_;
     bool encoderAvailable_ = false;
     std::vector<media::EncoderCapability> encoderCapabilities_;
     bool deviceAvailable_ = false;

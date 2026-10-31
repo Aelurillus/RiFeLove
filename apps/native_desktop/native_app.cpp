@@ -131,6 +131,7 @@ bool isUpscaleRestoration(const restoration::ModelPack& model) {
 
 std::wstring restorationSelectorLabel(const restoration::ModelPack& model) {
     const std::wstring name = wideFromUtf8(model.displayName.empty() ? model.id : model.displayName);
+    if (restoration::supportsStdfCudaModel(model)) return L"STDF-R3 · 压缩修复（本机评估）";
     if (isTemporalRestoration(model)) return L"FastDVDnet · 降噪（默认固定 σ25）";
     if (hasRestorationTask(model, restoration::Task::deblur)) return name + L"  ·  去模糊";
     if (isUpscaleRestoration(model))
@@ -648,6 +649,18 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
     const int temporalRestorationIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const int restorationIndex = restorationCombo_ ? static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const int outputSizeIndex = outputSizeCombo_ ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    const int compressionIndex = compressionRestorationCombo_ ? static_cast<int>(SendMessageW(compressionRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    const int compressionStrengthIndex = compressionStrengthCombo_ ? static_cast<int>(SendMessageW(compressionStrengthCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    if (compressionStrengthIndex < 0 || compressionStrengthIndex > 3) add(L"压缩修复强度无效");
+    else if (compressionStrengthIndex > 0) {
+        if (compressionIndex <= 0 || compressionIndex > static_cast<int>(compressionRestorationModels_.size()) ||
+            !restoration::supportsStdfCudaModel(compressionRestorationModels_[static_cast<std::size_t>(compressionIndex - 1)]))
+            add(L"已验证的 STDF CUDA 压缩修复模型");
+        if (!batch && sourceInspected_) {
+            const auto issue = nativeCompressionSourceIssue(sourceWidth_, sourceHeight_, sourceColor_);
+            if (!issue.empty()) add(issue);
+        }
+    }
     if (!batch && sourceInspected_ && sourceColorSupported_) {
         if (temporalRestorationIndex > 0 && temporalRestorationIndex <= static_cast<int>(temporalRestorationModels_.size())) {
             const auto& profiles = temporalRestorationModels_[static_cast<std::size_t>(temporalRestorationIndex - 1)].capabilities.supportedInputProfiles;
@@ -772,13 +785,17 @@ void NativeApp::createControls() {
     temporalRestorationLabel_ = createStatic(L"可选降噪", kTemporalRestorationLabel);
     temporalRestorationCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTemporalRestorationCombo)), instance_, nullptr);
+    compressionRestorationCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
+        0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCompressionRestorationCombo)), instance_, nullptr);
+    compressionStrengthCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
+        0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCompressionStrengthCombo)), instance_, nullptr);
     restorationLabel_ = createStatic(L"超分辨率", kRestorationLabel);
     restorationCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRestorationCombo)), instance_, nullptr);
     outputSizeLabel_ = createStatic(L"目标尺寸", kOutputSizeLabel);
     outputSizeCombo_ = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOutputSizeCombo)), instance_, nullptr);
-    for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) styleCombo(combo);
+    for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) styleCombo(combo);
     advancedButton_ = createButton(L"参数  ˅", kAdvancedToggle);
     startButton_ = createButton(L"开始插帧", kStart);
     pauseResumeButton_ = createButton(L"暂停", kPauseResume);
@@ -813,6 +830,11 @@ void NativeApp::createControls() {
     }
 #endif
     SendMessageW(temporalRestorationCombo_, CB_SETCURSEL, 0, 0);
+    SendMessageW(compressionRestorationCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"未选择压缩修复模型"));
+    SendMessageW(compressionRestorationCombo_, CB_SETCURSEL, 0, 0);
+    for (const wchar_t* value : {L"关闭", L"25%", L"50%", L"100%"})
+        SendMessageW(compressionStrengthCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
+    SendMessageW(compressionStrengthCombo_, CB_SETCURSEL, 0, 0);
     SendMessageW(restorationCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"关闭（默认：不使用超分辨率）"));
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     for (const auto& model : spatialRestorationModels_) {
@@ -825,6 +847,8 @@ void NativeApp::createControls() {
     syncRestorationSelectors();
 #else
     EnableWindow(modelButton_, FALSE);
+    EnableWindow(compressionRestorationCombo_, FALSE);
+    EnableWindow(compressionStrengthCombo_, FALSE);
 #endif
     for (const wchar_t* value : {L"默认：原尺寸 / 超分 ×2", L"1440p  ·  2560 × 1440", L"2160p  ·  3840 × 2160"})
         SendMessageW(outputSizeCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value));
@@ -845,7 +869,7 @@ void NativeApp::createControls() {
     ShowWindow(outputSizeLabel_, SW_HIDE);
     ShowWindow(outputSizeCombo_, SW_HIDE);
     setFonts();
-    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) {
+    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) {
         if (!control) continue;
         const auto original = SetWindowLongPtrW(control, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::scrollChildProcedure));
         SetPropW(control, L"RifeLoveScrollChildProc", reinterpret_cast<HANDLE>(original));
@@ -861,10 +885,10 @@ void NativeApp::setFonts() {
     font_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         L"Microsoft YaHei UI");
-    const std::array<HWND, 36> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 38> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_,
         sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_, platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_};
     for (const auto control : controls) if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
-    for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) {
+    for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) {
         SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), scaled(32, dpiScale()));
         SendMessageW(combo, CB_SETITEMHEIGHT, 0, scaled(32, dpiScale()));
     }
@@ -951,11 +975,13 @@ void NativeApp::layoutControls() {
     moveCombo(temporalRestorationCombo_, left, 354, leftWidth, 36);
     moveCombo(restorationCombo_, left, 420, leftWidth, 36);
     moveCombo(outputSizeCombo_, left, 486, leftWidth, 36);
-    move(motionBlurCheck_, left, 536, leftWidth - 100, 32);
-    move(advancedButton_, layout.split - 110, 536, 90, 32);
+    moveCombo(compressionRestorationCombo_, left, 552, (leftWidth - 8) * 0.68F, 36);
+    moveCombo(compressionStrengthCombo_, left + (leftWidth - 8) * 0.68F + 8, 552, (leftWidth - 8) * 0.32F, 36);
+    move(motionBlurCheck_, left, 644, leftWidth - 100, 32);
+    move(advancedButton_, layout.split - 110, 644, 90, 32);
     const bool blurEnabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    move(shutterEdit_, left + 68, 584, 64, 30, advancedExpanded_);
-    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 584, leftWidth < 280 ? 50 : 54, 30, advancedExpanded_);
+    move(shutterEdit_, left + 68, 692, 64, 30, advancedExpanded_);
+    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 692, leftWidth < 280 ? 50 : 54, 30, advancedExpanded_);
     EnableWindow(shutterEdit_, blurEnabled);
     EnableWindow(samplesEdit_, blurEnabled);
     const float exportY = layout.exportOffset;
@@ -1066,7 +1092,7 @@ void NativeApp::ensureControlVisible(HWND control) {
 }
 
 bool NativeApp::focusNextControl(bool reverse) {
-    const std::array<HWND, 25> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 27> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_,
         motionBlurCheck_, advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
         modelButton_, runtimeButton_, comparisonButton_, historyButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
     const auto found = std::find(order.begin(), order.end(), GetFocus());
@@ -1132,6 +1158,7 @@ void NativeApp::updateView() {
         : L"自然曝光：关闭；可手动开启并修改参数";
     state_.restorationSummary = L"降噪：关闭 · 超分：关闭";
     state_.denoiseModeSummary = L"可选降噪：关闭 · 默认项见模型中心";
+    state_.compressionSummary = L"默认关闭 · CUDA / BT.709 SDR8 · 仅验证至 384 × 256";
     state_.outputSizeSummary = L"原始输出尺寸";
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     const int temporalIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
@@ -1150,6 +1177,14 @@ void NativeApp::updateView() {
     if (hasTemporal) state_.denoiseModeSummary = automaticTemporalDenoise_
         ? L"实验自动高斯降噪 · 软件解码 / 恢复重放"
         : L"固定 σ25 · 自动估计关闭（仍降噪）";
+    const int compressionStrengthIndex = compressionStrengthCombo_ ? static_cast<int>(SendMessageW(compressionStrengthCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    if (compressionRestorationModels_.empty())
+        state_.compressionSummary = L"关闭 · 请在本地模型中心登记已验证 STDF；仅支持 CUDA / SDR8 / 384 × 256";
+    else if (compressionStrengthIndex > 0 && compressionStrengthIndex <= 3) {
+        state_.compressionSummary = L"STDF " + std::to_wstring(static_cast<int>(nativeCompressionStrength(compressionStrengthIndex) * 100)) +
+            L"% · 压缩修复 → 降噪 → RIFE → 超分；CUDA / SDR8 / ≤384 × 256";
+        state_.restorationSummary += L" · 压缩修复：STDF";
+    }
     const int outputSizeIndex = outputSizeCombo_ ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
     if (outputSizeIndex > 0) state_.outputSizeSummary = outputTargetLabel(outputSizeIndex);
 #endif
@@ -1190,7 +1225,7 @@ void NativeApp::updateButtonState() {
 #endif
     for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_,
         rateCustomEdit_, encoderCombo_, platformCombo_, modelButton_, runtimeButton_, motionBlurCheck_,
-        temporalRestorationCombo_, restorationCombo_, outputSizeCombo_}) if (control) EnableWindow(control, !serviceBusy);
+        temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) if (control) EnableWindow(control, !serviceBusy);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     EnableWindow(automaticDenoiseButton_, !serviceBusy);
 #endif
@@ -1552,7 +1587,7 @@ void NativeApp::updateModelDetails() {
     std::wstring details = L"暂无已登记模型。\r\n\r\n选择“登记本地目录…”并指定包含 model.json 的本机模型包目录。";
     if (item) {
         modelCenterSelectedPath_ = item->directory;
-        const wchar_t* kind = item->kind == 0 ? L"RIFE 插帧" : item->kind == 1 ? L"超分辨率" : item->kind == 2 ? L"时域修复" : L"其他 / 尚未支持";
+        const wchar_t* kind = item->kind == 0 ? L"RIFE 插帧" : item->kind == 1 ? L"超分辨率" : item->kind == 2 ? L"时域降噪" : item->kind == 3 ? L"压缩修复 · STDF 本机评估" : L"其他 / 尚未支持";
         details = L"名称：" + item->name + L"\r\n版本：" + item->version + L"\r\n类别：" + kind;
         details += L"\r\n\r\n能力：" + item->capabilities + L"\r\n颜色 / 输入配置：" + item->profiles;
         details += L"\r\n\r\n验证状态：" + item->verification;
@@ -1920,13 +1955,7 @@ void NativeApp::startProcessing() {
     job.output = utf8(output);
     job.modelDirectory = modelDirectory_;
     job.runtimeDirectory = runtimeDirectory_;
-    const int temporalRestorationIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
-    const int restorationIndex = restorationCombo_ ? static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
-    const auto* temporal = temporalRestorationIndex > 0 && temporalRestorationIndex <= static_cast<int>(temporalRestorationModels_.size())
-        ? &temporalRestorationModels_[static_cast<std::size_t>(temporalRestorationIndex - 1)] : nullptr;
-    const auto* spatial = restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size())
-        ? &spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)] : nullptr;
-    if (!captureRestorationDescriptors(job, temporal, spatial)) return;
+    if (!captureSelectedRestoration(job)) return;
     const int platformIndex = static_cast<int>(SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0));
     try {
         applyExportControls(job.settings);
@@ -1979,14 +2008,41 @@ void NativeApp::cancelProcessing() {
 }
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+bool NativeApp::captureSelectedRestoration(application::ProcessingJob& job) {
+    const auto selected = [](HWND combo, const auto& models) -> const restoration::ModelPack* {
+        const auto index = combo ? static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0)) : 0;
+        return index > 0 && index <= static_cast<int>(models.size()) ? &models[static_cast<std::size_t>(index - 1)] : nullptr;
+    };
+    const int strengthIndex = compressionStrengthCombo_ ? static_cast<int>(SendMessageW(compressionStrengthCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    if (strengthIndex < 0 || strengthIndex > 3) {
+        state_.status = L"压缩修复强度无效，请重新选择开关/强度";
+        updateView();
+        return false;
+    }
+    const auto* compression = strengthIndex > 0 ? selected(compressionRestorationCombo_, compressionRestorationModels_) : nullptr;
+    if (strengthIndex > 0 && !compression) {
+        state_.status = L"请先选择已验证的 STDF CUDA 压缩修复模型";
+        updateView();
+        return false;
+    }
+    return captureRestorationDescriptors(job, selected(temporalRestorationCombo_, temporalRestorationModels_),
+        selected(restorationCombo_, spatialRestorationModels_), compression, nativeCompressionStrength(strengthIndex));
+}
+
 bool NativeApp::captureRestorationDescriptors(application::ProcessingJob& job,
-    const restoration::ModelPack* temporal, const restoration::ModelPack* spatial) {
+    const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
+    const restoration::ModelPack* compression, float strength) {
     try {
-        // Finish both reads before changing the captured job or selected packs.
+        if (compression && (!restoration::supportsStdfCudaModel(*compression) || !std::isfinite(strength) || strength <= 0.0F || strength > 1.0F))
+            throw std::invalid_argument("STDF compression restoration requires a qualified CUDA model and strength in (0, 1]");
+        if (!compression && strength != 0.0F)
+            throw std::invalid_argument("Compression restoration strength requires a selected STDF model");
+        // Finish every read before changing the captured job or selected packs.
         // A model removed after discovery is an actionable startup error, not
         // an exception that may escape the Win32 command callback.
         const auto temporalHash = temporal ? inference::sha256File(temporal->directory / L"model.json", 256 * 1024) : std::string{};
         const auto spatialHash = spatial ? inference::sha256File(spatial->directory / L"model.json", 256 * 1024) : std::string{};
+        const auto compressionHash = compression ? inference::sha256File(compression->directory / L"model.json", 256 * 1024) : std::string{};
         if (temporal) {
             job.temporalRestorationModelDirectory = temporal->directory;
             job.expectedTemporalRestorationDescriptorSha256 = temporalHash;
@@ -1997,10 +2053,13 @@ bool NativeApp::captureRestorationDescriptors(application::ProcessingJob& job,
             job.expectedRestorationDescriptorSha256 = spatialHash;
             restorationModelPack_ = *spatial;
         }
+        job.compressionRestorationModelDirectory = compression ? compression->directory : std::filesystem::path{};
+        job.expectedCompressionRestorationDescriptorSha256 = compressionHash;
+        job.compressionRestorationStrength = strength;
         return true;
     } catch (const std::exception& error) {
         state_.stage = L"failed";
-        state_.status = L"模型文件检查失败：请恢复所选降噪/超分模型的 model.json 并确认可读，或重新选择模型后再试。详情：" + wideFromUtf8(error.what());
+        state_.status = L"模型文件检查失败：请恢复所选降噪/超分模型的 model.json（压缩修复还需已验证的 STDF 描述文件）并确认可读，或重新选择模型后再试。详情：" + wideFromUtf8(error.what());
         updateView();
         return false;
     }
@@ -2282,7 +2341,8 @@ NativeApp::LocalModel NativeApp::inspectLocalModel(const std::filesystem::path& 
             item.version = wideFromUtf8(pack.version);
             const bool sr = std::find(capabilities.tasks.begin(), capabilities.tasks.end(), restoration::Task::superResolution) != capabilities.tasks.end();
             const bool temporal = std::find(capabilities.placements.begin(), capabilities.placements.end(), restoration::Placement::sourceRateBeforeInterpolation) != capabilities.placements.end();
-            item.kind = temporal ? 2 : sr ? 1 : -1;
+            const bool compression = restoration::supportsStdfCudaModel(pack);
+            item.kind = compression ? 3 : temporal ? 2 : sr ? 1 : -1;
             for (const auto task : capabilities.tasks) {
                 if (!item.capabilities.empty()) item.capabilities += L"、";
                 switch (task) {
@@ -2300,9 +2360,10 @@ NativeApp::LocalModel NativeApp::inspectLocalModel(const std::filesystem::path& 
                 item.profiles += wideFromUtf8(profile);
             }
             item.verified = pack.metadataIntegrityVerified;
-            item.usable = item.verified && ((item.kind == 2 && restoration::supportsOnnxCudaTemporalModel(pack)) ||
+            item.usable = item.verified && (compression || (item.kind == 2 && restoration::supportsOnnxCudaTemporalModel(pack)) ||
                 (item.kind == 1 && capabilities.scaleNumerator == 2 && capabilities.scaleDenominator == 1 && restoration::supportsOnnxCudaOutputRateModel(pack)));
             item.verification = L"权重、许可、来源清单与验证报告的哈希一致";
+            if (compression) item.verification += L"；STDF 仅限本机 CUDA / BT.709 SDR8 / ≤384 × 256 评估，强度默认关闭";
             if (!item.usable) item.verification += L"；当前客户端不支持该能力/比例，不能设为默认";
             return item;
         } catch (const std::exception& error) {
@@ -2486,12 +2547,14 @@ bool NativeApp::refreshRuntime(const std::filesystem::path& directory) {
 void NativeApp::discoverRestorationModels() {
     temporalRestorationModels_.clear();
     spatialRestorationModels_.clear();
+    compressionRestorationModels_.clear();
     for (const auto& item : localModels_) {
         if (!item.usable || item.kind == 0) continue;
         try {
             const auto pack = restoration::loadModelPack(checkedNativeModelDirectory(item.directory));
             if (item.kind == 2) temporalRestorationModels_.push_back(pack);
             else if (item.kind == 1) spatialRestorationModels_.push_back(pack);
+            else if (item.kind == 3 && restoration::supportsStdfCudaModel(pack)) compressionRestorationModels_.push_back(pack);
         } catch (const std::exception&) {
             // A pack changed during the refresh; it cannot enter a job selector.
         }
@@ -2500,6 +2563,9 @@ void NativeApp::discoverRestorationModels() {
         return lhs.displayName < rhs.displayName;
     });
     std::sort(spatialRestorationModels_.begin(), spatialRestorationModels_.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.displayName < rhs.displayName;
+    });
+    std::sort(compressionRestorationModels_.begin(), compressionRestorationModels_.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.displayName < rhs.displayName;
     });
 }
@@ -2521,6 +2587,10 @@ void NativeApp::syncRestorationSelectors() {
     };
     populate(temporalRestorationCombo_, temporalRestorationModels_, 2, L"关闭（初始默认：不使用可选降噪）");
     populate(restorationCombo_, spatialRestorationModels_, 1, L"关闭（初始默认：不使用超分辨率）");
+    populate(compressionRestorationCombo_, compressionRestorationModels_, 3, L"未选择压缩修复模型");
+    // Refresh/default-model changes cannot carry an experimental strength over
+    // to another graph. The user must explicitly opt in again.
+    if (compressionStrengthCombo_) SendMessageW(compressionStrengthCombo_, CB_SETCURSEL, 0, 0);
 }
 
 void NativeApp::updateRestorationControls() {
@@ -2541,9 +2611,15 @@ void NativeApp::updateRestorationControls() {
     const int restorationIndex = static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0));
     const bool hasModel = restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size());
     const bool supportsFixedSize = hasModel && isUpscaleRestoration(spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)]);
-    EnableWindow(temporalRestorationCombo_, !temporalRestorationModels_.empty());
-    EnableWindow(restorationCombo_, !spatialRestorationModels_.empty());
-    EnableWindow(outputSizeCombo_, supportsFixedSize && sourceInspected_ && sourceWidth_ > 0 && sourceHeight_ > 0);
+    const bool editable = modelChangesAllowed();
+    EnableWindow(temporalRestorationCombo_, editable && !temporalRestorationModels_.empty());
+    const int compressionIndex = compressionRestorationCombo_ ? static_cast<int>(SendMessageW(compressionRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    const bool compressionSelected = compressionIndex > 0 && compressionIndex <= static_cast<int>(compressionRestorationModels_.size());
+    EnableWindow(compressionRestorationCombo_, editable && !compressionRestorationModels_.empty());
+    EnableWindow(compressionStrengthCombo_, editable && compressionSelected);
+    if (!compressionSelected && compressionStrengthCombo_) SendMessageW(compressionStrengthCombo_, CB_SETCURSEL, 0, 0);
+    EnableWindow(restorationCombo_, editable && !spatialRestorationModels_.empty());
+    EnableWindow(outputSizeCombo_, editable && supportsFixedSize && sourceInspected_ && sourceWidth_ > 0 && sourceHeight_ > 0);
     if (!hasModel || !supportsFixedSize) {
         SendMessageW(outputSizeCombo_, CB_SETCURSEL, 0, 0);
         return;
@@ -2595,6 +2671,7 @@ void NativeApp::handleProcessingEvent(application::ProcessingEvent event) {
         sourceInspected_ = true;
         sourceColorSupported_ = event.sourceColorSupported;
         sourceInputProfile_ = event.sourceInputProfile;
+        sourceColor_ = {};
         deviceAvailable_ = event.device.has_value();
         inspectedSource_ = controlText(sourceEdit_);
         if (const auto selected = std::find_if(event.media->streams.begin(), event.media->streams.end(), [&](const auto& stream) {
@@ -2602,7 +2679,10 @@ void NativeApp::handleProcessingEvent(application::ProcessingEvent event) {
         }); selected != event.media->streams.end()) sourceHeight_ = selected->height > 0 ? selected->height : 1080;
         if (const auto selected = std::find_if(event.media->streams.begin(), event.media->streams.end(), [&](const auto& stream) {
             return stream.index == event.media->preferredVideoStream && stream.type == "video";
-        }); selected != event.media->streams.end()) sourceWidth_ = selected->width > 0 ? selected->width : 1920;
+        }); selected != event.media->streams.end()) {
+            sourceWidth_ = selected->width > 0 ? selected->width : 1920;
+            sourceColor_ = selected->color;
+        }
         mediaSummary_ = streamSummary(*event.media);
         if (event.device) {
             deviceSummary_ = wideFromUtf8(event.device->name);
@@ -3057,7 +3137,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             refreshReadinessStatus();
             updateView();
         }
-        if ((LOWORD(wParam) == kTemporalRestorationCombo || LOWORD(wParam) == kRestorationCombo || LOWORD(wParam) == kOutputSizeCombo) && HIWORD(wParam) == CBN_SELCHANGE) {
+        if ((LOWORD(wParam) == kTemporalRestorationCombo || LOWORD(wParam) == kCompressionRestorationCombo || LOWORD(wParam) == kCompressionStrengthCombo || LOWORD(wParam) == kRestorationCombo || LOWORD(wParam) == kOutputSizeCombo) && HIWORD(wParam) == CBN_SELCHANGE) {
             refreshReadinessStatus();
             updateView();
         }

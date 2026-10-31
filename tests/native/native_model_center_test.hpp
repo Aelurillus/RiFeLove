@@ -39,14 +39,15 @@ void checkLocalModelPreferences(Check check) {
     preferences.registerDirectory(external);
     preferences.registerDirectory(external / L".");
     preferences.defaults[0] = external;
+    preferences.defaults[3] = external;
     saveNativeModelPreferences(file, preferences);
     auto loaded = loadNativeModelPreferences(file);
-    check(loaded.registered.size() == 1 && loaded.defaults[0] == external,
+    check(loaded.registered.size() == 1 && loaded.defaults[0] == external && loaded.defaults[3] == external,
         "Unicode paths and default models round-trip without duplicate registrations");
     loaded.unregisterDirectory(external);
     saveNativeModelPreferences(file, loaded);
     loaded = loadNativeModelPreferences(file);
-    check(loaded.registered.empty() && loaded.defaults[0].empty() && loaded.isExcluded(external),
+    check(loaded.registered.empty() && loaded.defaults[0].empty() && loaded.defaults[3].empty() && loaded.isExcluded(external),
         "unregister persists a discovery exclusion and clears matching defaults");
     check(std::filesystem::file_size(external / L"original.onnx") == 14,
         "unregister leaves the original model bytes intact");

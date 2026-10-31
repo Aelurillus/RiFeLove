@@ -62,3 +62,21 @@ function Initialize-NativePackageDataMode {
         dataState = 'new-empty-directory; no user queue, preferences or logs copied'
     }
 }
+
+# Both full and hard-link packaging use the same serialized Normal/Portable
+# contract. This only describes the selected mode; it never changes user data.
+function Set-NativePackageDataModeMetadata {
+    param([Parameter(Mandatory=$true)][System.Collections.IDictionary]$Metadata,
+          [Parameter(Mandatory=$true)][object]$DataMode,
+          [switch]$Manifest)
+    $Metadata['dataDirectory'] = $DataMode.dataDirectory
+    $Metadata['defaultDataDirectory'] = $DataMode.defaultDataDirectory
+    $Metadata['portableModeEnabled'] = [bool]$DataMode.portableModeEnabled
+    $Metadata['portableDataDirectory'] = $DataMode.portableDataDirectory
+    $Metadata['portableModeMarker'] = $DataMode.markerName
+    $Metadata['portableModeMarkerValue'] = $DataMode.markerValue
+    if ($Manifest) {
+        $Metadata['portableModeMarkerIncluded'] = [bool]$DataMode.markerIncluded
+        $Metadata['packagedDataState'] = $DataMode.dataState
+    }
+}

@@ -2,6 +2,7 @@
 #include "native_renderer.hpp"
 #include "native_model_center_test.hpp"
 #include "native_data_directory_test.hpp"
+#include "native_compression_test.hpp"
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 #include "native_comparison_test.hpp"
 #endif
@@ -530,8 +531,8 @@ void checkOutputFieldAlignment(HWND window);
 void checkQualityFieldSpacing(HWND window) {
     const UINT dpi = GetDpiForWindow(window);
     const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
-    const std::array<int, 3> controls{1024, 1017, 1018};
-    const std::array<int, 3> labelTops{331, 397, 463};
+    const std::array<int, 5> controls{1024, 1017, 1018, 1027, 1028};
+    const std::array<int, 5> labelTops{331, 397, 463, 529, 529};
     for (std::size_t index = 0; index < controls.size(); ++index) {
         const HWND control = GetDlgItem(window, controls[index]);
         check(control != nullptr, "find restoration field for label spacing");
@@ -1343,10 +1344,14 @@ int wmain(int argc, wchar_t** argv) {
 #endif
 
     rifelove::native_test::checkLocalModelPreferences(check);
+    rifelove::native_test::checkNativeCompressionContract(check);
     rifelove::native_test::checkNativeDataDirectories(check);
     checkAspectPreservingOutputTargets();
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
-    if (argc == 1) rifelove::native_test::checkLocalModelCenter(check);
+    if (argc == 1) {
+        rifelove::native_test::checkLocalModelCenter(check);
+        rifelove::native_test::checkNativeCompressionWorkflow(check);
+    }
 #endif
     {
         rifelove::native_test::ModelCenterTemporaryDirectory profile;
@@ -1387,7 +1392,7 @@ int wmain(int argc, wchar_t** argv) {
                 check(IsWindowEnabled(pause) == FALSE, "pause/resume is disabled while no queue is running");
             }
 #endif
-            const std::array<int, 6> ids{1005, 1006, 1012, 1024, 1017, 1018};
+            const std::array<int, 8> ids{1005, 1006, 1012, 1024, 1017, 1018, 1027, 1028};
             for (const int id : ids) {
                 const HWND combo = GetDlgItem(window, id);
                 check(combo != nullptr, "find combo box");
@@ -1395,6 +1400,7 @@ int wmain(int argc, wchar_t** argv) {
                 RECT field{};
                 GetWindowRect(combo, &field);
                 const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
+                const auto priorSelection = SendMessageW(combo, CB_GETCURSEL, 0, 0);
                 const int itemHeight = static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
                 check(count > 0 && itemHeight > 0, "read combo dimensions and items");
                 const UINT dpi = GetDpiForWindow(window);
@@ -1419,6 +1425,10 @@ int wmain(int argc, wchar_t** argv) {
                 if (count > 1) {
                     SendMessageW(combo, CB_SETCURSEL, count - 1, 0);
                     check(SendMessageW(combo, CB_GETCURSEL, 0, 0) == count - 1, "select last combo item");
+                }
+                if (id == 1027 || id == 1028) {
+                    SendMessageW(combo, CB_SETCURSEL, priorSelection, 0);
+                    SendMessageW(window, WM_COMMAND, MAKEWPARAM(id, CBN_SELCHANGE), reinterpret_cast<LPARAM>(combo));
                 }
             }
 

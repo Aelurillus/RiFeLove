@@ -9,6 +9,7 @@ param(
     [string]$LegacyRifeModelDirectory = "",
     [string]$SuperResolutionModelDirectory = "",
     [string]$TemporalRestorationModelDirectory = "",
+    [string]$CompressionRestorationModelDirectory = "",
     [string]$OutputDirectory = "",
     [switch]$SkipStartupSmoke,
     [switch]$ValidateDependenciesOnly
@@ -18,6 +19,7 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "ffmpeg-sdk-helpers.ps1")
 . (Join-Path $scriptRoot "native-build-dependencies.ps1")
+. (Join-Path $scriptRoot "native-package-options.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
 
@@ -28,6 +30,7 @@ if ([string]::IsNullOrWhiteSpace($RifeModelDirectory)) { $RifeModelDirectory = J
 if ([string]::IsNullOrWhiteSpace($LegacyRifeModelDirectory)) { $LegacyRifeModelDirectory = Join-Path $repositoryRoot "models/cache/rife-4.25-fp32-sdr8-v2" }
 if ([string]::IsNullOrWhiteSpace($SuperResolutionModelDirectory)) { $SuperResolutionModelDirectory = Join-Path $repositoryRoot "models/cache/realesrgan-x2plus-sdr8-candidate-v2" }
 if ([string]::IsNullOrWhiteSpace($TemporalRestorationModelDirectory)) { $TemporalRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/fastdvdnet-clipped-five-frame-sdr8-eval" }
+if ([string]::IsNullOrWhiteSpace($CompressionRestorationModelDirectory)) { $CompressionRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/stdf-r3-y7-sdr8-local-eval" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $outputRoot "RifeLoveNative-local-nvenc" }
 
 function Resolve-ExistingDirectory([string]$Path, [string]$Label) {
@@ -256,6 +259,10 @@ function Validate-ModelPack([string]$Directory, [string]$DestinationName, [strin
     if ([string]::IsNullOrWhiteSpace($licenseFile) -or [IO.Path]::GetFileName($licenseFile) -cne $licenseFile) { throw "模型许可文件名不安全：$Directory" }
     $licensePath = Resolve-ExistingFile (Join-Path $Directory $licenseFile) "模型许可"
     if (-not $Legacy) {
+        $licenseHash = Get-DescriptorHash $descriptor.license "sha256" "模型许可"
+        if ((Get-FileHash -LiteralPath $licensePath -Algorithm SHA256).Hash -ine $licenseHash) {
+            throw "模型许可 SHA-256 不匹配：$Directory"
+        }
         $provenance = [string]$descriptor.provenance.manifestFile
         $validation = [string]$descriptor.validation.reportFile
         if ([IO.Path]::GetFileName($provenance) -cne $provenance -or [IO.Path]::GetFileName($validation) -cne $validation) { throw "模型侧车文件名不安全：$Directory" }
@@ -514,6 +521,7 @@ $packs = @(
     }
     Validate-ModelPack (Resolve-ExistingDirectory $SuperResolutionModelDirectory "Real-ESRGAN x2plus v2") "realesrgan-x2plus-sdr8-v2" "video-restoration" $false
     Validate-ModelPack (Resolve-ExistingDirectory $TemporalRestorationModelDirectory "FastDVDnet 时序降噪评估包") "fastdvdnet-clipped-five-frame-sdr8-eval" "video-restoration" $false
+    Validate-ModelPack (Resolve-ExistingDirectory $CompressionRestorationModelDirectory "STDF-R3 压缩修复评估包") "stdf-r3-y7-sdr8-local-eval" "video-restoration" $false
 )
 $bundledModelDirectories = @($packs | ForEach-Object { $_.destination })
 $bundledModelAliases = @{}
@@ -534,6 +542,10 @@ if (Test-Path -LiteralPath $staging) { throw "随机 staging 路径已存在：$
 New-Item -ItemType Directory -Path $staging | Out-Null
 $promoted = $false
 try {
+    # Initialize the Normal-mode contract before preserving any existing data.
+    # Full refresh never inherits or creates a portable opt-in marker.
+    New-Item -ItemType Directory -Path (Join-Path $staging "data") | Out-Null
+    $dataMode = Initialize-NativePackageDataMode -PackageRoot $staging
     Copy-FileChecked $nativeExe (Join-Path $staging "RifeLoveNative.exe")
     foreach ($name in $ffmpegFiles) { Copy-FileChecked (Join-Path $ffmpeg "bin/$name") (Join-Path $staging $name) }
     foreach ($name in $mingwFiles) { Copy-FileChecked (Join-Path $mingw $name) (Join-Path $staging $name) }
@@ -572,13 +584,12 @@ try {
     $defaults = [ordered]@{
         schemaVersion = 1; product = "RifeLoveNative"; qt = $false; cliIncluded = $false; oss = $false
         defaultModelDirectory = "models/rife-4.25-fp32-sdr8-v3"; legacyModelDirectory = if ($includeLegacyModel) { "models/rife-4.25-fp32-sdr8-v2" } else { $null }
-        restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = "models/fastdvdnet-clipped-five-frame-sdr8-eval"; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = "experimental-optional"; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
-        ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm $ffmpegX86asmDescription"; dataDirectory = '%LOCALAPPDATA%\RifeLove'
-        portableDataDirectory = "data"; portableModeMarker = "portable-mode.txt"; portableModeMarkerValue = "RifeLovePortable 1"
+        restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = "models/fastdvdnet-clipped-five-frame-sdr8-eval"; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = "experimental-optional"; compressionRestorationModelDirectory = "models/stdf-r3-y7-sdr8-local-eval"; compressionRestorationDefaultEnabled = $false; compressionRestorationStrength = 0.75; compressionRestorationMode = "experimental-local-evaluation"; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
+        ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm $ffmpegX86asmDescription"
         legacyModelIncluded = $includeLegacyModel
     }
+    Set-NativePackageDataModeMetadata -Metadata $defaults -DataMode $dataMode
     $defaults | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $configTarget "defaults.json") -Encoding utf8NoBOM
-    New-Item -ItemType Directory -Path (Join-Path $staging "data") | Out-Null
     $licenseTarget = Join-Path $staging "licenses"
     New-Item -ItemType Directory -Path $licenseTarget | Out-Null
     Copy-FileChecked (Join-Path $repositoryRoot "LICENSE") (Join-Path $licenseTarget "RifeLove-MIT.txt")
@@ -633,17 +644,17 @@ try {
         compilerRuntime = $compilerIdentity
         ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; runtimeSha256 = $ffmpegRuntimeHashes; configuration = $ffmpegSdk.configuration; linkInputs = $ffmpegSdk.linkInputs; nvenc = "integrated in isolated SDK; H.264 NVENC and software fallback require hardware/workload validation"; x86asm = $ffmpegX86asmDescription; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
         inferenceRuntime = [ordered]@{ source = "local TensorRT/ONNX Runtime CUDA SDK"; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = $versionLines[0]; sourceSha256 = $versionLines[1]; providers = @("TensorRT", "CUDA", "CPU-fallback") }
-        models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
+        models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "stdf-r3-y7-sdr8-local-eval") { "experimental-optional-compression-repair" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
         migration = [ordered]@{ legacyModelIncluded = $includeLegacyModel; legacyModelPathToken = $legacyReference.token; legacyModelSha256 = $legacyModelHash; evidence = @($legacyReference.evidence); cleanPackageOmitsUnreferencedLegacy = $true }
-        defaults = "config/defaults.json"; dataDirectory = '%LOCALAPPDATA%\RifeLove'; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"
-        portableDataDirectory = "data"; portableModeMarker = "portable-mode.txt"; portableModeMarkerValue = "RifeLovePortable 1"
+        defaults = "config/defaults.json"; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"
     }
+    Set-NativePackageDataModeMetadata -Metadata $manifest -DataMode $dataMode -Manifest
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $staging "PACKAGE-MANIFEST.json") -Encoding utf8NoBOM
     $readme = @"
 RifeLove 原生 Windows 本机包
 
 启动：双击 RifeLoveNative.exe。此目录是 Win32/Direct2D/DirectWrite 原生桌面包，不包含 Qt、QML 或 CLI。
-默认模型：models/rife-4.25-fp32-sdr8-v3；models/realesrgan-x2plus-sdr8-v2 为 Real-ESRGAN x2plus v2 本机评估权重；models/fastdvdnet-clipped-five-frame-sdr8-eval 为 FastDVDnet 五帧时序降噪本机评估权重，仅支持已声明的 SDR8 源率降噪。
+默认模型：models/rife-4.25-fp32-sdr8-v3；models/realesrgan-x2plus-sdr8-v2 为 Real-ESRGAN x2plus v2 本机评估权重；models/fastdvdnet-clipped-five-frame-sdr8-eval 为 FastDVDnet 五帧时序降噪本机评估权重；models/stdf-r3-y7-sdr8-local-eval 为 STDF-R3 七帧压缩修复本机评估权重。后两者默认关闭，只有明确选择并满足模型声明的 SDR8 输入契约时才启用。STDF 当前仅验证 BT.709 SDR、8-bit yuv420p、TV range，最大 384×256；不代表通用压缩修复或 Topaz 级质量。
 任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写。视频输出位置由用户选择，原片不会被覆盖。
 只有在 EXE 同目录创建 portable-mode.txt 且第一行为 RifeLovePortable 1，才显式使用旁边的 data 目录。旧 data 中符合条件的队列与偏好会安全迁移，原文件保留。刷新本机包会保留旧 data 和用户添加的模型；SHA256SUMS.txt 不包含可变用户 data。
 当前包使用隔离构建的 FFmpeg 运行库，包含 H.264 NVENC、OpenH264、Kvazaar 和 libaom；自动编码优先使用 H.264 NVENC，并在不可用时软件回退。x86asm：$ffmpegX86asmDescription。处理性能依赖硬件、模型、分辨率和编码配置；短片回归不代表所有素材已验收。
@@ -654,6 +665,10 @@ TensorRT、ONNX Runtime CUDA、CUDA、cuDNN 和 FFmpeg DLL 随包放置。仍需
     Set-Content -LiteralPath (Join-Path $staging "README-本机原生包.txt") -Value $readme -Encoding utf8NoBOM
 
     Copy-UserState $target $staging $bundledModelDirectories $bundledModelAliases $legacyModelHash
+    if (@(Get-ChildItem -LiteralPath (Join-Path $staging "data") -Force).Count -gt 0) {
+        $manifest.packagedDataState = "preserved-existing-local-state; data excluded from immutable checksums"
+        $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $staging "PACKAGE-MANIFEST.json") -Encoding utf8NoBOM
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $staging "models/default-model.txt") -PathType Leaf)) {
         Set-Content -LiteralPath (Join-Path $staging "models/default-model.txt") -Value "rife-4.25-fp32-sdr8-v3" -Encoding utf8NoBOM
     }

@@ -22,8 +22,9 @@ namespace rifelove::native_desktop {
 struct NativeModelPreferences {
     std::vector<std::filesystem::path> registered;
     std::vector<std::filesystem::path> excluded;
-    // 0: RIFE, 1: output-rate super-resolution, 2: source-rate restoration.
-    std::array<std::filesystem::path, 3> defaults{};
+    // 0: RIFE, 1: output-rate super-resolution, 2: source-rate denoise,
+    // 3: compression restoration. Choosing its model never enables its strength.
+    std::array<std::filesystem::path, 4> defaults{};
 
     static std::wstring key(const std::filesystem::path& path) {
         auto normalized = std::filesystem::absolute(path).lexically_normal();
@@ -119,7 +120,7 @@ inline NativeModelPreferences loadNativeModelPreferences(const std::filesystem::
         const auto path = nativeModelPath(encoded);
         if (operation == "registered") result.registerDirectory(path);
         else if (operation == "excluded") result.unregisterDirectory(path);
-        else if (operation == "default" && kind >= 0 && kind < 3) result.defaults[static_cast<std::size_t>(kind)] = path;
+        else if (operation == "default" && kind >= 0 && kind < static_cast<int>(result.defaults.size())) result.defaults[static_cast<std::size_t>(kind)] = path;
         else throw std::runtime_error("Invalid local model preference operation");
     }
     if (!input.eof()) throw std::runtime_error("Cannot read local model preferences");

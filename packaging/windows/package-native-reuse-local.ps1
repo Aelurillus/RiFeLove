@@ -4,6 +4,7 @@ param(
     [string]$BuildDirectory = "",
     [string]$OutputDirectory = "",
     [string]$TemporalRestorationModelDirectory = "",
+    [string]$CompressionRestorationModelDirectory = "",
     # Explicitly restage only differing FFmpeg DLLs from the selected build's
     # SDK. Source/model/inference files remain verified, immutable hard links.
     [switch]$RefreshFfmpegRuntime,
@@ -104,6 +105,92 @@ function New-HardLinkChecked([string]$sourceFile, [string]$destinationFile) {
     if (Test-Path -LiteralPath $destinationFile) { throw "Hard-link destination already exists: $destinationFile" }
     New-Item -ItemType Directory -Path (Split-Path -Parent $destinationFile) -Force | Out-Null
     New-Item -ItemType HardLink -Path $destinationFile -Target $sourceItem.FullName | Out-Null
+}
+
+function Get-NativeModelRole([string]$relative) {
+    switch ($relative.Replace('\', '/')) {
+        "models/fastdvdnet-clipped-five-frame-sdr8-eval" { return "experimental-optional-temporal-denoise" }
+        "models/stdf-r3-y7-sdr8-local-eval" { return "experimental-optional-compression-repair" }
+        "models/realesrgan-x2plus-sdr8-v2" { return "optional-super-resolution" }
+        default { return "default-interpolation" }
+    }
+}
+
+function Get-NativeOptionalRestorationPacks(
+    [object]$Manifest, [string]$SourceDirectory,
+    [string]$TemporalModelDirectory, [string]$CompressionModelDirectory) {
+    foreach ($spec in @(
+        [pscustomobject]@{ id = "fastdvdnet-clipped-five-frame-sdr8-eval"; local = $TemporalModelDirectory; label = "FastDVDnet" },
+        [pscustomobject]@{ id = "stdf-r3-y7-sdr8-local-eval"; local = $CompressionModelDirectory; label = "STDF-R3" }
+    )) {
+        $relative = "models/$($spec.id)"
+        $entries = @($Manifest.models | Where-Object { ([string]$_.directory).Replace('\', '/') -ieq $relative })
+        if ($entries.Count -gt 1) { throw "Duplicate source model manifest entry: $relative" }
+        $inSource = $entries.Count -eq 1
+        # An older three-model bundle remains usable without claiming it has
+        # STDF. Adding STDF from a local cache requires the explicit parameter.
+        if (-not $inSource -and $spec.id -ceq "stdf-r3-y7-sdr8-local-eval" -and
+            [string]::IsNullOrWhiteSpace($spec.local)) { continue }
+        $packRoot = if ($inSource) { Join-Path $SourceDirectory $relative } else { $spec.local }
+        if (-not $inSource -and (Test-Path -LiteralPath (Join-Path $SourceDirectory $relative))) {
+            throw "Source model directory is not declared in its manifest: $relative"
+        }
+        $pack = Read-ValidatedModelPack $packRoot "$($spec.label) model" $spec.id "video-restoration"
+        $licenseRelative = "licenses/Model-$($spec.id)-$([IO.Path]::GetFileName($pack.licensePath))"
+        if ($inSource) {
+            if ([string]$entries[0].sha256 -ine $pack.graphHash -or
+                [string]$entries[0].id -cne [string]$pack.descriptor.id -or
+                [string]$entries[0].family -cne [string]$pack.descriptor.family -or
+                [string]$entries[0].version -cne [string]$pack.descriptor.version) {
+                throw "Source model manifest identity mismatch: $relative"
+            }
+            $bundledLicense = Join-Path $SourceDirectory $licenseRelative
+            if (-not (Test-Path -LiteralPath $bundledLicense -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $bundledLicense -Algorithm SHA256).Hash -ine [string]$pack.descriptor.license.sha256) {
+                throw "Source model bundled license mismatch: $relative"
+            }
+        }
+        [pscustomobject]@{
+            relative = $relative; inSource = $inSource; pack = $pack
+            licenseRelative = $licenseRelative; role = Get-NativeModelRole $relative
+        }
+    }
+}
+
+function Set-NativeRestorationDefaults(
+    [System.Collections.IDictionary]$Defaults, [bool]$CompressionModelIncluded = $true) {
+    $Defaults["temporalRestorationModelDirectory"] = "models/fastdvdnet-clipped-five-frame-sdr8-eval"
+    $Defaults["temporalRestorationDefaultEnabled"] = $false
+    $Defaults["temporalRestorationMode"] = "experimental-optional"
+    $Defaults["compressionRestorationModelDirectory"] = if ($CompressionModelIncluded) { "models/stdf-r3-y7-sdr8-local-eval" } else { $null }
+    $Defaults["compressionRestorationDefaultEnabled"] = $false
+    $Defaults["compressionRestorationStrength"] = 0.75
+    $Defaults["compressionRestorationMode"] = "experimental-local-evaluation"
+}
+
+function Update-NativeOptionalRestorationManifest(
+    [System.Collections.IDictionary]$Manifest, [object[]]$OptionalPacks) {
+    foreach ($optional in $OptionalPacks) {
+        $pack = $optional.pack
+        $rows = @($Manifest.models | Where-Object { ([string]$_.directory).Replace('\', '/') -ieq $optional.relative })
+        if ($rows.Count -gt 1) { throw "Duplicate output model manifest entry: $($optional.relative)" }
+        $entry = if ($rows.Count -eq 1) { $rows[0] } else { [ordered]@{} }
+        $entry["directory"] = $optional.relative
+        $entry["id"] = [string]$pack.descriptor.id
+        $entry["family"] = [string]$pack.descriptor.family
+        $entry["version"] = [string]$pack.descriptor.version
+        $entry["sha256"] = $pack.graphHash
+        $entry["licenseId"] = [string]$pack.descriptor.license.id
+        $entry["validatedBackends"] = @($pack.descriptor.validation.validatedBackends)
+        $entry["legacy"] = $false
+        $entry["hiddenFromDefaultSelection"] = $false
+        $entry["canonicalBasename"] = [string]$pack.descriptor.id
+        $entry["role"] = $optional.role
+        $entry["redistribution"] = "local-only-until-license-review"
+        if ($rows.Count -eq 0) { $Manifest["models"] = @($Manifest.models) + $entry }
+    }
+    $Manifest["temporalRestorationDefaultEnabled"] = $false
+    $Manifest["compressionRestorationDefaultEnabled"] = $false
 }
 
 function Resolve-ManifestPath([string]$relative) {
@@ -274,7 +361,7 @@ $requiredModelDirectories = @(
 $manifestModelDirectories = @($manifest.models | ForEach-Object { ([string]$_.directory).Replace('\', '/') })
 foreach ($relative in $requiredModelDirectories) {
     if ($manifestModelDirectories -notcontains $relative) {
-        throw "Source package lacks the required validated model: $relative. Run package-native-local.ps1 first; an old two-model preview cannot be upgraded by hard-link reuse."
+        throw "Source package lacks the required validated model: $relative. Run package-native-local.ps1 first."
     }
     $modelRoot = Join-Path $source ($relative.Replace('/', '\'))
     if (-not (Test-Path -LiteralPath $modelRoot -PathType Container) -or
@@ -310,27 +397,14 @@ foreach ($name in $requiredRuntimeFiles) {
         throw "Source package lacks the required inference runtime DLL: $name"
     }
 }
-$temporalRelative = "models/fastdvdnet-clipped-five-frame-sdr8-eval"
-$temporalInSource = $manifestModelDirectories -contains $temporalRelative
-$temporalPack = $null
-if ($temporalInSource) {
-    $temporalRoot = Join-Path $source ($temporalRelative.Replace('/', '\'))
-    $temporalEntry = @($manifest.models | Where-Object { ([string]$_.directory).Replace('\', '/') -eq $temporalRelative }) | Select-Object -First 1
-    if ($null -eq $temporalEntry -or [string]$temporalEntry.sha256 -ne ((Get-FileHash -LiteralPath (Join-Path $temporalRoot 'model.onnx') -Algorithm SHA256).Hash.ToLowerInvariant())) {
-        throw "Source package temporal model SHA-256 mismatch."
+$optionalPacks = @(Get-NativeOptionalRestorationPacks $manifest $source $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory)
+$additionalModelExpected = @{}
+foreach ($optional in @($optionalPacks | Where-Object { -not $_.inSource })) {
+    foreach ($file in $optional.pack.files) {
+        $relative = $optional.relative + "/" + $file.FullName.Substring($optional.pack.source.Length).TrimStart('\', '/').Replace('\', '/')
+        $additionalModelExpected[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    $temporalPack = Read-ValidatedModelPack $temporalRoot "FastDVDnet source model" "fastdvdnet-clipped-five-frame-sdr8-eval" "video-restoration"
-} else {
-    $temporalPack = Read-ValidatedModelPack $TemporalRestorationModelDirectory "FastDVDnet local model" "fastdvdnet-clipped-five-frame-sdr8-eval" "video-restoration"
-}
-$temporalAdditionalExpected = @{}
-if (-not $temporalInSource) {
-    foreach ($file in $temporalPack.files) {
-        $relative = "models/fastdvdnet-clipped-five-frame-sdr8-eval/" + $file.FullName.Substring($temporalPack.source.Length).TrimStart('\', '/').Replace('\', '/')
-        $temporalAdditionalExpected[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-    $temporalLicenseRelative = "licenses/Model-fastdvdnet-clipped-five-frame-sdr8-eval-LICENSE.txt"
-    $temporalAdditionalExpected[$temporalLicenseRelative] = (Get-FileHash -LiteralPath $temporalPack.licensePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $additionalModelExpected[$optional.licenseRelative] = (Get-FileHash -LiteralPath $optional.pack.licensePath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 $expected = @{}
 foreach ($line in (Get-Content -LiteralPath $sumFile)) {
@@ -417,12 +491,12 @@ try {
             Copy-Item -LiteralPath (Join-Path $ffmpegSdk.root "bin/$relative") -Destination $destination
         } else { New-HardLinkChecked $file.FullName $destination }
     }
-    if (-not $temporalInSource) {
-        foreach ($file in $temporalPack.files) {
-            $relative = "models/fastdvdnet-clipped-five-frame-sdr8-eval/" + $file.FullName.Substring($temporalPack.source.Length).TrimStart('\', '/').Replace('\', '/')
+    foreach ($optional in @($optionalPacks | Where-Object { -not $_.inSource })) {
+        foreach ($file in $optional.pack.files) {
+            $relative = $optional.relative + "/" + $file.FullName.Substring($optional.pack.source.Length).TrimStart('\', '/').Replace('\', '/')
             New-HardLinkChecked $file.FullName (Join-Path $stage ($relative.Replace('/', '\')))
         }
-        New-HardLinkChecked $temporalPack.licensePath (Join-Path $stage "licenses/Model-fastdvdnet-clipped-five-frame-sdr8-eval-LICENSE.txt")
+        New-HardLinkChecked $optional.pack.licensePath (Join-Path $stage $optional.licenseRelative)
     }
     New-Item -ItemType Directory -Path (Join-Path $stage "data") | Out-Null
     $dataMode = Initialize-NativePackageDataMode -PackageRoot $stage -PortableMode:$PortableMode
@@ -432,16 +506,9 @@ try {
     $defaultsPath = Join-Path $source "config/defaults.json"
     if (-not (Test-Path -LiteralPath $defaultsPath -PathType Leaf)) { throw "Source package defaults are missing: $defaultsPath" }
     $defaults = Get-Content -Raw -LiteralPath $defaultsPath | ConvertFrom-Json -AsHashtable
-    $defaults["temporalRestorationModelDirectory"] = $temporalRelative
-    $defaults["temporalRestorationDefaultEnabled"] = $false
-    $defaults["temporalRestorationMode"] = "experimental-optional"
+    Set-NativeRestorationDefaults $defaults (@($optionalPacks | Where-Object { $_.relative -ceq "models/stdf-r3-y7-sdr8-local-eval" }).Count -eq 1)
     $defaults["ffmpeg"] = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm enabled=$($ffmpegSdk.configuration.x86asmEnabled); workload-specific throughput requires validation"
-    $defaults["dataDirectory"] = $dataMode.dataDirectory
-    $defaults["defaultDataDirectory"] = $dataMode.defaultDataDirectory
-    $defaults["portableModeEnabled"] = $dataMode.portableModeEnabled
-    $defaults["portableDataDirectory"] = "data"
-    $defaults["portableModeMarker"] = "portable-mode.txt"
-    $defaults["portableModeMarkerValue"] = "RifeLovePortable 1"
+    Set-NativePackageDataModeMetadata -Metadata $defaults -DataMode $dataMode
     New-Item -ItemType Directory -Path (Join-Path $stage "config") -Force | Out-Null
     $defaults | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $stage "config/defaults.json") -Encoding utf8NoBOM
 
@@ -451,36 +518,13 @@ try {
         $entryDescriptor = Get-Content -Raw -LiteralPath (Join-Path $entryRoot "model.json") | ConvertFrom-Json
         $entry.licenseId = if ($entryDescriptor.license -is [string]) { [string]$entryDescriptor.license } else { [string]$entryDescriptor.license.id }
         $entry.validatedBackends = @($entryDescriptor.validation.validatedBackends)
-        $entry.role = if ($entryRelative -eq $temporalRelative) { "experimental-optional-temporal-denoise" } elseif ($entryRelative -eq "models/realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }
+        $entry.role = Get-NativeModelRole $entryRelative
     }
-    if (-not $temporalInSource) {
-        $manifest.models = @($manifest.models) + [ordered]@{
-            directory = $temporalRelative
-            id = [string]$temporalPack.descriptor.id
-            family = [string]$temporalPack.descriptor.family
-            version = [string]$temporalPack.descriptor.version
-            sha256 = $temporalPack.graphHash
-            licenseId = [string]$temporalPack.descriptor.license.id
-            validatedBackends = @($temporalPack.descriptor.validation.validatedBackends)
-            legacy = $false
-            hiddenFromDefaultSelection = $false
-            canonicalBasename = "fastdvdnet-clipped-five-frame-sdr8-eval"
-            role = "experimental-optional-temporal-denoise"
-            redistribution = "local-only-until-license-review"
-        }
-    }
+    Update-NativeOptionalRestorationManifest $manifest $optionalPacks
     $manifest.inferenceRuntime.requiredFiles = $requiredRuntimeFiles
     $manifest.inferenceRuntime.providers = @("TensorRT", "CUDA", "CPU-fallback")
-    $manifest.temporalRestorationDefaultEnabled = $false
     $manifest.storage = "local-only; no Alibaba OSS"
-    $manifest.dataDirectory = $dataMode.dataDirectory
-    $manifest.defaultDataDirectory = $dataMode.defaultDataDirectory
-    $manifest.portableModeEnabled = $dataMode.portableModeEnabled
-    $manifest.portableModeMarkerIncluded = $dataMode.markerIncluded
-    $manifest.packagedDataState = $dataMode.dataState
-    $manifest.portableDataDirectory = "data"
-    $manifest.portableModeMarker = "portable-mode.txt"
-    $manifest.portableModeMarkerValue = "RifeLovePortable 1"
+    Set-NativePackageDataModeMetadata -Metadata $manifest -DataMode $dataMode -Manifest
     $manifest.ffmpeg.root = "local-sdk:ffmpeg"
     $manifest.ffmpeg.source = "local SDK selected by the native build"
     $manifest.ffmpeg.configuration = $ffmpegSdk.configuration
@@ -511,6 +555,7 @@ $dataModeDescription
 FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-256 记录在 PACKAGE-MANIFEST.json；复用包和新 EXE 旁的 FFmpeg DLL 必须与所选 SDK 逐字节匹配。
 默认使用 RIFE 4.25 插帧模型；Real-ESRGAN x2plus 超分可选，默认关闭。
 包内 FastDVDnet 五帧模型仅是 SDR8 实验性时序降噪模型，默认关闭；它可与超分同时选择，但不代表通用压缩修复、去模糊或细节增强能力。
+包内 STDF-R3 七帧模型仅供本地压缩修复评估，默认关闭；当前验证范围为 BT.709 SDR、8-bit yuv420p、TV range，最大 384×256，不代表通用压缩修复或 Topaz 级质量。
 此目录与旧本机预览使用 NTFS 硬链接复用不可变依赖，删除旧目录不会使本目录失效；直接修改共享依赖会同时影响两个目录。
 本次 FFmpeg 配置刷新：$($refreshedFfmpegFiles.Count) 个不同 DLL 独立复制（$($ffmpegRefreshPlan.replacementBytes) 字节）；旧包文件不被覆盖，模型和推理运行库保留校验后的硬链接。
 模型、视频和任务留在本机；阿里云 OSS 已停用。模型及 NVIDIA 运行库的公开再分发许可仍需审核。
@@ -519,7 +564,7 @@ FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-2
     foreach ($file in @(Get-SafeFiles $stage | Sort-Object FullName)) {
         $relative = $file.FullName.Substring($stage.Length).TrimStart('\', '/').Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        $knownHash = if ($relative -ceq $dataMode.markerName) { $dataMode.markerSha256 } elseif ($refreshedFfmpegFiles.ContainsKey($relative)) { $refreshedFfmpegFiles[$relative] } elseif ($expected.ContainsKey($relative)) { $expected[$relative] } elseif ($temporalAdditionalExpected.ContainsKey($relative)) { $temporalAdditionalExpected[$relative] } else { $null }
+        $knownHash = if ($relative -ceq $dataMode.markerName) { $dataMode.markerSha256 } elseif ($refreshedFfmpegFiles.ContainsKey($relative)) { $refreshedFfmpegFiles[$relative] } elseif ($expected.ContainsKey($relative)) { $expected[$relative] } elseif ($additionalModelExpected.ContainsKey($relative)) { $additionalModelExpected[$relative] } else { $null }
         if ($relative -notin @("PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "dependency-imports.json") -and
             ([string]::IsNullOrWhiteSpace($knownHash) -or $hash -ne $knownHash)) {
             throw "Linked dependency changed during packaging: $relative"

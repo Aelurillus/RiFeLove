@@ -16,6 +16,9 @@ if (-not $testRoot.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) {
     throw 'Test fixtures must be in a new directory under repository out.'
 }
 if (Test-Path -LiteralPath $testRoot) { throw "Refusing to overwrite test fixtures: $testRoot" }
+if (-not (Test-Path -LiteralPath $outputRoot)) {
+    New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+}
 if ((Get-Item -LiteralPath $outputRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
     throw 'Test output root must not be a link.'
 }
@@ -76,6 +79,66 @@ foreach ($requestedMode in @($false,$true)) {
 Assert-Equal $sentinelHash (Get-FileHash -LiteralPath $dataSentinel -Algorithm SHA256).Hash 'Rejected initialization preserves existing data'
 Assert-Equal $false (Test-Path -LiteralPath (Join-Path $normalPackage 'portable-mode.txt')) 'Rejected initialization never creates a marker'
 
+# Exercise full packaging's real preservation function after empty-directory
+# initialization, without building/copying a runtime or launching a product.
+$tokens = $null; $parseErrors = $null
+$fullPackageAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $repositoryRoot 'packaging/windows/package-native-local.ps1'), [ref]$tokens, [ref]$parseErrors)
+Assert-Equal 0 @($parseErrors).Count 'Full packaging syntax is valid'
+foreach ($name in @('Assert-NoLinkTree','Get-PackageTreeItems','Resolve-ExistingFile','Copy-FileChecked',
+    'Get-RunningNativePackageProcesses','Assert-PackageNotRunning','Copy-UserState')) {
+    $definition = @($fullPackageAst.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $false))
+    Assert-Equal 1 $definition.Count "Production preservation function found: $name"
+    . ([scriptblock]::Create($definition[0].Extent.Text))
+}
+$oldPackage = Join-Path $testRoot 'old-package'
+New-Item -ItemType Directory -Path (Join-Path $oldPackage 'data') -Force | Out-Null
+$oldData = Join-Path $oldPackage 'data/preferences.json'
+[IO.File]::WriteAllText($oldData,'{"packagingFixture":"preserve me"}',[Text.UTF8Encoding]::new($false))
+$oldDataHash = (Get-FileHash -LiteralPath $oldData -Algorithm SHA256).Hash
+Copy-UserState $oldPackage $normalPackage @() @{} ''
+Assert-Equal $oldDataHash (Get-FileHash -LiteralPath (Join-Path $normalPackage 'data/preferences.json') -Algorithm SHA256).Hash 'Full refresh preserves old data after Normal initialization'
+Assert-Equal $oldDataHash (Get-FileHash -LiteralPath $oldData -Algorithm SHA256).Hash 'Full refresh leaves original data intact'
+Assert-Equal $sentinelHash (Get-FileHash -LiteralPath $dataSentinel -Algorithm SHA256).Hash 'Full refresh leaves unrelated target state intact'
+
+# Serialize exactly the shared metadata used by both production packagers and
+# run the independent read-only package verifier on both modes.
+$verifier = Join-Path $repositoryRoot 'tools/validation/check_native_package_data_mode.ps1'
+foreach ($fixture in @(
+    @{ root = $normalPackage; mode = $normalData; expected = 'Normal' },
+    @{ root = $portablePackage; mode = $portableData; expected = 'Portable' }
+)) {
+    $root = $fixture.root
+    New-Item -ItemType Directory -Path (Join-Path $root 'config') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $root 'RifeLoveNative.exe'),'NOT AN EXECUTABLE: packaging contract fixture',[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $root 'README-本机原生包.txt'),'Packaging contract fixture; do not launch.',[Text.UTF8Encoding]::new($false))
+    $exeHash = (Get-FileHash -LiteralPath (Join-Path $root 'RifeLoveNative.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifest = @{ executableSha256 = $exeHash }
+    $defaults = @{ product = 'packaging-contract-fixture' }
+    Set-NativePackageDataModeMetadata -Metadata $manifest -DataMode $fixture.mode -Manifest
+    Set-NativePackageDataModeMetadata -Metadata $defaults -DataMode $fixture.mode
+    if ($fixture.expected -ceq 'Normal') {
+        $manifest.packagedDataState = 'preserved-existing-local-state; data excluded from immutable checksums'
+    }
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'PACKAGE-MANIFEST.json') -Encoding utf8NoBOM
+    $defaults | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'config/defaults.json') -Encoding utf8NoBOM
+    $lines = @('RifeLove native local bundle SHA-256')
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Recurse | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
+        if ($relative -match '^data/') { continue }
+        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lines += "$hash  $relative"
+    }
+    [IO.File]::WriteAllLines((Join-Path $root 'SHA256SUMS.txt'),[string[]]$lines,[Text.UTF8Encoding]::new($false))
+    $result = & $verifier -PackageDirectory $root -ExpectedMode $fixture.expected -VerifyAllImmutableFiles -RequireEmptyData:($fixture.expected -ceq 'Portable') | ConvertFrom-Json
+    Assert-Equal 'passed' $result.result "Independent verifier accepts serialized $($fixture.expected) metadata"
+    Assert-Equal $false $result.launchedExe 'Contract validation never launches the fixture EXE'
+}
+Assert-Equal $false (Test-Path -LiteralPath (Join-Path $normalPackage 'portable-mode.txt')) 'Normal metadata serialization never enables portable mode'
+Assert-Equal $markerHash (Get-FileHash -LiteralPath $marker -Algorithm SHA256).Hash.ToLowerInvariant() 'Shared metadata serialization never changes the portable marker'
+
 [ordered]@{
     result = 'passed'
     fixtures = $testRoot
@@ -86,6 +149,8 @@ Assert-Equal $false (Test-Path -LiteralPath (Join-Path $normalPackage 'portable-
     existingContentsUnchanged = $true
     ancestorOverlapRejectedBothDirections = $true
     prefixSimilarSiblingAllowed = $true
+    fullRefreshPreservedExistingData = $true
+    normalAndPortableVerifierPassed = $true
     launchedExe = $false
     cleanupPerformed = $false
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $testRoot 'test-result.json') -Encoding utf8NoBOM
