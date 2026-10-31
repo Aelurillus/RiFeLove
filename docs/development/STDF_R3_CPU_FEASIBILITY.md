@@ -143,6 +143,18 @@ and generated data identities are in
 `work/verification/stdf-r3-quality-cpu-20261031-v2/quality.json`. These local
 reports, models and generated clips are intentionally not committed.
 
+### Local experiment pack
+
+`tools/model_export/stdf_local_pack.py` can assemble a fresh local model pack
+from the hash-pinned graph and the CPU, CUDA parity and native CUDA-provider
+evidence. It refuses mismatched graphs, incomplete shape coverage, failed
+evidence and existing output directories. Its metadata explicitly marks the
+weight rights as unverified and the pack as local evaluation only; the source
+code license is not presented as the model-weight license. The pack remains
+ignored by Git and must not be added to a distributed installer or archive.
+Creating it does not itself enable the feature in the desktop application or
+qualify the model for full-resolution footage.
+
 ## Remaining gates
 
 Before native integration: independently validate the original STDF CUDA kernel
