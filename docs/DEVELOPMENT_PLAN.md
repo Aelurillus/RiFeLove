@@ -1,8 +1,8 @@
 # Executable development plan
 
-Status as of 2026-10-26. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
+Status as of 2026-10-26, with the current execution clarification below. This task list expands the Master Plan into reviewable work. It is intentionally not a declaration that the final product is complete.
 
-Current execution mode: local project, local Git, local builds/tests and local reports. Hosted CI, remote repository setup and publishing are deferred until requested. The final product scope remains the Master Plan baseline.
+Current execution clarification (2026-10-31): the user subsequently selected the native Win32/Direct2D desktop instead of Qt, excluded the CLI from the product, allowed GitHub source commits and CI, and prohibited Alibaba OSS. GitHub Actions now runs Windows CPU-only builds and tests. Existing Qt/CLI entries below are historical development evidence, not the current delivery plan. Product processing and model evaluation remain local. Dynamic detail enhancement, representative real-video quality, GPU/driver coverage, long-video recovery and release licensing remain open; a local preview is not a stable release.
 
 ## Phase 1 — foundation (active)
 
