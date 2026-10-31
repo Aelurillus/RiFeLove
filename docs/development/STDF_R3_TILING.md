@@ -150,7 +150,11 @@ and the copied comparison core; generator and metric temporaries, any whole-fram
 and provider allocations remain outside that estimate. A 192×128 checkerboard
 oracle run covered all six 64×64 tiles; halo 48 reached a maximum FP32 error of
 `5.22e-6` and no changed rounded 8-bit pixels. This is a small regression check,
-not a 1080p/4K or GPU qualification.
+not a 1080p/4K or GPU qualification. A repeated 4K checkerboard run sampled six
+of 90 tiles: the two halo policies differed by at most `2.34e-5` FP32 and one
+8-bit level. The tracked tensor peaks were 5.53 MiB for halo 48 and 6.38 MiB
+for halo 64, with the exclusions above. There was no full-frame oracle; this
+is still CPU-only consistency evidence.
 
 ## Product boundary recommended by this evidence
 
@@ -207,4 +211,6 @@ The larger-frame bounded evidence is in
 `work/verification/stdf-bounded-cpu-20261031-02`,
 `work/verification/stdf-bounded-cpu-20261031-03`,
 `work/verification/stdf-bounded-cpu-20261031-1080p`, and
-`work/verification/stdf-bounded-cpu-20261031-4k`.
+`work/verification/stdf-bounded-cpu-20261031-4k`. The streaming regression
+checks are `work/verification/stdf-bounded-streaming-r14-20261031` and
+`work/verification/stdf-streaming-4k-check-r14-20261031`.
