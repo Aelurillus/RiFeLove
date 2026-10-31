@@ -565,6 +565,10 @@ NativeApp::OutputTargetCheck NativeApp::outputTargetCheck(int selection) const {
 }
 
 std::wstring NativeApp::outputTargetLabel(int selection) const {
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    if (selection > 0 && hasBatchSelection())
+        return std::wstring(selection == 1 ? L"1440p" : L"2160p") + L"  ·  各视频按源比例计算";
+#endif
     const auto target = outputTargetCheck(selection);
     if (!target.selected) return L"原始输出尺寸";
     if (target.width <= 0 || target.height <= 0)
@@ -682,18 +686,16 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
                 add(L"所选超分模型不支持该视频的色彩配置");
         }
     }
-    if (outputSizeIndex > 0 && !batch) {
+    if (outputSizeIndex > 0) {
         const bool hasModel = restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size());
         const bool supportsFixedSize = hasModel && isUpscaleRestoration(spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)]);
         const auto target = outputTargetCheck(outputSizeIndex);
         if (!supportsFixedSize) add(L"当前可选画质处理模型不支持固定输出尺寸");
-        else if (!target.dimensionsSupported) add(L"目标尺寸超出编码限制");
-        else if (!target.aspectMatches) add(L"输入比例不匹配");
-        else if (!target.generatedEnough) add(L"目标尺寸超出 x2 能力");
-        else if (!target.dimensionsEven) add(L"目标尺寸需要偶数像素");
+        else if (!batch && !target.dimensionsSupported) add(L"目标尺寸超出编码限制");
+        else if (!batch && !target.aspectMatches) add(L"输入比例不匹配");
+        else if (!batch && !target.generatedEnough) add(L"目标尺寸超出 x2 能力");
+        else if (!batch && !target.dimensionsEven) add(L"目标尺寸需要偶数像素");
     }
-    if (batch && outputSizeIndex > 0)
-        add(L"批量导入暂不支持固定超分尺寸");
     if (taskQueue_ == nullptr) add(L"本地任务队列");
     if (queueSessionActive_.load()) add(L"当前任务正在运行");
     if (processingService_ && processingService_->busy()) add(L"当前任务正在运行");
@@ -1189,6 +1191,10 @@ void NativeApp::updateView() {
         PipelineSettings settings;
         applyExportControls(settings);
         if (lastPlatformSelection_ > 0) {
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+            if (hasBatchSelection()) state_.platformSummary += L"\n码率与 GOP 将按每个视频计算";
+            else
+#endif
             state_.platformSummary += L"\n" + std::to_wstring(settings.encoding.bitRate / 1000) +
                 L" kbps · GOP " + std::to_wstring(settings.encoding.gopSize) + L" 帧";
         }
@@ -1983,7 +1989,11 @@ void NativeApp::applyExportControls(PipelineSettings& settings) const {
     }
 #endif
     const int platformIndex = static_cast<int>(SendMessageW(platformCombo_, CB_GETCURSEL, 0, 0));
-    if (platformIndex > 0) {
+    if (platformIndex > 0
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+        && !hasBatchSelection()
+#endif
+    ) {
         const auto profile = platformIndex == 1 ? application::PlatformBitrate::youtube : application::PlatformBitrate::localQuality;
         const auto platform = application::platformExportSettings(profile, settings.targetRate, sourceWidth_, sourceHeight_,
             settings.encoding.outputWidth, settings.encoding.outputHeight, scaleNumerator, scaleDenominator);
@@ -2090,7 +2100,8 @@ void NativeApp::startProcessing() {
     }
     auto inputs = queuedInputs_;
     if (inputs.empty()) inputs.push_back(source);
-    startQueuedProcessing(std::move(job), std::move(inputs), platformIndex);
+    const int targetSelection = batch ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
+    startQueuedProcessing(std::move(job), std::move(inputs), platformIndex, targetSelection);
     if (!queueSessionActive_.load()) {
         updateView();
         return;
@@ -2193,7 +2204,7 @@ void NativeApp::toggleQueuedPause() {
     updateView();
 }
 
-void NativeApp::startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex) {
+void NativeApp::startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex, int outputTargetSelection) {
     if (!taskQueue_) {
         state_.status = L"本地任务队列不可用";
         return;
@@ -2228,7 +2239,7 @@ void NativeApp::startQueuedProcessing(application::ProcessingJob job, std::vecto
     queueRejections_.clear();
     queueSessionActive_.store(true);
 
-    queueOwnerThread_ = std::jthread([this, job = std::move(job), inputs = std::move(inputs), output, batch, platformIndex](std::stop_token ownerStop) mutable {
+    queueOwnerThread_ = std::jthread([this, job = std::move(job), inputs = std::move(inputs), output, batch, platformIndex, outputTargetSelection](std::stop_token ownerStop) mutable {
         std::stop_callback stopBridge(ownerStop, [this] {
             queueImportStop_.request_stop();
             if (taskQueue_) taskQueue_->stop();
@@ -2243,6 +2254,7 @@ void NativeApp::startQueuedProcessing(application::ProcessingJob job, std::vecto
                 request.inputs = inputs;
                 request.outputDirectory = output;
                 request.settings = job;
+                request.outputTargetSelection = outputTargetSelection;
                 request.container = platformIndex > 0 ? "mp4" : "mkv";
                 request.platformBitrate = platformIndex == 0 ? application::PlatformBitrate::unchanged :
                     platformIndex == 1 ? application::PlatformBitrate::youtube : application::PlatformBitrate::localQuality;
@@ -2750,7 +2762,8 @@ void NativeApp::updateRestorationControls() {
     if (!compressionSelected && compressionStrengthCombo_) SendMessageW(compressionStrengthCombo_, CB_SETCURSEL, 0, 0);
     if (!compressionSelected && compressionTilingCheck_) SendMessageW(compressionTilingCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
     EnableWindow(restorationCombo_, editable && !spatialRestorationModels_.empty());
-    EnableWindow(outputSizeCombo_, editable && supportsFixedSize && sourceInspected_ && sourceWidth_ > 0 && sourceHeight_ > 0);
+    EnableWindow(outputSizeCombo_, editable && supportsFixedSize &&
+        (hasBatchSelection() || (sourceInspected_ && sourceWidth_ > 0 && sourceHeight_ > 0)));
     if (!hasModel || !supportsFixedSize) {
         SendMessageW(outputSizeCombo_, CB_SETCURSEL, 0, 0);
         return;

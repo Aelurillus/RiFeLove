@@ -20,6 +20,56 @@ TEST(BatchPlatformImport, PersistsPerSourcePortraitLandscapeFractionalRateAndSup
     rifelove::tests::platform_import::verifyPersistedPolicy();
 }
 
+TEST(BatchImportDimensions, ComputesNominalTargetPerSourceAndRejectsInsufficientInputs) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using namespace rifelove::tests::platform_import;
+    Fixture fixture;
+    const auto wide = fixture.directory / "wide.mkv";
+    const auto tall = fixture.directory / "tall.mkv";
+    const auto small = fixture.directory / "small.mkv";
+    writeSource(wide,1280,720); writeSource(tall,1080,1920); writeSource(small,640,360);
+    ImportRequest request;
+    request.inputs = {wide,tall,small}; request.outputDirectory = fixture.directory;
+    request.settings.modelDirectory = fixture.directory / "rife";
+    request.settings.restorationModelDirectory = fixture.directory / "sr";
+    request.settings.runtimeDirectory = fixture.directory / "runtime";
+    request.settings.settings.targetRate = Rational(60);
+    request.settings.settings.encoding.encoder = "auto";
+    request.outputTargetSelection = 1;
+    request.platformBitrate = PlatformBitrate::youtube;
+    TaskQueue queue(fixture.directory / "per-source.sqlite");
+    const auto imported = importVideos(queue,request);
+    ASSERT_EQ(imported.taskIds.size(),2U);
+    ASSERT_EQ(imported.rejected.size(),1U);
+    EXPECT_EQ(imported.rejected.front().path.filename(),small.filename());
+    EXPECT_EQ(imported.rejected.front().reason,ImportRejection::unsupportedOutputDimensions);
+    const auto rows = queue.list(); ASSERT_EQ(rows.size(),2U);
+    for (const auto& row : rows) {
+        const auto job = parseJob(row.task.sourcePath,row.task.outputPath,row.configuration);
+        const bool isWide = std::filesystem::path(job.source).filename() == wide.filename();
+        EXPECT_EQ(job.settings.encoding.outputWidth,isWide ? 2560 : 1440);
+        EXPECT_EQ(job.settings.encoding.outputHeight,isWide ? 1440 : 2560);
+        EXPECT_EQ(job.settings.encoding.bitRate,24'000'000);
+        EXPECT_EQ(row.task.state,TaskState::queued);
+    }
+    request.outputTargetSelection = 2;
+    TaskQueue fourK(fixture.directory / "per-source-4k.sqlite");
+    const auto fourKResult = importVideos(fourK,request);
+    ASSERT_EQ(fourKResult.taskIds.size(),1U);
+    ASSERT_EQ(fourKResult.rejected.size(),2U);
+    const auto only = fourK.list(); ASSERT_EQ(only.size(),1U);
+    const auto fourKJob = parseJob(only.front().task.sourcePath,only.front().task.outputPath,only.front().configuration);
+    EXPECT_EQ(fourKJob.settings.encoding.outputWidth,2160);
+    EXPECT_EQ(fourKJob.settings.encoding.outputHeight,3840);
+    EXPECT_EQ(fourKJob.settings.encoding.bitRate,68'000'000);
+    request.settings.settings.encoding.outputWidth = 2560;
+    EXPECT_THROW((void)importVideos(fourK,request),std::invalid_argument);
+    request.settings.settings.encoding.outputWidth = 0;
+    request.settings.restorationModelDirectory.clear();
+    EXPECT_THROW((void)importVideos(fourK,request),std::invalid_argument);
+}
+
 TEST(BatchImportDimensions, ValidatesEachSourceAgainstTargetAndModelScale) {
     using rifelove::application::supportsImportOutputDimensions;
     EXPECT_TRUE(supportsImportOutputDimensions(1920, 1080, 0, 0, 2, 1));

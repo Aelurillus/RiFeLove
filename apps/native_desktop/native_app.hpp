@@ -83,6 +83,17 @@ public:
         syncRestorationSelectors();
         updateView();
     }
+    void testSetSpatialModels(std::vector<restoration::ModelPack> models) {
+        spatialRestorationModels_ = std::move(models);
+        syncRestorationSelectors();
+        updateView();
+    }
+    void testSetBatchSelection(bool enabled) {
+        queuedInputs_ = enabled ? std::vector<std::filesystem::path>{L"C:/fixture-a.mp4",L"C:/fixture-b.mp4"}
+                                : std::vector<std::filesystem::path>{};
+        sourceInspected_ = false; sourceWidth_ = 0; sourceHeight_ = 0;
+        updateView();
+    }
     void testSetSourceDimensions(int width, int height) {
         sourceWidth_ = width;
         sourceHeight_ = height;
@@ -231,7 +242,7 @@ private:
     void handleQueueNotice(NativeQueueNotice notice);
     void postQueueEvent(application::QueueEvent event);
     void postQueueNotice(NativeQueueNotice notice);
-    void startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex);
+    void startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex, int outputTargetSelection);
     bool captureRestorationDescriptors(application::ProcessingJob& job,
         const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
         const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false);

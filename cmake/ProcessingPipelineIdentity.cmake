@@ -25,6 +25,7 @@ set(rifelove_processing_identity_sources
   src/common/json.hpp
   src/common/logging.cpp
   src/common/logging.hpp
+  src/common/output_target.hpp
   src/common/rational.cpp
   src/common/rational.hpp
   src/core/pipeline/motion_blur.cpp

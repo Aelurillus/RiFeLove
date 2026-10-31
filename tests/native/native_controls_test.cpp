@@ -1037,6 +1037,40 @@ void checkRestorationControls(NativeApp& app, HWND window, bool requireDenoise) 
     check(IsWindowEnabled(outputSize) == FALSE, "turning optional restoration off disables output size");
 }
 
+void checkBatchOutputTargetControls(NativeApp& app, HWND window) {
+    using namespace rifelove::restoration;
+    ModelPack model{};
+    model.id = "sr-fixture"; model.displayName = "SR fixture"; model.metadataIntegrityVerified = true;
+    model.capabilities = {model.id,"image-sr-rgb-f32-nchw-v1",1,{Task::superResolution},
+        {Placement::outputRateAfterInterpolation},{"bt709-sdr8"},0,0,2,1,false};
+    app.testSetSpatialModels({model});
+    app.testSetBatchSelection(true);
+    const HWND spatial = GetDlgItem(window,1017), size = GetDlgItem(window,1018), platform = GetDlgItem(window,1012);
+    const auto previousPlatform = SendMessageW(platform,CB_GETCURSEL,0,0);
+    SendMessageW(spatial,CB_SETCURSEL,1,0);
+    SendMessageW(window,WM_COMMAND,MAKEWPARAM(1017,CBN_SELCHANGE),reinterpret_cast<LPARAM>(spatial));
+    check(IsWindowEnabled(size) != FALSE, "batch enables output targets after selecting x2 super-resolution");
+    check(comboItem(size,1).find(L"各视频按源比例计算") != std::wstring::npos,
+        "batch output target explains per-video aspect calculation");
+    SendMessageW(size,CB_SETCURSEL,1,0);
+    SendMessageW(window,WM_COMMAND,MAKEWPARAM(1018,CBN_SELCHANGE),reinterpret_cast<LPARAM>(size));
+    SendMessageW(platform,CB_SETCURSEL,1,0);
+    SendMessageW(window,WM_COMMAND,MAKEWPARAM(1012,CBN_SELCHANGE),reinterpret_cast<LPARAM>(platform));
+    bool settingsValid = true;
+    try {
+        const auto settings = app.testExportSettings();
+        check(settings.encoding.outputWidth == 0 && settings.encoding.outputHeight == 0,
+            "batch avoids stamping one source's dimensions into the common job");
+    } catch (const std::exception&) { settingsValid = false; }
+    check(settingsValid, "batch platform settings work before source dimensions are probed");
+    check(app.testViewState().platformSummary.find(L"按每个视频计算") != std::wstring::npos,
+        "batch platform summary does not display a placeholder bitrate");
+    SendMessageW(platform,CB_SETCURSEL,previousPlatform,0);
+    SendMessageW(window,WM_COMMAND,MAKEWPARAM(1012,CBN_SELCHANGE),reinterpret_cast<LPARAM>(platform));
+    app.testSetBatchSelection(false);
+    app.testRefreshModels();
+}
+
 void checkRapidSourceSwitch(NativeApp& app, HWND window,
                             const std::filesystem::path& first,
                             const std::filesystem::path& second) {
@@ -1397,6 +1431,7 @@ int wmain(int argc, wchar_t** argv) {
                  std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");
             checkRestorationControls(app, window, denoiseRun);
             if (argc == 1) {
+                checkBatchOutputTargetControls(app, window);
                 checkMissingRestorationDescriptor(app, window);
                 SendMessageW(GetDlgItem(window, 1025), BM_CLICK, 0, 0);
                 const HWND comparison = app.testShowComparison();

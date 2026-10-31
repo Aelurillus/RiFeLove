@@ -10,6 +10,8 @@ struct ImportRequest {
     std::string container = "mkv";
     bool recursive = false;
     PlatformBitrate platformBitrate = PlatformBitrate::unchanged;
+    // 0 preserves the model's output size; 1/2 select 1440p/2160p per source.
+    int outputTargetSelection = 0;
 };
 enum class ImportRejection { noVideo, unsupportedColor, unsupportedModelProfile, unsupportedRestorationModelProfile, unsupportedEncoder, unsupportedOutputDimensions, unreadable };
 struct RejectedImport { std::filesystem::path path; ImportRejection reason; std::string detail; };

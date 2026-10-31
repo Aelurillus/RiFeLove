@@ -1,5 +1,6 @@
 #include "application/import_service.hpp"
 #include "application/job_serialization.hpp"
+#include "common/output_target.hpp"
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
 #include <algorithm>
@@ -65,12 +66,20 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
     if (queue.busy()) throw std::logic_error("Stop the running queue before importing videos");
     if (request.inputs.empty() || request.settings.settings.targetRate <= Rational(0) ||
         (request.container != "mkv" && request.container != "mp4" && request.container != "mov")) throw std::invalid_argument("Invalid import selection, FPS or container");
+    if (request.outputTargetSelection < 0 || request.outputTargetSelection > 2 ||
+        (request.outputTargetSelection != 0 && (request.settings.settings.encoding.outputWidth != 0 ||
+            request.settings.settings.encoding.outputHeight != 0)))
+        throw std::invalid_argument("Invalid or conflicting per-source output target selection");
     auto settings = request.settings; pinModelDescriptor(settings); pinRestorationModelDescriptor(settings);
     const auto modelPack = inference::loadModelPack(settings.modelDirectory);
     if (modelPack.sha256 != settings.expectedModelSha256 || modelPack.id != settings.expectedModelId || modelPack.version != settings.expectedModelVersion)
         throw std::invalid_argument("Selected model differs from the verified local model pack");
     std::optional<restoration::ModelPack> restorationPack;
     if (!settings.restorationModelDirectory.empty()) restorationPack = restoration::loadModelPack(settings.restorationModelDirectory);
+    if (request.outputTargetSelection != 0 && (!restorationPack ||
+        restoration::outputRateImageTask(restorationPack->capabilities) != restoration::Task::superResolution ||
+        restorationPack->capabilities.scaleNumerator != 2 || restorationPack->capabilities.scaleDenominator != 1))
+        throw std::invalid_argument("Per-source 1440p/2160p targets require a compatible x2 super-resolution model");
     std::optional<restoration::ModelPack> temporalRestorationPack;
     if (!settings.temporalRestorationModelDirectory.empty()) temporalRestorationPack = restoration::loadModelPack(settings.temporalRestorationModelDirectory);
     std::optional<restoration::ModelPack> compressionRestorationPack;
@@ -116,6 +125,8 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
             if (!video) result.rejected.push_back({source,ImportRejection::noVideo,"Selected video stream does not exist or is not a video stream"});
             else {
                 bool valid = true;
+                int targetWidth = settings.settings.encoding.outputWidth;
+                int targetHeight = settings.settings.encoding.outputHeight;
                 std::string profile;
                 try { profile = media::rifeSdrInputProfile(video->color); }
                 catch (const std::exception& error) { result.rejected.push_back({source,ImportRejection::unsupportedColor,error.what()}); valid = false; }
@@ -167,8 +178,16 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         valid = false;
                     }
                 }
+                if (valid && request.outputTargetSelection != 0) {
+                    const auto target = calculateOutputTarget(video->width,video->height,request.outputTargetSelection);
+                    if (!target.usable()) {
+                        result.rejected.push_back({source,ImportRejection::unsupportedOutputDimensions,
+                            "Requested output tier cannot preserve this source aspect ratio within the x2 model and encoder limits"});
+                        valid = false;
+                    } else { targetWidth = target.width; targetHeight = target.height; }
+                }
                 if (valid && !supportsImportOutputDimensions(video->width, video->height,
-                    settings.settings.encoding.outputWidth, settings.settings.encoding.outputHeight,
+                    targetWidth, targetHeight,
                     restorationPack ? restorationPack->capabilities.scaleNumerator : 1,
                     restorationPack ? restorationPack->capabilities.scaleDenominator : 1)) {
                     result.rejected.push_back({source,ImportRejection::unsupportedOutputDimensions,
@@ -185,6 +204,8 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                 }
                 if (valid) {
                     auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
+                    job.settings.encoding.outputWidth = targetWidth;
+                    job.settings.encoding.outputHeight = targetHeight;
                     if (request.platformBitrate != PlatformBitrate::unchanged) {
                         const auto& caps = restorationPack ? restorationPack->capabilities : restoration::Capabilities{};
                         const auto platform = platformExportSettings(request.platformBitrate,job.settings.targetRate,
