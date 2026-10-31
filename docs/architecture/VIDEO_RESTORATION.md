@@ -68,7 +68,7 @@ The target for this decision is Windows with a GTX 1660 SUPER-class NVIDIA GPU a
 | --- | --- | --- |
 | Real-ESRGAN x2plus | Keep as the current optional local SR baseline. | Local PyTorch/ONNX reference and GTX 1660 SUPER TensorRT/timing evidence exists above. Image-oriented, not temporally qualified; separate weight-redistribution review remains open. |
 | `realesr-general-x4v3` / SRVGGNetCompact | Recommended next local SR experiment only. | Not installed or supported by this decision. ONNX/TensorRT export, bounded memory, real-video flicker, performance and checkpoint rights still need verification. |
-| STDF-R3 | Optional temporal compression-repair research only. | Seven-frame, luminance-domain model with custom deformable convolution. No validated Windows ONNX/TensorRT path or independently established weight redistribution rights. Exclude from default packages. |
+| STDF-R3 | Optional temporal compression-repair research only. | Seven-frame luminance model; isolated portable-ONNX CPU/CUDA parity and error checks now exist, but no native video adapter, TensorRT qualification or independently established weight redistribution rights. Exclude from default packages. |
 | VRT | Excluded from the current product/default-package selection. | The author's license is CC BY-NC 4.0, including a noncommercial restriction [VRT1]. Do not import it into this path under a permissive-code assumption. Reconsider only with separately documented compatible rights. |
 
 ### Single new SR experiment: realesr-general-x4v3
@@ -85,11 +85,32 @@ Expected implementation cost: **medium**, pending export feasibility. Work inclu
 
 ### Optional temporal compression repair: STDF-R3
 
+2026-10-31 update: a separate [local CPU feasibility experiment](../development/STDF_R3_CPU_FEASIBILITY.md)
+now exports the actual pinned STDF-R3 network with a standard-ONNX portable
+deformable operator and checks it against an independent torchvision CPU
+reference. Small severe H.264/HEVC synthetic controls improve about 0.4 dB,
+while clean/lighter/AV1 controls regress. This does not register a native adapter,
+qualify CUDA/TensorRT, resolve weight rights or justify enabling a default.
+An additional [isolated native CUDA probe](../development/STDF_R3_CUDA_FEASIBILITY.md)
+now verifies three small shapes against the independent CPU network: all image
+convolutions/GridSample execute on CUDA while scalar shape work is explicitly
+reported on CPU. It covers allocation/device/shape errors and discarding work
+completed after cancellation. No production adapter, normal-resolution video or
+TensorRT qualification is implied.
+
+An [independent seven-Y-frame native adapter](../development/STDF_R3_LUMA_ADAPTER.md)
+now prepares the actual temporal request/result contract with bounded plane
+views, immutable verified graph bytes, explicit scene-edge repetition and
+multiple-of-eight padding. Standalone CPU round-trips preserve center U/V and
+exact rational timing, reject malformed input and discard cancelled results.
+This developer utility is not registered in the application; scene scheduling,
+runtime budgeting, production integration and full media acceptance remain open.
+
 STDF is specifically a compressed-video quality-enhancement research model, distinct from FastDVDnet Gaussian denoising and single-image NAFNet deblurring [ST1]. Its R3 configuration has radius 3, hence seven ordered frames, one Y input/output channel, and MFQEv2 training/testing paths for HEVC HM16.5 low-delay P at QP37 [ST2]. That domain does not establish effectiveness on ordinary H.264/AV1 recordings, every HEVC encoder or other quality levels. Do not describe it as a general dynamic-detail recovery model or combine its quality claim with the existing denoise control.
 
-The source depends on `ModulatedDeformConv`; the README builds a modified DCNv2 extension using an older PyTorch/CUDA environment [ST1], [ST3]. No current Windows ONNX Runtime CUDA/TensorRT execution result has been established here. Cost is **high**: first prove export/custom-op or plugin feasibility, then implement a bounded seven-frame PTS window, clip/scene-edge rules, a precise Y/UV/color-range contract and cancellation/checkpoint identity. Restoration must preserve center-frame timing and must never borrow context across a cut. No operator implementation is copied or enabled by this research decision.
+The source depends on `ModulatedDeformConv`; the README builds a modified DCNv2 extension using an older PyTorch/CUDA environment [ST1], [ST3]. The isolated experiment above now establishes portable export and small-shape Windows ONNX Runtime CUDA execution without compiling that extension; TensorRT remains unqualified. Native integration cost remains **high**: implement a bounded seven-frame PTS window, clip/scene-edge rules, a precise Y/UV/color-range contract and cancellation/checkpoint identity, then qualify realistic sizes and media. Restoration must preserve center-frame timing and must never borrow context across a cut. The research decision does not enable a production adapter or copy upstream operator code.
 
-The STDF repository code is Apache-2.0 [ST4]. The linked upstream DCNv2 repository is MIT [ST5], but STDF documents modifications, so the actual vendored sources and notices require their own review [ST1]. The author links pretrained checkpoints separately; their independent redistribution scope was not established by this review [ST1]. Keep STDF-R3 experimental, uninstalled and out of default/distributable packages until rights, native inference and visual/hardware gates pass.
+The STDF repository code is Apache-2.0 [ST4]. The linked upstream DCNv2 repository is MIT [ST5], but STDF documents modifications, so the actual vendored sources and notices require their own review [ST1]. The author links pretrained checkpoints separately; their independent redistribution scope was not established by this review [ST1]. Keep STDF-R3 experimental and out of native/default/distributable packages until rights, native inference and visual/hardware gates pass. The separate CPU experiment above keeps its source, selected weight and derived graph in ignored local evaluation storage only.
 
 ### Acceptance matrix before changing the baseline
 

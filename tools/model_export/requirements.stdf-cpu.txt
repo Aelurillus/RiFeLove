@@ -1,0 +1,4 @@
+# Optional developer-only STDF feasibility tools. Never shipped with the app.
+# Install Torch/torchvision using the CPU index/backend, as for requirements.cpu.txt.
+-r requirements.cpu.txt
+torchvision==0.23.0
