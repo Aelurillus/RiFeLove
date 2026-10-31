@@ -4,6 +4,7 @@ param([string]$OutputDirectory = '', [string]$SourcePackageDirectory = '')
 # Load the production function definitions without executing a package build.
 # These tiny fake graphs test packaging contracts only, never model quality.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../packaging/windows/native-package-options.ps1')
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $outputRoot = Join-Path $repositoryRoot 'out'
 if (-not $OutputDirectory) {
@@ -38,10 +39,12 @@ function Hash-File([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm 
 
 foreach ($selection in @(
     @{ path = 'packaging/windows/package-native-reuse-local.ps1'; names = @(
-        'Get-SafeTreeFiles','Read-ValidatedModelPack','New-HardLinkChecked','Get-NativeModelRole',
+        'Get-SafeFiles','Get-SafeTreeFiles','Read-ValidatedModelPack','New-HardLinkChecked','Get-NativeModelRole',
+        'Resolve-ManifestPath','Read-NativeSourceChecksums',
         'Get-NativeOptionalRestorationPacks','Set-NativeRestorationDefaults','Update-NativeOptionalRestorationManifest') },
     @{ path = 'packaging/windows/package-native-local.ps1'; names = @(
-        'Assert-NoLinkTree','Resolve-ExistingFile','Read-Json','Get-DescriptorHash','Validate-ModelPack') }
+        'Assert-NoLinkTree','Resolve-ExistingDirectory','Resolve-ExistingFile','Read-Json','Get-DescriptorHash','Validate-ModelPack',
+        'Get-NativeFullModelPacks','Get-PackageTreeItems','Find-LegacyModelReference','Resolve-NativeLegacyModelMigration') }
 )) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryRoot $selection.path), [ref]$tokens, [ref]$errors)
@@ -53,14 +56,14 @@ foreach ($selection in @(
     }
 }
 
-function New-ModelFixture([string]$Id, [string]$Parent) {
+function New-ModelFixture([string]$Id, [string]$Parent, [string]$Family = 'video-restoration') {
     $directory = Join-Path $Parent $Id
     $licenseName = if ($Id -ceq 'stdf-r3-y7-sdr8-local-eval') { 'LICENSE-LOCAL-EVALUATION.txt' } else { 'LICENSE.txt' }
     foreach ($name in @('model.onnx',$licenseName,'source.json','validation.json')) {
         Write-Fixture (Join-Path $directory $name) "PACKAGING TEST FIXTURE ONLY: $Id $name"
     }
     $descriptor = [ordered]@{
-        schemaVersion = 1; id = $Id; family = 'video-restoration'; version = 'fixture-v1'; modelFile = 'model.onnx'
+        schemaVersion = 1; id = $Id; family = $Family; version = 'fixture-v1'; modelFile = 'model.onnx'
         sha256 = Hash-File (Join-Path $directory 'model.onnx')
         license = @{ id = 'test-fixture-only'; file = $licenseName; sha256 = Hash-File (Join-Path $directory $licenseName) }
         provenance = @{ manifestFile = 'source.json'; manifestSha256 = Hash-File (Join-Path $directory 'source.json') }
@@ -166,6 +169,123 @@ Assert-Equal $sourceFileId $Matches[0] 'Preview uses an NTFS hard link rather th
 Assert-Equal $beforeHash (Hash-File $graph) 'Hard-link staging leaves its source unchanged'
 Assert-Rejected { New-HardLinkChecked $graph $link } 'already exists' 'Existing linked files are never overwritten'
 
+# Explicit base mode must resolve its model set before any optional graph,
+# descriptor, license, or checksum target is opened. These are fake graphs;
+# they prove bundle/data contracts only, never inference quality.
+$baseSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly
+$fourSelection = Resolve-NativeModelBundleSelection
+$temporalSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeTemporalRestoration
+$compressionSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeCompressionRestoration
+$allSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeTemporalRestoration -IncludeCompressionRestoration
+Assert-Equal 2 @($baseSelection.modelIds).Count 'Base explicitly selects one RIFE and one SR'
+Assert-Equal 4 @($fourSelection.modelIds).Count 'Default full packaging preserves four-model selection'
+Assert-Equal 3 @($temporalSelection.modelIds).Count 'FastDVDnet can be added independently'
+Assert-Equal 3 @($compressionSelection.modelIds).Count 'STDF can be added independently'
+Assert-Equal 4 @($allSelection.modelIds).Count 'Both experiments can be added to a fresh base package'
+$rifeFixture = New-ModelFixture 'rife-4.25-fp32-sdr8-v3' (Join-Path $testRoot 'base-cache') 'rife'
+$srFixture = New-ModelFixture 'realesrgan-x2plus-sdr8-v2' (Join-Path $testRoot 'base-cache')
+$missing = Join-Path $testRoot 'excluded-cache-does-not-exist'
+$basePacks = @(Get-NativeFullModelPacks $baseSelection $rifeFixture $srFixture $missing $missing)
+Assert-Equal 2 $basePacks.Count 'Full packager base mode does not require excluded caches'
+Assert-Equal 4 @(Get-NativeFullModelPacks $fourSelection $rifeFixture $srFixture $localTemporal $localCompression).Count 'Full packager default still validates all four packs'
+Assert-Equal 3 @(Get-NativeFullModelPacks $temporalSelection $rifeFixture $srFixture $localTemporal $missing).Count 'Full packager can include temporal only'
+Assert-Equal 3 @(Get-NativeFullModelPacks $compressionSelection $rifeFixture $srFixture $missing $localCompression).Count 'Full packager can include compression only'
+Assert-Rejected { Get-NativeFullModelPacks $temporalSelection $rifeFixture $srFixture $missing $localCompression } '不存在' 'Selected missing FastDVDnet is rejected'
+Assert-Rejected { Get-NativeFullModelPacks $compressionSelection $rifeFixture $srFixture $localTemporal $missing } '不存在' 'Selected missing STDF is rejected'
+
+# Keep the source's declared experiments deliberately invalid, then prove a
+# base copy never parses them. Missing excluded files remain in SHA256SUMS.
+$baseSource = Join-Path $testRoot 'source-base-selection'
+foreach ($pack in $basePacks) {
+    $destination = Join-Path $baseSource ('models/' + $pack.destination)
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+    Copy-Item -LiteralPath $pack.source -Destination $destination -Recurse
+    $licenseDestination = Join-Path $baseSource ('licenses/Model-' + $pack.destination + '-LICENSE.txt')
+    Write-Fixture $licenseDestination ([IO.File]::ReadAllText($pack.licensePath))
+}
+Write-Fixture (Join-Path $baseSource "models/$temporalId/model.json") 'THIS IS INTENTIONALLY INVALID JSON'
+Write-Fixture (Join-Path $baseSource "models/$compressionId/model.json") 'THIS IS INTENTIONALLY INVALID JSON'
+Write-Fixture (Join-Path $baseSource "licenses/Model-$temporalId-LICENSE.txt") 'EXCLUDED LICENSE FIXTURE'
+Write-Fixture (Join-Path $baseSource "licenses/Model-$compressionId-LICENSE-LOCAL-EVALUATION.txt") 'EXCLUDED LICENSE FIXTURE'
+Write-Fixture (Join-Path $baseSource 'models/rife-4.25-fp32-sdr8-v2/model.json') 'EXCLUDED LEGACY FIXTURE'
+Write-Fixture (Join-Path $baseSource 'models/user-custom-model/model.json') 'USER MODEL MUST NOT BE COPIED'
+Write-Fixture (Join-Path $baseSource 'models/legacy-models.json') '{"recoveryFixture":"must remain in source"}'
+Write-Fixture (Join-Path $baseSource 'data/queue.sqlite') 'USER QUEUE FIXTURE - DO NOT COPY'
+Write-Fixture (Join-Path $baseSource 'data/checkpoints/recovery.json') '{"recoveryFixture":"must remain in source"}'
+$queueHash = Hash-File (Join-Path $baseSource 'data/queue.sqlite')
+$recoveryHash = Hash-File (Join-Path $baseSource 'data/checkpoints/recovery.json')
+$sourceBefore = @(Get-ChildItem -LiteralPath $baseSource -File -Recurse | ForEach-Object { $_.FullName + ':' + (Hash-File $_.FullName) }) -join "`n"
+$baseExcluded = @(Get-NativeExcludedModelRoots $baseSelection)
+Assert-Equal 0 @(Get-NativeOptionalRestorationPacks $manifest $baseSource $missing $missing $baseSelection).Count 'Reuse base skips declared but invalid excluded optional descriptors'
+Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $baseSource $missing $missing $compressionSelection } 'not declared' 'A selected undeclared STDF source is rejected'
+Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $testRoot $missing '' $compressionSelection } 'missing' 'Explicitly selected missing STDF is never silently omitted'
+$baseFiles = @(Get-SafeFiles $baseSource $baseExcluded $baseSource $baseSelection)
+Assert-Equal 12 $baseFiles.Count 'Base copy plan contains only two six-file model/license packs'
+Assert-Equal 0 @($baseFiles | Where-Object { $_.FullName -match 'fastdvdnet|stdf-r3|rife-4.25-fp32-sdr8-v2[\\/]|user-custom|legacy-models|[\\/]data[\\/]' }).Count 'Excluded models, metadata and user data stay outside base copy plan'
+$baseOutput = Join-Path $testRoot 'staged-base-bundle'
+foreach ($file in $baseFiles) {
+    $relative = [IO.Path]::GetRelativePath($baseSource, $file.FullName)
+    New-HardLinkChecked $file.FullName (Join-Path $baseOutput $relative)
+}
+New-Item -ItemType Directory -Path (Join-Path $baseOutput 'data') | Out-Null
+Initialize-NativePackageDataMode $baseOutput | Out-Null
+Assert-Equal 2 @(Get-ChildItem -LiteralPath (Join-Path $baseOutput 'models') -Directory).Count 'Staged base contains exactly RIFE plus SR'
+Assert-Equal 0 @(Get-ChildItem -LiteralPath (Join-Path $baseOutput 'data') -Force).Count 'Staged base creates empty independent data'
+Assert-Equal $queueHash (Hash-File (Join-Path $baseSource 'data/queue.sqlite')) 'Source queue remains byte-identical'
+Assert-Equal $recoveryHash (Hash-File (Join-Path $baseSource 'data/checkpoints/recovery.json')) 'Source recovery remains byte-identical'
+$sourceAfter = @(Get-ChildItem -LiteralPath $baseSource -File -Recurse | ForEach-Object { $_.FullName + ':' + (Hash-File $_.FullName) }) -join "`n"
+Assert-Equal $sourceBefore $sourceAfter 'Staging never modifies any source file'
+
+$source = $baseSource # Resolve-ManifestPath uses the packager's explicit source root.
+$checksumFixture = Join-Path $testRoot 'base-selection-SHA256SUMS.txt'
+$checksumLines = @('RifeLove native local bundle SHA-256')
+foreach ($file in $baseFiles) {
+    $checksumLines += (Hash-File $file.FullName) + '  ' + [IO.Path]::GetRelativePath($baseSource, $file.FullName).Replace('\','/')
+}
+$fakeHash = '0' * 64
+foreach ($relative in @("models/$temporalId/model.onnx", "models/$compressionId/model.onnx", "licenses/Model-$compressionId-MISSING.txt", 'models/rife-4.25-fp32-sdr8-v2/model.onnx', 'models/user-custom-model/model.onnx', 'models/legacy-models.json', 'data/queue.sqlite')) {
+    $checksumLines += "$fakeHash  $relative"
+}
+Write-Fixture $checksumFixture ($checksumLines -join "`n")
+$selectedChecksums = Read-NativeSourceChecksums $checksumFixture $baseExcluded $baseSelection
+Assert-Equal 12 $selectedChecksums.Count 'Excluded missing checksum targets cannot block base bundle'
+foreach ($relative in $selectedChecksums.Keys) {
+    Assert-Equal $true (Test-Path -LiteralPath (Resolve-ManifestPath $relative) -PathType Leaf) 'Every selected checksum target exists'
+}
+$baseDefaults = @{ targetRate = '144/1'; temporalRestorationDefaultEnabled = $true; compressionRestorationDefaultEnabled = $true }
+Set-NativeRestorationDefaults $baseDefaults $false $false
+Assert-Equal $null $baseDefaults.temporalRestorationModelDirectory 'Base defaults never reference excluded FastDVDnet'
+Assert-Equal $null $baseDefaults.compressionRestorationModelDirectory 'Base defaults never reference excluded STDF'
+Assert-Equal 'not-bundled' $baseDefaults.temporalRestorationMode 'Temporal exclusion is explicit in defaults'
+Assert-Equal 'not-bundled' $baseDefaults.compressionRestorationMode 'Compression exclusion is explicit in defaults'
+Assert-Equal $false $baseDefaults.temporalRestorationDefaultEnabled 'Base temporal mode remains disabled'
+Assert-Equal $false $baseDefaults.compressionRestorationDefaultEnabled 'Base compression mode remains disabled'
+Assert-Equal '144/1' $baseDefaults.targetRate 'Base selection preserves unrelated defaults'
+
+# No legacy descriptor or graph is required when the exact recovery identity
+# is absent. A precise match makes validation mandatory, not a silent fallback.
+$unreferenced = Resolve-NativeLegacyModelMigration (Join-Path $testRoot 'clean-new-package') $missing
+Assert-Equal $false $unreferenced.reference.referenced 'Fresh package does not require legacy v2 files'
+Assert-Equal $null $unreferenced.pack 'Fresh package never validates an unused v2 pack'
+$legacyRoot = Join-Path $testRoot 'legacy-reference-package'
+Write-Fixture (Join-Path $legacyRoot 'data/unrelated.json') '{"path":"models/cache/rife-4.25-fp32-sdr8-v2"}'
+Assert-Equal $false (Resolve-NativeLegacyModelMigration $legacyRoot $missing).reference.referenced 'A path token alone never activates v2 migration'
+$legacyFixture = New-ModelFixture 'rife-4.25-fp32-sdr8' (Join-Path $testRoot 'legacy-cache') 'rife'
+$legacyDescriptorPath = Join-Path $legacyFixture 'model.json'
+$legacyDescriptor = Get-Content -Raw -LiteralPath $legacyDescriptorPath | ConvertFrom-Json -AsHashtable
+$legacyDescriptor['version'] = '4.25'; $legacyDescriptor['licenseFile'] = 'LICENSE.txt'
+$legacyDescriptor['validationFile'] = 'validation.json'; $legacyDescriptor['sourceManifestFile'] = 'source.json'
+Write-Fixture $legacyDescriptorPath ($legacyDescriptor | ConvertTo-Json -Depth 8)
+$legacyHash = Hash-File (Join-Path $legacyFixture 'model.onnx')
+$referenceFile = Join-Path $legacyRoot 'data/checkpoint.json'
+Write-Fixture $referenceFile (@{ path = 'models/cache/rife-4.25-fp32-sdr8-v2'; id = 'rife-4.25-fp32-sdr8'; version = '4.25'; sha256 = $legacyHash } | ConvertTo-Json -Compress)
+$referenceHash = Hash-File $referenceFile
+Assert-Rejected { Resolve-NativeLegacyModelMigration $legacyRoot $missing $legacyHash } '不存在' 'Referenced missing legacy pack is rejected'
+$migrated = Resolve-NativeLegacyModelMigration $legacyRoot $legacyFixture $legacyHash
+Assert-Equal $true $migrated.reference.referenced 'Exact path plus pinned identity activates legacy validation'
+Assert-Equal 'rife-4.25-fp32-sdr8-v2' $migrated.pack.destination 'Recovery keeps the exact historical v2 basename'
+Assert-Equal $referenceHash (Hash-File $referenceFile) 'Legacy probing never changes recovery data'
+
 if ($SourcePackageDirectory) {
     $realSource = [IO.Path]::GetFullPath($SourcePackageDirectory)
     $realManifestPath = Join-Path $realSource 'PACKAGE-MANIFEST.json'
@@ -183,5 +303,7 @@ if ($SourcePackageDirectory) {
     fourModelSourceReused = $true; threeModelSourceUpgraded = $true
     stdfRoleAndDefaultsPreserved = $true; tamperedModelsRejected = $true
     ntfsHardLinkIdentityVerified = $true; launchedExe = $false; cleanupPerformed = $false
+    baseModelSelectionVerified = $true; excludedModelsNotRead = $true; userDataNotCopied = $true
+    legacyModelValidatedOnlyWhenReferenced = $true
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $testRoot 'test-result.json') -Encoding utf8NoBOM
 Write-Output "Native model reuse checks passed ($checks). Tiny fixtures retained at $testRoot"

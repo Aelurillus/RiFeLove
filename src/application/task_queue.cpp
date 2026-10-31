@@ -100,6 +100,8 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
             {"tilePolicy",job.compressionRestorationTiled ? restoration::stdf_tiles::policyId : compressionTilePolicy}, {"decoderReplayPolicy",compressionDecoderReplayPolicy},
             {"sceneReplayPolicy",compressionSceneReplayPolicy}
         };
+        if (job.settings.automaticCompressionRestoration)
+            manifest["compressionRestorationRuntime"]["automaticControl"] = manifest["job"].at("automaticCompressionRestoration");
         if (job.compressionRestorationTiled) {
             const auto model = restoration::loadModelPack(job.compressionRestorationModelDirectory);
             if (inference::sha256File(model.directory / "model.json",256 * 1024) != job.expectedCompressionRestorationDescriptorSha256 ||
@@ -293,6 +295,10 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
         if (!saved.contains("compressionRestorationRuntime") || !saved.at("compressionRestorationRuntime").is_object())
             throw std::logic_error("This checkpoint has no verified compression restoration runtime identity; restart with a new output");
         const auto& runtime = saved.at("compressionRestorationRuntime");
+        const auto& automatic = expectedManifest.at("job").at("automaticCompressionRestoration");
+        if (automatic.is_null() ? runtime.contains("automaticControl") :
+            (!runtime.contains("automaticControl") || runtime.at("automaticControl") != automatic))
+            throw std::logic_error("Automatic compression analyzer, settings or replay identity changed; restart with a new output");
         const auto model = restoration::loadModelPack(job.compressionRestorationModelDirectory);
         if (!restoration::supportsStdfCudaModel(model))
             throw std::logic_error("The selected compression restoration model is no longer a strictly qualified STDF CUDA model; restart with a new output");

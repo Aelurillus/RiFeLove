@@ -497,6 +497,51 @@ TEST(CheckpointArtifacts, CompressionRestorationIdentityRejectsChangedModelStren
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(legacy.dump(),enabled.dump()));
 }
 
+TEST(CheckpointArtifacts, AutomaticCompressionPinsSourceReplayAndCannotAdoptFixedStrengthHistory) {
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    const auto fixed = compressionManifest(false);
+    auto legacy = fixed;
+    legacy["job"]["schemaVersion"] = 11;
+    legacy["job"].erase("automaticCompressionRestoration");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(legacy.dump(),fixed.dump()));
+    auto automatic = fixed;
+    automatic["job"]["automaticCompressionRestoration"] = {
+        {"algorithmVersion",2},{"analyzer","sdr8-luma-block8-stratified-v2"},{"replayPolicy","software-source-pts-from-start-v1"},
+        {"relativeAdjustment",-0.25},{"smoothingSeconds",0.35},{"maximumStrengthChangePerSecond",0.5},{"minimumConfidence",0.6}};
+    automatic["compressionRestorationRuntime"]["automaticControl"] = automatic.at("job").at("automaticCompressionRestoration");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(automatic.dump(),automatic.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(fixed.dump(),automatic.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(legacy.dump(),automatic.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),fixed.dump()));
+    for (const auto* field : {"relativeAdjustment","smoothingSeconds","maximumStrengthChangePerSecond","minimumConfidence"}) {
+        auto changed = automatic;
+        changed["job"]["automaticCompressionRestoration"][field] = 0.12345;
+        changed["compressionRestorationRuntime"]["automaticControl"] = changed.at("job").at("automaticCompressionRestoration");
+        EXPECT_TRUE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump())) << field;
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump())) << field;
+    }
+    const auto rejected = [&](const Json& changed) {
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    };
+    for (const auto* field : {"algorithmVersion","analyzer","replayPolicy","relativeAdjustment","smoothingSeconds","maximumStrengthChangePerSecond","minimumConfidence"}) {
+        auto changed = automatic; changed["job"]["automaticCompressionRestoration"].erase(field); rejected(changed);
+    }
+    auto changed = automatic; changed["compressionRestorationRuntime"].erase("automaticControl"); rejected(changed);
+    changed = automatic; changed["compressionRestorationRuntime"]["automaticControl"]["relativeAdjustment"] = 0.1; rejected(changed);
+    changed = automatic; changed["job"]["automaticCompressionRestoration"]["analyzer"] = "unvalidated"; rejected(changed);
+    changed = automatic;
+    changed["job"]["automaticCompressionRestoration"]["algorithmVersion"] = 1;
+    changed["job"]["automaticCompressionRestoration"]["analyzer"] = "sdr8-luma-block8-excess-v1";
+    changed["compressionRestorationRuntime"]["automaticControl"] = changed.at("job").at("automaticCompressionRestoration");
+    rejected(changed);
+    changed = automatic; changed["job"]["automaticCompressionRestoration"]["replayPolicy"] = "seek"; rejected(changed);
+    changed = automatic; changed["job"]["schemaVersion"] = 11; rejected(changed);
+    changed = automatic; changed.erase("compressionRestorationRuntime"); rejected(changed);
+    changed = fixed; changed["compressionRestorationRuntime"]["automaticControl"] = Json::object(); rejected(changed);
+}
+
 TEST(CheckpointArtifacts, SchemaElevenPreservesLegacyFullFrameRuntimeButNeverMigratesItToTiling) {
     using namespace rifelove::application;
     const auto current = compressionManifest(false);

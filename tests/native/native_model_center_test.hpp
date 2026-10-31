@@ -199,18 +199,82 @@ void checkLocalModelCenter(Check check) {
             "saved restoration defaults are applied to the actual job selectors");
         check(!app.testExportSettings().automaticTemporalDenoise && !app.testViewState().automaticTemporalDenoise,
             "experimental automatic Gaussian denoise defaults off even when a temporal model is selected");
+        const HWND adjustment = GetDlgItem(main, 1030), adjustmentReset = GetDlgItem(main, 1031);
+        const auto adjustmentText = [&] {
+            wchar_t text[64]{}; GetWindowTextW(adjustment, text, static_cast<int>(std::size(text)));
+            return std::wstring(text);
+        };
+        check(adjustment && adjustmentReset && !IsWindowEnabled(adjustment) && !IsWindowEnabled(adjustmentReset) && adjustmentText() == L"0",
+            "relative automatic-denoise input and reset default to zero and stay disabled in fixed mode");
         check(app.testExportSettings().temporalDenoiseSigma255 == 25.0F &&
             app.testViewState().restorationSummary.find(L"FastDVDnet 固定 σ25") != std::wstring::npos &&
-            app.testViewState().denoiseModeSummary.find(L"仍降噪") != std::wstring::npos,
+            app.testViewState().denoiseModeSummary.find(L"仍降噪") != std::wstring::npos &&
+            app.testViewState().denoiseAdjustmentSummary.find(L"固定 σ25") != std::wstring::npos,
             "automatic off truthfully identifies selected FastDVDnet as fixed-sigma denoise, not bypass");
         check(app.testSetAutomaticDenoise(true) && app.testExportSettings().automaticTemporalDenoise && app.testViewState().automaticTemporalDenoise,
             "explicit opt-in with a validated FastDVDnet transfers automatic Gaussian denoise into job settings");
+        check(IsWindowEnabled(adjustment) && IsWindowEnabled(adjustmentReset) &&
+            app.testExportSettings().automaticTemporalDenoise->relativeAdjustment == 0.0,
+            "automatic opt-in exposes an independent zero-default relative adjustment");
+        for (const auto* value : {L"-100", L"+100", L"-25.5"}) {
+            SetWindowTextW(adjustment, value);
+            check(app.testExportSettings().automaticTemporalDenoise->relativeAdjustment == native_desktop::nativeRelativeAdjustment(value),
+                "visible relative adjustment is captured through the real export settings builder");
+        }
+        SetWindowTextW(adjustment, L"101");
+        bool invalidAdjustmentRejected = false;
+        try { (void)app.testExportSettings(); }
+        catch (const std::invalid_argument&) { invalidAdjustmentRejected = true; }
+        check(invalidAdjustmentRejected && app.testViewState().denoiseAdjustmentSummary.find(L"偏移无效") != std::wstring::npos,
+            "out-of-range adjustment blocks task capture and explains the accepted range");
+        SendMessageW(adjustmentReset, BM_CLICK, 0, 0);
+        check(adjustmentText() == L"0" && app.testExportSettings().automaticTemporalDenoise->relativeAdjustment == 0.0,
+            "relative adjustment reset restores the automatic estimate rather than turning denoise off");
+        SetWindowTextW(adjustment, L"-25.5");
+        app.testSetQueueControlsBusy(true);
+        check(!IsWindowEnabled(adjustment) && !IsWindowEnabled(adjustmentReset) && !IsWindowEnabled(GetDlgItem(main, 1026)) &&
+            !app.testSetAutomaticDenoise(false) && app.testExportSettings().automaticTemporalDenoise->relativeAdjustment == -0.255,
+            "running queue locks the relative input, reset and automatic-mode switch without changing captured values");
+        app.testSetQueueControlsBusy(false);
+        check(IsWindowEnabled(adjustment) && IsWindowEnabled(adjustmentReset),
+            "relative adjustment becomes editable again after the queue releases its controls");
+        {
+            RECT original{}; GetWindowRect(main, &original);
+            const UINT dpi = GetDpiForWindow(main);
+            const float scale = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+            for (const int width : {480, 600, 700, 790, 800, 850}) {
+                SetWindowPos(main, nullptr, original.left, original.top, MulDiv(width, dpi, 96), MulDiv(600, dpi, 96), SWP_NOZORDER | SWP_NOACTIVATE);
+                SendMessageW(main, WM_VSCROLL, SB_TOP, 0);
+                SetFocus(GetDlgItem(main, 1002));
+                bool sawInput = false, sawReset = false;
+                for (int count = 0; count < 40 && !(sawInput && sawReset); ++count) {
+                    app.testNavigateSettings();
+                    const HWND focused = GetFocus();
+                    if (focused != adjustment && focused != adjustmentReset) continue;
+                    RECT client{}, field{}; GetClientRect(main, &client); GetWindowRect(focused, &field);
+                    MapWindowPoints(nullptr, main, reinterpret_cast<POINT*>(&field), 2);
+                    const auto layout = native_desktop::NativeLayout::from(client.right / scale, client.bottom / scale, app.testViewState().scrollOffset);
+                    check(IsWindowVisible(focused) && field.top >= static_cast<LONG>(layout.contentTop * scale) &&
+                        field.bottom <= static_cast<LONG>(layout.contentBottom * scale) + 1 &&
+                        field.left >= static_cast<LONG>(layout.left * scale) && field.right <= static_cast<LONG>(layout.right * scale) + 1,
+                        "Tab scrolls automatic adjustment and reset fully into the viewport at narrow widths");
+                    sawInput |= focused == adjustment; sawReset |= focused == adjustmentReset;
+                }
+                check(sawInput && sawReset, "both independent automatic-denoise controls participate in keyboard navigation");
+                check(app.testNavigateSettings(true) && GetFocus() == adjustment,
+                    "Shift+Tab returns from reset to the relative input without losing its value");
+                check(adjustmentText() == L"-25.5", "responsive layout and keyboard navigation preserve the signed adjustment");
+            }
+            SetWindowPos(main, nullptr, original.left, original.top, original.right - original.left, original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            SendMessageW(main, WM_VSCROLL, SB_TOP, 0);
+        }
         check(app.testViewState().restorationSummary.find(L"自动高斯") != std::wstring::npos &&
             app.testViewState().restorationSummary.find(L"固定 σ25") == std::wstring::npos &&
             app.testViewState().denoiseModeSummary.find(L"软件解码") != std::wstring::npos,
             "automatic opt-in replaces fixed-sigma summary with experimental automatic mode and decode cost");
         check(app.testSetAutomaticDenoise(false) && !app.testExportSettings().automaticTemporalDenoise &&
-            app.testViewState().restorationSummary.find(L"固定 σ25") != std::wstring::npos,
+            app.testViewState().restorationSummary.find(L"固定 σ25") != std::wstring::npos &&
+            !IsWindowEnabled(adjustment) && !IsWindowEnabled(adjustmentReset),
             "turning automatic off restores the still-active fixed-sigma mode");
         check(app.testSetAutomaticDenoise(true), "re-enable automatic for the queue serialization fixture");
         application::ProcessingJob denoiseJob;
@@ -221,20 +285,27 @@ void checkLocalModelCenter(Check check) {
         denoiseJob.settings = app.testExportSettings();
         const auto persisted = application::parseJob(denoiseJob.source, denoiseJob.output, application::serializeJob(denoiseJob));
         check(persisted.settings.automaticTemporalDenoise && persisted.temporalRestorationModelDirectory == temporal &&
-            persisted.settings.automaticTemporalDenoise->minimumConfidence == denoiseJob.settings.automaticTemporalDenoise->minimumConfidence,
-            "native automatic-denoise settings and selected temporal model survive the queue serialization boundary");
+            persisted.settings.automaticTemporalDenoise->minimumConfidence == denoiseJob.settings.automaticTemporalDenoise->minimumConfidence &&
+            persisted.settings.automaticTemporalDenoise->relativeAdjustment == -0.255,
+            "native nonzero relative adjustment and selected temporal model survive the queue serialization boundary");
+        SetWindowTextW(adjustment, L"80");
+        check(persisted.settings.automaticTemporalDenoise->relativeAdjustment == -0.255 &&
+            denoiseJob.settings.automaticTemporalDenoise->relativeAdjustment == -0.255 &&
+            app.testExportSettings().automaticTemporalDenoise->relativeAdjustment == 0.8,
+            "later UI edits cannot mutate an already-captured or persisted queue task");
         const HWND temporalCombo = GetDlgItem(main, 1024);
         const auto temporalSelection = SendMessageW(temporalCombo, CB_GETCURSEL, 0, 0);
         SendMessageW(temporalCombo, CB_SETCURSEL, 0, 0);
         SendMessageW(main, WM_COMMAND, MAKEWPARAM(1024, CBN_SELCHANGE), reinterpret_cast<LPARAM>(temporalCombo));
-        check(!app.testExportSettings().automaticTemporalDenoise && !app.testSetAutomaticDenoise(true),
+        check(!app.testExportSettings().automaticTemporalDenoise && !app.testSetAutomaticDenoise(true) &&
+            adjustmentText() == L"0" && !IsWindowEnabled(adjustment) && !IsWindowEnabled(adjustmentReset),
             "removing the FastDVDnet selection disables automatic denoise and blocks invalid re-enablement");
         check(app.testViewState().restorationSummary.find(L"降噪：关闭") != std::wstring::npos &&
             app.testViewState().denoiseModeSummary.find(L"可选降噪：关闭") != std::wstring::npos,
             "no temporal model is truthfully labeled as denoise off");
         SendMessageW(temporalCombo, CB_SETCURSEL, temporalSelection, 0);
         SendMessageW(main, WM_COMMAND, MAKEWPARAM(1024, CBN_SELCHANGE), reinterpret_cast<LPARAM>(temporalCombo));
-        check(!app.testExportSettings().automaticTemporalDenoise, "reselecting a model cannot silently re-enable experimental processing");
+        check(!app.testExportSettings().automaticTemporalDenoise && adjustmentText() == L"0", "reselecting a model cannot silently re-enable experimental processing or restore an old bias");
         if (main) DestroyWindow(main);
     }
     {

@@ -83,14 +83,20 @@ void checkNativeCompressionWorkflow(Check check) {
     const HWND window = app.testMainWindow();
     if (!window) return;
     const HWND model = GetDlgItem(window, 1027), strength = GetDlgItem(window, 1028), tiled = GetDlgItem(window, 1029);
-    check(model && strength && tiled && SendMessageW(strength, CB_GETCOUNT, 0, 0) == 4 &&
+    const HWND automatic = GetDlgItem(window, 1032), adjustment = GetDlgItem(window, 1033), adjustmentReset = GetDlgItem(window, 1034);
+    check(model && strength && tiled && automatic && adjustment && adjustmentReset && SendMessageW(strength, CB_GETCOUNT, 0, 0) == 4 &&
         SendMessageW(strength, CB_GETCURSEL, 0, 0) == 0 && SendMessageW(tiled, BM_GETCHECK, 0, 0) == BST_UNCHECKED,
         "native compression has separate model, default-off strength and explicit default-off tiling controls");
+    check(!IsWindowEnabled(adjustment) && !IsWindowEnabled(adjustmentReset) &&
+        GetWindowTextLengthW(automatic) > 0 && GetWindowTextLengthW(adjustment) > 0,
+        "automatic compression adjustment controls start disabled and visible");
     app.testSetCompressionModels({pack});
     SendMessageW(model, CB_SETCURSEL, 1, 0);
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1027, CBN_SELCHANGE), reinterpret_cast<LPARAM>(model));
     check(IsWindowEnabled(strength) && SendMessageW(strength, CB_GETCURSEL, 0, 0) == 0,
         "selecting a qualified STDF pack alone cannot enable compression restoration");
+    check(!IsWindowEnabled(adjustment) && !app.testSetAutomaticCompression(true),
+        "automatic compression cannot enable without a manual STDF strength");
     application::ProcessingJob job;
     job.source = "C:/fixture/source.mp4"; job.output = "C:/fixture/output.mkv";
     job.modelDirectory = temporary.root / L"rife"; job.runtimeDirectory = temporary.root / L"runtime";
@@ -108,6 +114,34 @@ void checkNativeCompressionWorkflow(Check check) {
             !stored.compressionRestorationTiled,
             "native compression identity and strength survive the queue schema boundary");
     }
+    check(app.testSetAutomaticCompression(true) && IsWindowEnabled(adjustment) && IsWindowEnabled(adjustmentReset),
+        "automatic compression exposes its independent signed relative adjustment");
+    SetWindowTextW(adjustment, L"-25.5");
+    check(app.testExportSettings().automaticCompressionRestoration &&
+        app.testExportSettings().automaticCompressionRestoration->relativeAdjustment == -0.255,
+        "automatic compression relative adjustment is captured independently");
+    job.settings = app.testExportSettings();
+    const auto captured = application::parseJob(job.source,job.output,application::serializeJob(job));
+    check(captured.settings.automaticCompressionRestoration &&
+        captured.settings.automaticCompressionRestoration->relativeAdjustment == -0.255 && !IsWindowEnabled(strength) &&
+        app.testViewState().automaticCompressionRestoration,
+        "automatic compression queue capture pins the visible signed setting and marks manual strength inactive");
+    SetWindowTextW(adjustment, L"101");
+    bool rejected = false;
+    try { (void)app.testExportSettings(); } catch (const std::invalid_argument&) { rejected = true; }
+    check(rejected && app.testViewState().compressionAdjustmentSummary.find(L"偏移无效") != std::wstring::npos,
+        "invalid automatic compression values block capture and explain the range");
+    SendMessageW(adjustmentReset, BM_CLICK, 0, 0);
+    wchar_t neutral[32]{}; GetWindowTextW(adjustment, neutral, 32);
+    check(std::wstring(neutral) == L"0" && app.testExportSettings().automaticCompressionRestoration->relativeAdjustment == 0.0,
+        "automatic compression reset returns to the neutral estimate");
+    app.testSetQueueControlsBusy(true);
+    check(!IsWindowEnabled(adjustment) && !IsWindowEnabled(adjustmentReset) && !IsWindowEnabled(automatic) &&
+        !app.testSetAutomaticCompression(false), "running task locks every automatic compression control");
+    app.testSetQueueControlsBusy(false);
+    check(app.testSetAutomaticCompression(false) && IsWindowEnabled(strength) && !IsWindowEnabled(adjustment),
+        "manual strength is restored after disabling automatic mode");
+    job.settings = app.testExportSettings();
     SendMessageW(tiled, BM_CLICK, 0, 0);
     check(SendMessageW(tiled, BM_GETCHECK, 0, 0) == BST_CHECKED && app.testCaptureSelectedRestoration(job) &&
         job.compressionRestorationTiled &&

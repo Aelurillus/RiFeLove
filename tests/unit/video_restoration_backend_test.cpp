@@ -108,6 +108,27 @@ TEST(VideoRestorationContract, RejectsUnsupportedTaskPlacementAndColorProfile) {
     EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
 }
 
+TEST(VideoRestorationContract, PerFrameDeblockBlendIsBoundedAndTaskSpecific) {
+    auto caps = capabilities();
+    auto input = request();
+    input.deblockStrength = 0.5F;
+    EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
+    caps.tasks = {restoration::Task::deblock};
+    caps.scaleNumerator = caps.scaleDenominator = 1;
+    input.task = restoration::Task::deblock;
+    EXPECT_NO_THROW(restoration::validateRequest(caps,input));
+    input.deblockStrength = 0.0F;
+    EXPECT_NO_THROW(restoration::validateRequest(caps,input));
+    input.deblockStrength = 1.0F;
+    EXPECT_NO_THROW(restoration::validateRequest(caps,input));
+    for (const auto invalid : {-0.1F,1.1F,std::numeric_limits<float>::quiet_NaN()}) {
+        input.deblockStrength = invalid;
+        EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
+    }
+    input.deblockStrength.reset();
+    EXPECT_NO_THROW(restoration::validateRequest(caps,input));
+}
+
 TEST(VideoRestorationContract, RequiresAnOrderedUniformTimestampedColorStableWindow) {
     const auto caps = capabilities();
     auto input = request();

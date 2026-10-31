@@ -28,7 +28,9 @@ struct NativeRenderState {
     std::wstring motionBlurSummary;
     std::wstring restorationSummary;
     std::wstring denoiseModeSummary;
+    std::wstring denoiseAdjustmentSummary;
     std::wstring compressionSummary;
+    std::wstring compressionAdjustmentSummary;
     std::wstring outputSizeSummary;
     std::wstring stage;
     std::size_t outputFrames = 0;
@@ -40,6 +42,7 @@ struct NativeRenderState {
     bool runtimeReady = false;
     bool advancedExpanded = false;
     bool automaticTemporalDenoise = false;
+    bool automaticCompressionRestoration = false;
     float scrollOffset = 0.0F;
 };
 
@@ -47,6 +50,9 @@ struct NativeRenderState {
 // Measurements are device independent; the action dock remains visible while
 // the settings viewport scrolls on small screens or at increased display DPI.
 struct NativeLayout {
+    static constexpr float denoiseAdjustmentHeight = 94.0F;
+    static constexpr float compressionAdjustmentHeight = 140.0F;
+    static constexpr float qualityControlsHeight = denoiseAdjustmentHeight + compressionAdjustmentHeight;
     float width = 1366;
     float height = 768;
     float side = 188;
@@ -59,7 +65,7 @@ struct NativeLayout {
     float resourceButtonsTop = 410;
     bool singleColumn = false;
     float exportOffset = 0;
-    float contentEnd = 778;
+    float contentEnd = 778 + qualityControlsHeight;
     bool compactImport = false;
     float sourceActionsTop = 116;
     float sourceInputTop = 182;
@@ -79,8 +85,8 @@ struct NativeLayout {
         value.left = value.side + (value.singleColumn ? 16.0F : 24.0F);
         value.right = width - (value.singleColumn ? 16.0F : 24.0F);
         value.split = value.singleColumn ? value.right : value.left + (value.right - value.left - 20.0F) * 0.55F;
-        value.exportOffset = value.singleColumn ? 690.0F : 0.0F;
-        value.contentEnd = std::max(778.0F, 626.0F + value.exportOffset);
+        value.exportOffset = value.singleColumn ? 690.0F + qualityControlsHeight : 0.0F;
+        value.contentEnd = std::max(778.0F + qualityControlsHeight, 626.0F + value.exportOffset);
         // Two import actions share their own row when the source card is too
         // narrow to hold both its title and the file/folder buttons.
         value.compactImport = value.split - value.left < 440.0F;

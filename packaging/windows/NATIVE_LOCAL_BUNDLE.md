@@ -31,6 +31,35 @@ pwsh -File packaging/windows/package-native-local.ps1 `
   -OutputDirectory out/RifeLoveNative-local-nvenc
 ```
 
+## 显式基础包与可选实验模型
+
+两个脚本都支持 `-BaseModelsOnly`：只捆绑一个 RIFE 4.25 v3 插帧包和一个 Real-ESRGAN x2plus v2 超分包。FastDVDnet、STDF-R3 和重复的旧 RIFE v2 不再是基础包的前置条件；未选择的实验模型不会读取描述文件、图、许可证或来源/验证侧车，也不会因为源包校验清单仍列出已缺失的实验文件而阻止基础包生成。源清单路径仍须通过格式、重复项和目录边界检查。
+
+```powershell
+# 从现有已验证依赖生成新基础包，不复制源包 data 或恢复记录。
+pwsh -NoProfile -File packaging/windows/package-native-reuse-local.ps1 `
+  -SourceDirectory out/RifeLoveNative-local-20261031-r17 `
+  -BuildDirectory build/native-sdk-regression-x86asm `
+  -OutputDirectory out/RifeLoveNative-local-base `
+  -BaseModelsOnly
+
+# 也可完整打包。基础模式必须使用尚不存在的输出目录。
+pwsh -NoProfile -File packaging/windows/package-native-local.ps1 `
+  -BuildDirectory build/native-sdk-regression-x86asm `
+  -OutputDirectory out/RifeLoveNative-local-base-full `
+  -BaseModelsOnly
+```
+
+在基础模式上按需添加 `-IncludeTemporalRestoration`（FastDVDnet）和/或 `-IncludeCompressionRestoration`（STDF-R3）。这些开关只选择随包文件，不启用处理功能；实验模型仍默认关闭。显式选择但缺失或校验失败的模型会报错。完整打包使用对应 `-...ModelDirectory` 或默认缓存；复用打包先使用源清单声明的模型，源包缺少时使用显式目录，STDF 的显式 Include 开关也可使用默认缓存。单独指定目录不会让基础模式自动选择该模型。
+
+未传 `-BaseModelsOnly` 时保持兼容：完整打包仍默认包含四模型；四模型源包复用仍保留四模型，旧三模型源包仍可按原逻辑复用。复用已有三模型包时，只有显式 STDF 目录或 `-IncludeCompressionRestoration` 才新增 STDF。默认行为没有改成基础包。
+
+基础包的 `config/defaults.json` 将未捆绑模型路径设为 `null`、模式设为 `not-bundled`；`PACKAGE-MANIFEST.json` 只列实际选中模型，并记录 `modelBundleMode`。模型目录、独立许可证、校验清单和 README 同步过滤，默认插帧选择重置为 RIFE v3。基础模式不迁移源包历史恢复记录、队列或用户添加模型；源文件不被修改或删除。完整脚本的基础模式只允许全新输出目录，避免把删减模型选择作用于已有用户数据；默认完整刷新仍沿用原来的 data 保留机制。
+
+旧 v2 不再无条件读取：完整刷新先用固定历史图 SHA-256 检查旧 `data/` 中精确路径、ID、版本和 hash 的恢复引用，仅命中时才读取并校验旧包。干净目录无需存在 v2 缓存。此变化不会改写、迁移或删除开发队列、Windows 用户数据库或恢复记录；用户现有的同名数据仍保留原位置。
+
+CPU-only 打包契约回归：`pwsh -NoProfile -File tests/packaging/native_model_reuse_test.ps1`。微型假 ONNX/侧车覆盖基础与四模型模式、独立实验选择、缺失/损坏排除模型、实际硬链接复制、空目标 data、源队列/恢复数据 hash 不变及按引用延迟验证 v2。夹具会保留；该测试不启动产品、不下载权重，也不代表模型画质、GPU 或正式发行包已验收。
+
 推理运行库发现顺序为 `-InferenceRuntimeDirectory`、环境变量 `RIFELOVE_TENSORRT_RUNTIME_DIR`、选定构建的同名 CMake 缓存。MinGW 运行库发现顺序为 `-MinGWBinDirectory`、环境变量 `RIFELOVE_MINGW_BIN`、由该构建缓存与生成记录核定的实际编译器所在目录；不通过 PATH 搜索 `g++`，不再假定用户名、Scoop 或 TensorRT 的安装位置。缺失依赖时脚本给出对应参数/环境变量提示，环境变量无效不会静默退回其他安装。
 
 模型来源与包内目录是两套明确的路径：`-SuperResolutionModelDirectory` 默认读取本机缓存 `models/cache/realesrgan-x2plus-sdr8-candidate-v2`，经过描述文件、模型图、许可证和侧车校验后，统一打包为 `models/realesrgan-x2plus-sdr8-v2`；这不是遗漏模型或第二份权重。`-TemporalRestorationModelDirectory` 与 `-CompressionRestorationModelDirectory` 分别默认读取同名 FastDVDnet / STDF-R3 缓存，包内保留规范 basename。不得把缓存目录名直接写入包内 defaults。

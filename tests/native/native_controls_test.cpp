@@ -15,6 +15,7 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -531,8 +532,9 @@ void checkOutputFieldAlignment(HWND window);
 void checkQualityFieldSpacing(HWND window) {
     const UINT dpi = GetDpiForWindow(window);
     const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
-    const std::array<int, 5> controls{1024, 1017, 1018, 1027, 1028};
-    const std::array<int, 5> labelTops{331, 397, 463, 529, 529};
+    const int offset = static_cast<int>(NativeLayout::denoiseAdjustmentHeight);
+    const std::array<int, 7> controls{1024, 1030, 1031, 1017, 1018, 1027, 1028};
+    const std::array<int, 7> labelTops{331, 397, 397, 397 + offset, 463 + offset, 529 + offset, 529 + offset};
     for (std::size_t index = 0; index < controls.size(); ++index) {
         const HWND control = GetDlgItem(window, controls[index]);
         check(control != nullptr, "find restoration field for label spacing");
@@ -544,6 +546,22 @@ void checkQualityFieldSpacing(HWND window) {
             "restoration selector leaves the entire painted label and spacing visible");
         check(rect.bottom <= px(labelTops[index] + 64),
             "restoration selector does not cover the following label or section divider");
+    }
+}
+
+void checkAutomaticAdjustmentContract() {
+    using rifelove::native_desktop::nativeRelativeAdjustment;
+    struct Value { const wchar_t* text; double expected; };
+    for (const auto& example : std::array<Value, 7>{{
+        {L"-100", -1.0}, {L"-25.5", -0.255}, {L"0", 0.0}, {L"+0", 0.0},
+        {L"12.5", 0.125}, {L"+100", 1.0}, {L"1e2", 1.0}}})
+        check(std::abs(nativeRelativeAdjustment(example.text) - example.expected) < 1e-12,
+            "signed relative percentage preserves full engine range and fractional values");
+    for (const auto* invalid : {L"", L" ", L"+", L"+-1", L"--1", L"-100.01", L"100.01", L"nan", L"inf", L"2%", L"10x", L"１"}) {
+        bool rejected = false;
+        try { (void)nativeRelativeAdjustment(invalid); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        check(rejected, "invalid relative percentage is rejected rather than clamped or silently defaulted");
     }
 }
 
@@ -1351,6 +1369,7 @@ int wmain(int argc, wchar_t** argv) {
     rifelove::native_test::checkNativeCompressionContract(check);
     rifelove::native_test::checkNativeDataDirectories(check);
     checkAspectPreservingOutputTargets();
+    checkAutomaticAdjustmentContract();
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (argc == 1) {
         rifelove::native_test::checkLocalModelCenter(check);

@@ -1,9 +1,11 @@
 #include "restoration/dynamic_control.hpp"
 #include "restoration/temporal_window.hpp"
 #include "restoration/noise_estimate.hpp"
+#include "restoration/compression_estimate.hpp"
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <random>
 
@@ -300,4 +302,185 @@ TEST(AutomaticGaussianDenoise, RelativeControlsAreLimitedToTheActualModelDomain)
     EXPECT_THROW((void)AutomaticDenoiseController(settings),std::invalid_argument);
     settings.relativeAdjustment = 0; settings.minimumConfidence = -0.1;
     EXPECT_THROW((void)AutomaticDenoiseController(settings),std::invalid_argument);
+}
+
+namespace {
+template<class Pixel> media::DecodedFrame compressionFrame(int width, int height, Pixel pixel) {
+    media::DecodedFrame image{};
+    image.width = width; image.height = height; image.timestamp = Rational(0);
+    image.color.pixelFormat = "yuv420p"; image.color.bitDepth = 8;
+    image.color.primaries = "bt709"; image.color.transfer = "bt709";
+    image.color.matrix = "bt709"; image.color.range = "tv";
+    const int stride = width + 13;
+    auto allocation = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(stride) * static_cast<std::size_t>(height) + 29,255);
+    auto* data = allocation->data() + 29;
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
+        data[static_cast<std::size_t>(y) * static_cast<std::size_t>(stride) + static_cast<std::size_t>(x)] = static_cast<std::uint8_t>(pixel(x,y));
+    image.planes[0] = {data,stride,media::FramePlaneExtent{allocation->data(),allocation->size(),29}};
+    image.storage = allocation;
+    return image;
+}
+}
+
+TEST(CompressionArtifactAnalysis, DetectsDistributedBlockEvidenceWithoutReadingStridePadding) {
+    const auto image = compressionFrame(256,192,[](int x,int y) { return 100 + ((x / 8 + y / 8) % 2) * 16; });
+    const auto estimate = estimateCompressionArtifacts(image);
+    EXPECT_GT(estimate.strength,0.8);
+    EXPECT_GT(estimate.confidence,0.9);
+    EXPECT_LE(estimate.samples,16384U);
+    const auto clean = estimateCompressionArtifacts(compressionFrame(256,192,[](int x,int y) { return 60 + x / 4 + y / 4; }));
+    EXPECT_DOUBLE_EQ(clean.strength,0.0);
+    EXPECT_GT(clean.confidence,0.9);
+}
+
+TEST(CompressionArtifactAnalysis, IsolatedEdgesBusyTextureClippingAndSmallSamplesAreNotTrusted) {
+    const auto edge = compressionFrame(256,192,[](int x,int) { return x < 128 ? 100 : 116; });
+    EXPECT_LT(estimateCompressionArtifacts(edge).confidence,0.6);
+    const auto texture = compressionFrame(256,192,[](int x,int y) { return (x + y) % 2 ? 88 : 136; });
+    EXPECT_DOUBLE_EQ(estimateCompressionArtifacts(texture).confidence,0.0);
+    const auto clipped = compressionFrame(256,192,[](int,int) { return 16; });
+    EXPECT_DOUBLE_EQ(estimateCompressionArtifacts(clipped).confidence,0.0);
+    const auto small = compressionFrame(16,16,[](int,int) { return 100; });
+    EXPECT_DOUBLE_EQ(estimateCompressionArtifacts(small).confidence,0.0);
+}
+
+TEST(CompressionArtifactAnalysis, SubsampledFullHdCoversBlockPhasesInBothOrientations) {
+    for (const auto dimensions : {std::array{1920,1080},std::array{1080,1920}}) {
+        for (const int block : {8,16,32}) for (const int phase : {0,8}) {
+            SCOPED_TRACE(::testing::Message() << dimensions[0] << 'x' << dimensions[1]
+                << " block=" << block << " phase=" << phase);
+            const auto image = compressionFrame(dimensions[0],dimensions[1],[=](int x,int y) {
+                return 100 + (((x + phase) / block + (y + phase) / block) % 2) * 16;
+            });
+            const auto estimate = estimateCompressionArtifacts(image);
+            EXPECT_GT(estimate.strength,0.25);
+            EXPECT_GT(estimate.confidence,0.9);
+            EXPECT_LE(estimate.samples,16384U);
+            const auto replayed = estimateCompressionArtifacts(image);
+            EXPECT_DOUBLE_EQ(replayed.strength,estimate.strength);
+            EXPECT_DOUBLE_EQ(replayed.confidence,estimate.confidence);
+            EXPECT_EQ(replayed.samples,estimate.samples);
+        }
+    }
+}
+
+TEST(CompressionArtifactAnalysis, SubsampledFullHdKeepsCleanEdgesAndTextureConservative) {
+    for (const auto dimensions : {std::array{1920,1080},std::array{1080,1920}}) {
+        SCOPED_TRACE(::testing::Message() << dimensions[0] << 'x' << dimensions[1]);
+        const auto clean = estimateCompressionArtifacts(compressionFrame(dimensions[0],dimensions[1],[](int x,int y) {
+            return 80 + x / 32 + y / 32;
+        }));
+        EXPECT_DOUBLE_EQ(clean.strength,0.0);
+        EXPECT_GT(clean.confidence,0.9);
+        EXPECT_LE(clean.samples,16384U);
+        for (const bool vertical : {false,true}) {
+            SCOPED_TRACE(::testing::Message() << "vertical=" << vertical);
+            const int edge = (dimensions[vertical ? 0 : 1] / 16) * 8;
+            const auto isolated = estimateCompressionArtifacts(compressionFrame(dimensions[0],dimensions[1],[=](int x,int y) {
+                return (vertical ? x : y) < edge ? 100 : 116;
+            }));
+            EXPECT_DOUBLE_EQ(isolated.confidence,0.0);
+            const auto stripes = estimateCompressionArtifacts(compressionFrame(dimensions[0],dimensions[1],[=](int x,int y) {
+                return 100 + (((vertical ? x : y) / 16) % 2) * 16;
+            }));
+            EXPECT_DOUBLE_EQ(stripes.confidence,0.0);
+        }
+        const auto texture = estimateCompressionArtifacts(compressionFrame(dimensions[0],dimensions[1],[](int x,int y) {
+            return (x + y) % 2 ? 88 : 136;
+        }));
+        EXPECT_DOUBLE_EQ(texture.confidence,0.0);
+    }
+}
+
+TEST(CompressionArtifactAnalysis, RequiresProvenUnmodifiedSdrLumaAndHonorsCancellation) {
+    auto image = compressionFrame(128,128,[](int,int) { return 100; });
+    image.planes[0].extent.reset();
+    EXPECT_THROW((void)estimateCompressionArtifacts(image),std::invalid_argument);
+    image = compressionFrame(128,128,[](int,int) { return 100; });
+    --image.planes[0].extent->dataOffset;
+    EXPECT_THROW((void)estimateCompressionArtifacts(image),std::invalid_argument);
+    image = compressionFrame(128,128,[](int,int) { return 100; });
+    image.planes[0].extent->allocationBytes = 30;
+    EXPECT_THROW((void)estimateCompressionArtifacts(image),std::invalid_argument);
+    image = compressionFrame(128,128,[](int,int) { return 100; });
+    image.color.transfer = "smpte2084";
+    EXPECT_THROW((void)estimateCompressionArtifacts(image),std::invalid_argument);
+    image = compressionFrame(128,128,[](int,int) { return 100; });
+    std::stop_source stop; stop.request_stop();
+    EXPECT_THROW((void)estimateCompressionArtifacts(image,stop.get_token()),std::runtime_error);
+    const auto large = estimateCompressionArtifacts(compressionFrame(1024,768,[](int,int) { return 100; }));
+    EXPECT_LE(large.samples,16384U);
+}
+
+TEST(AutomaticCompressionRestoration, UsesExactSourceTimeResetsAtCutsAndBypassesAmbiguousFrames) {
+    AutomaticCompressionSettings settings;
+    settings.maximumStrengthChangePerSecond = 0.3;
+    AutomaticCompressionController control(settings);
+    EXPECT_FLOAT_EQ(control.update(0,{0.2,1.0,1000}).strength,0.2F);
+    const auto next = control.update(Rational(1,30),{0.9,1.0,1000});
+    EXPECT_GT(next.strength,0.2F);
+    EXPECT_LE(next.strength,0.210001F);
+    const auto ambiguous = control.update(Rational(2,30),{0.9,0.1,1000});
+    EXPECT_FALSE(ambiguous.confident); EXPECT_FLOAT_EQ(ambiguous.strength,0.0F);
+    EXPECT_FLOAT_EQ(control.update(Rational(3,30),{0.8,1.0,1000},true).strength,0.8F);
+    EXPECT_FLOAT_EQ(control.update(Rational(4,30),{0.0,1.0,1000},true).strength,0.0F);
+    EXPECT_THROW((void)control.update(Rational(4,30),{0.3,1.0,1000}),std::invalid_argument);
+}
+
+TEST(AutomaticCompressionRestoration, FullHdSourceEvidenceResetsAtCutsAndBypassesTexture) {
+    const auto blocked = estimateCompressionArtifacts(compressionFrame(1920,1080,[](int x,int y) {
+        return 100 + ((x / 16 + y / 16) % 2) * 16;
+    }));
+    const auto clean = estimateCompressionArtifacts(compressionFrame(1920,1080,[](int,int) { return 100; }));
+    const auto texture = estimateCompressionArtifacts(compressionFrame(1920,1080,[](int x,int y) {
+        return (x + y) % 2 ? 88 : 136;
+    }));
+    ASSERT_GT(blocked.confidence,0.9);
+    ASSERT_GT(blocked.strength,0.5);
+    ASSERT_GT(clean.confidence,0.9);
+    ASSERT_DOUBLE_EQ(texture.confidence,0.0);
+    AutomaticCompressionController control(AutomaticCompressionSettings{});
+    const auto initial = control.update(0,blocked);
+    EXPECT_TRUE(initial.confident);
+    EXPECT_FLOAT_EQ(initial.strength,static_cast<float>(blocked.strength));
+    EXPECT_GT(control.update(Rational(1,30),clean).strength,0.0F);
+    const auto cleanCut = control.update(Rational(2,30),clean,true);
+    EXPECT_TRUE(cleanCut.confident);
+    EXPECT_FLOAT_EQ(cleanCut.strength,0.0F);
+    const auto uncertain = control.update(Rational(3,30),texture);
+    EXPECT_FALSE(uncertain.confident);
+    EXPECT_FLOAT_EQ(uncertain.strength,0.0F);
+    const auto blockCut = control.update(Rational(4,30),blocked,true);
+    EXPECT_TRUE(blockCut.confident);
+    EXPECT_FLOAT_EQ(blockCut.strength,static_cast<float>(blocked.strength));
+}
+
+TEST(AutomaticCompressionRestoration, RelativeControlsCannotManufactureMissingEvidence) {
+    AutomaticCompressionSettings settings; settings.relativeAdjustment = -1;
+    AutomaticCompressionController disabled(settings);
+    EXPECT_FLOAT_EQ(disabled.update(0,{0.5,1.0,1000}).strength,0.0F);
+    settings.relativeAdjustment = 1;
+    AutomaticCompressionController strongest(settings);
+    EXPECT_FLOAT_EQ(strongest.update(0,{0.5,1.0,1000}).strength,1.0F);
+    EXPECT_FLOAT_EQ(strongest.update(1,{}).strength,0.0F);
+    settings.minimumConfidence = 0;
+    AutomaticCompressionController zeroThreshold(settings);
+    EXPECT_FALSE(zeroThreshold.update(0,{}).confident);
+    settings.relativeAdjustment = 1.1;
+    EXPECT_THROW((void)AutomaticCompressionController(settings),std::invalid_argument);
+    settings.relativeAdjustment = 0; settings.smoothingSeconds = 0;
+    EXPECT_THROW((void)AutomaticCompressionController(settings),std::invalid_argument);
+}
+
+TEST(AutomaticCompressionRestoration, FullSourceReplayReproducesVfrSceneAndAmbiguityHistory) {
+    std::vector<AutomaticCompressionValue> expected;
+    AutomaticCompressionController uninterrupted(AutomaticCompressionSettings{});
+    for (int i = 0; i < 60; ++i)
+        expected.push_back(uninterrupted.update(Rational(i * i + i,1000),{i % 2 ? 0.2 : 0.8,i % 7 ? 1.0 : 0.0,1000},i == 27));
+    AutomaticCompressionController replayed(AutomaticCompressionSettings{});
+    for (int i = 0; i < 60; ++i) {
+        const auto value = replayed.update(Rational(i * i + i,1000),{i % 2 ? 0.2 : 0.8,i % 7 ? 1.0 : 0.0,1000},i == 27);
+        EXPECT_FLOAT_EQ(value.strength,expected[static_cast<std::size_t>(i)].strength);
+        EXPECT_EQ(value.confident,expected[static_cast<std::size_t>(i)].confident);
+    }
 }

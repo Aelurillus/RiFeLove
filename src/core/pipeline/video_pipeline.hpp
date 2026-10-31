@@ -5,6 +5,7 @@
 #include "media/video_writer.hpp"
 #include "restoration/video_restoration_backend.hpp"
 #include "restoration/noise_estimate.hpp"
+#include "restoration/compression_estimate.hpp"
 
 #include <functional>
 #include <cmath>
@@ -68,6 +69,10 @@ struct PipelineSettings {
     // analyzer/settings/replay-policy identity and rebuild its state by
     // decoding the original software source timeline from the beginning.
     std::optional<restoration::AutomaticDenoiseSettings> automaticTemporalDenoise;
+    // Experimental opt-in, schema 12. Original luma block evidence chooses the
+    // STDF blend independently at each source PTS. Ambiguous frames bypass.
+    // The configured fixed STDF strength remains the manual-mode fallback.
+    std::optional<restoration::AutomaticCompressionSettings> automaticCompressionRestoration;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     // Runtime-only queue integration. It is intentionally omitted from the
     // serialized user job configuration.
@@ -165,6 +170,13 @@ struct PipelineResult {
     std::size_t automaticDenoiseAnalyzedFrames = 0;
     std::size_t automaticDenoiseConfidentFrames = 0;
     std::size_t automaticDenoiseAppliedFrames = 0;
+    std::string compressionRestorationModelId;
+    std::string compressionRestorationBackend;
+    std::string compressionRestorationFallbackReason;
+    bool automaticCompressionRestorationActive = false;
+    std::size_t automaticCompressionAnalyzedFrames = 0;
+    std::size_t automaticCompressionConfidentFrames = 0;
+    std::size_t automaticCompressionAppliedFrames = 0;
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;

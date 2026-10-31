@@ -13,6 +13,7 @@
 #include "native_model_store.hpp"
 #include "native_data_directory.hpp"
 #include "native_compression_settings.hpp"
+#include "native_dynamic_settings.hpp"
 #include "core/pipeline/video_pipeline.hpp"
 
 #include <array>
@@ -66,6 +67,9 @@ public:
     HWND testShowModelCenter() { showModelCenter(); return modelCenterWindow_; }
     HWND testShowComparison() { showComparison(); return comparisonWindow_ ? comparisonWindow_->window() : nullptr; }
     bool testSetAutomaticDenoise(bool enabled) { return setAutomaticDenoise(enabled); }
+    bool testSetAutomaticCompression(bool enabled) { return setAutomaticCompression(enabled); }
+    // Exercise the real busy-state control policy without starting a worker.
+    void testSetQueueControlsBusy(bool busy) { queueSessionActive_.store(busy); updateView(); }
     bool testCaptureRestorationDescriptors(application::ProcessingJob& job,
         const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
         const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false) {
@@ -124,6 +128,11 @@ private:
     static constexpr int kCompressionRestorationCombo = 1027;
     static constexpr int kCompressionStrengthCombo = 1028;
     static constexpr int kCompressionTilingCheck = 1029;
+    static constexpr int kDenoiseAdjustmentEdit = 1030;
+    static constexpr int kDenoiseAdjustmentReset = 1031;
+    static constexpr int kAutomaticCompression = 1032;
+    static constexpr int kCompressionAdjustmentEdit = 1033;
+    static constexpr int kCompressionAdjustmentReset = 1034;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -264,6 +273,9 @@ private:
     void configureAutomaticDenoise();
     bool setAutomaticDenoise(bool enabled);
     [[nodiscard]] bool automaticDenoiseAvailable() const;
+    void configureAutomaticCompression();
+    bool setAutomaticCompression(bool enabled);
+    [[nodiscard]] bool automaticCompressionAvailable() const;
     void refreshTaskHistory();
     void handleHistoryResult(NativeHistoryResult result);
 #endif
@@ -303,6 +315,11 @@ private:
     HWND historyButton_ = nullptr;
     HWND comparisonButton_ = nullptr;
     HWND automaticDenoiseButton_ = nullptr;
+    HWND denoiseAdjustmentEdit_ = nullptr;
+    HWND denoiseAdjustmentResetButton_ = nullptr;
+    HWND automaticCompressionButton_ = nullptr;
+    HWND compressionAdjustmentEdit_ = nullptr;
+    HWND compressionAdjustmentResetButton_ = nullptr;
     HWND sourceLabel_ = nullptr;
     HWND outputLabel_ = nullptr;
     HWND rateLabel_ = nullptr;
@@ -330,6 +347,7 @@ private:
     std::atomic<bool> closing_{false};
     bool advancedExpanded_ = false;
     bool automaticTemporalDenoise_ = false;
+    bool automaticCompressionRestoration_ = false;
     struct ExportPresetControls {
         int rateSelection = 1;
         int encoderSelection = 0;

@@ -61,4 +61,5 @@ jobs:
         run: >-
           python -m pytest tests/model_validation/test_stdf_tiling.py
           tests/model_validation/test_stdf_tiling_reference.py
-          tests/model_validation/test_stdf_local_pack.py -q
+          tests/model_validation/test_stdf_local_pack.py
+          tests/model_validation/test_stdf_real_luma_quality.py -q

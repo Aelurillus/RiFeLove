@@ -42,6 +42,8 @@ void validateCompressionSource(const std::string& source, int requestedVideoStre
 PipelineResult executeProcessingJob(const ProcessingJob& job, const std::function<void(ProcessingEvent)>& progress,
     std::stop_token stop, PauseGate& pause,
     const std::function<void(const ProcessingIdentity&,PipelineSettings&)>& configurePipeline) {
+    if (job.settings.automaticCompressionRestoration && job.compressionRestorationModelDirectory.empty())
+        throw std::invalid_argument("Automatic compression restoration requires a selected local STDF model");
     if (job.compressionRestorationTiled && job.compressionRestorationModelDirectory.empty())
         throw std::invalid_argument("Tiled compression restoration requires an explicitly selected STDF model");
     const auto started = std::chrono::steady_clock::now();

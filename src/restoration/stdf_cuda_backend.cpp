@@ -520,7 +520,7 @@ private:
             request.sceneBounds->firstIndex, request.sceneBounds->lastIndex, request.sceneBounds->serial};
         const auto source = request.context.at(request.centerIndex);
         const auto started = std::chrono::steady_clock::now();
-        const auto output = runner_->restore(request, extents, scene, config_.strength);
+        const auto output = runner_->restore(request, extents, scene, request.deblockStrength.value_or(config_.strength));
         Result result{output, std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()};
         validateResult(capabilities_, request, result);
         for (const std::size_t plane : {std::size_t{1}, std::size_t{2}})

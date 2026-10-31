@@ -64,6 +64,10 @@ struct Request {
     // FastDVDnet's explicit Gaussian-noise conditioning, in 8-bit levels.
     // It is not a deblock/detail/deblur control. Required by that adapter only.
     std::optional<float> denoiseSigma255;
+    // Optional source-rate STDF blend override. Zero bypasses inference; absent
+    // retains the backend's fixed configured blend. This is not a detail or
+    // Gaussian-noise control and is valid only for the deblock task.
+    std::optional<float> deblockStrength;
     // Populated by TemporalWindow for source-rate temporal requests. Existing
     // callers may omit it; STDF and other edge-sensitive adapters must require
     // it before accepting a boundary-padded request.

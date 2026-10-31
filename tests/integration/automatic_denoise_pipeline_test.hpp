@@ -56,6 +56,7 @@ public:
         rifelove::Rational timestamp;
         std::uint64_t sceneSerial = 0;
         std::size_t sceneFirstIndex = 0;
+        float deblockStrength = -1.0F;
     };
     rifelove::restoration::Capabilities capabilities() const override {
         using namespace rifelove::restoration;
@@ -67,10 +68,22 @@ public:
         if (!request.sceneBounds) throw std::runtime_error("Compression fixture requires scene bounds");
         const auto& center = request.context[request.centerIndex];
         requests.push_back({request.centerIndex,request.context.size(),request.missingFramesBefore,
-            request.missingFramesAfter,center.index,*center.timestamp,request.sceneBounds->serial,request.sceneBounds->firstIndex});
+            request.missingFramesAfter,center.index,*center.timestamp,request.sceneBounds->serial,request.sceneBounds->firstIndex,
+            request.deblockStrength.value_or(-1.0F)});
         if (order) order->push_back("compression:" + std::to_string(center.index));
+        auto output = center;
+        if (conditioningChangesPixels && request.deblockStrength.value_or(0.0F) > 0.0F) {
+            auto pixels = rifelove::media::prepareRifeSdr(center);
+            // Protocol fixture: make the real per-source control observable in
+            // decoded pixels; this is deliberately not a restoration model.
+            for (auto& value : pixels.pixels)
+                value = std::clamp(value + *request.deblockStrength / 12.0F,0.0F,1.0F);
+            output = rifelove::media::restoreRifeSdr(pixels);
+            output.index = center.index; output.timestamp = center.timestamp; output.duration = center.duration;
+            output.timestampRecovered = center.timestampRecovered;
+        }
         std::promise<rifelove::restoration::Result> promise;
-        promise.set_value({center,0.0});
+        promise.set_value({std::move(output),0.0});
         return promise.get_future();
     }
     std::vector<RequestRecord> requests;
@@ -78,6 +91,7 @@ public:
     std::vector<rifelove::restoration::Task> tasks{rifelove::restoration::Task::deblock};
     std::size_t framesBefore = 3;
     std::size_t framesAfter = 3;
+    bool conditioningChangesPixels = false;
 };
 
 class AutomaticDenoisePipeline : public MotionBlurPipeline {
@@ -142,6 +156,117 @@ protected:
         }
         const auto original = readExposurePixels(source);
         EXPECT_EQ(temporal->timestamps,original.timestamps);
+    }
+
+    void verifyAutomaticCompression() {
+        const auto source = directory / "automatic-compression-source.mkv";
+        writeExposureSource(source,30,12,6,[](int index,int x,int y,int) {
+            if (index >= 6) return 180;
+            return 100 + ((x / 8 + y / 8) % 2) * 16;
+        },AV_PIX_FMT_YUV420P);
+        ExposureLinearBackend backend(*device);
+        auto compression = std::make_shared<RecordingCompressionBackend>();
+        auto config = settings();
+        config.motionBlur.enabled = false;
+        config.compressionRestorationBackend = compression;
+        config.automaticCompressionRestoration.emplace();
+        config.automaticCompressionRestoration->minimumConfidence = 0.2;
+        config.automaticCompressionRestoration->maximumStrengthChangePerSecond = 10.0;
+        const auto output = directory / "automatic-compression.mkv";
+        const auto result = rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend);
+        EXPECT_TRUE(result.automaticCompressionRestorationActive);
+        EXPECT_EQ(result.automaticCompressionAnalyzedFrames,12U);
+        EXPECT_EQ(result.automaticCompressionConfidentFrames,12U);
+        EXPECT_GT(result.automaticCompressionAppliedFrames,0U);
+        ASSERT_EQ(compression->requests.size(),12U);
+        EXPECT_TRUE(std::all_of(compression->requests.begin(),compression->requests.begin() + 6,
+            [](const auto& request) { return request.deblockStrength >= 0.0F; }));
+        EXPECT_TRUE(std::all_of(compression->requests.begin() + 6,compression->requests.end(),
+            [](const auto& request) { return request.deblockStrength == 0.0F; }));
+        const auto report = nlohmann::json::parse(rifelove::application::serializeResult(result));
+        EXPECT_TRUE(report.at("automaticCompressionRestoration").at("active").get<bool>());
+        EXPECT_EQ(report.at("automaticCompressionRestoration").at("analyzedSourceFrames"),12U);
+        EXPECT_EQ(result.sourceDecodeAcceleration,"software");
+    }
+
+    void verifyAutomaticCompressionReplay() {
+        const auto source = directory / "compression-replay-source.mkv";
+        writeExposureSource(source,30,12,6,[](int index,int x,int y,int) {
+            return index < 6 ? 96 + ((x / 8 + y / 8) % 2) * (6 + index * 4) : 180;
+        },AV_PIX_FMT_YUV420P);
+        ExposureLinearBackend backend(*device);
+        auto config = settings(); config.motionBlur.enabled = false;
+        config.automaticCompressionRestoration.emplace();
+        config.automaticCompressionRestoration->minimumConfidence = 0.2;
+        config.automaticCompressionRestoration->relativeAdjustment = -0.25;
+        const auto checkpoint = [&](const std::string& prefix,std::vector<rifelove::media::VideoSegmentInput>& segments) {
+            rifelove::PipelineCheckpoint value;
+            value.framesPerSegment = 4;
+            value.restorationIdentityVerified = true; // Manifest tests bind the algorithm/model/settings separately.
+            value.completedSegments = segments;
+            value.segmentPath = [&,prefix](std::uint64_t index) {
+                return (directory / (prefix + "-segment-" + std::to_string(index) + ".mkv")).string();
+            };
+            value.commitSegment = [&segments](std::uint64_t index,std::uint64_t,std::uint64_t,const rifelove::media::VideoSegmentInput& segment) {
+                EXPECT_EQ(index,segments.size()); segments.push_back(segment);
+            };
+            return value;
+        };
+        const auto makeCompression = [] {
+            auto value = std::make_shared<RecordingCompressionBackend>();
+            value->conditioningChangesPixels = true;
+            return value;
+        };
+        std::vector<rifelove::media::VideoSegmentInput> referenceSegments;
+        const auto referenceCompression = makeCompression();
+        config.compressionRestorationBackend = referenceCompression;
+        config.checkpoint = checkpoint("compression-reference",referenceSegments);
+        const auto referencePath = directory / "compression-reference.mkv";
+        const auto reference = rifelove::interpolateVideo(source.string(),referencePath.string(),config,*device,backend);
+        const auto referencePixels = readExposurePixels(referencePath);
+        ASSERT_EQ(referenceCompression->requests.size(),12U);
+        EXPECT_GT(reference.automaticCompressionAppliedFrames,0U);
+        EXPECT_NE(referenceCompression->requests[0].deblockStrength,referenceCompression->requests[5].deblockStrength);
+        for (const std::size_t interruptAfter : {10U,18U}) {
+            SCOPED_TRACE(interruptAfter);
+            const auto prefix = "compression-resumed-" + std::to_string(interruptAfter);
+            const auto destination = directory / (prefix + ".mkv");
+            std::vector<rifelove::media::VideoSegmentInput> committed;
+            config.compressionRestorationBackend = makeCompression();
+            config.checkpoint = checkpoint(prefix,committed);
+            std::stop_source stop;
+            EXPECT_ANY_THROW((void)rifelove::interpolateVideo(source.string(),destination.string(),config,*device,backend,
+                [&](const rifelove::PipelineProgress& event) {
+                    if (event.outputFrames >= interruptAfter) stop.request_stop();
+                },stop.get_token()));
+            ASSERT_TRUE(stop.stop_requested());
+            ASSERT_FALSE(committed.empty());
+            ASSERT_FALSE(std::filesystem::exists(destination));
+            const auto reused = std::accumulate(committed.begin(),committed.end(),std::size_t{},
+                [](std::size_t count,const auto& segment) { return count + segment.contract.frameCount; });
+            const auto resumedCompression = makeCompression();
+            config.compressionRestorationBackend = resumedCompression;
+            config.checkpoint = checkpoint(prefix,committed);
+            const auto resumed = rifelove::interpolateVideo(source.string(),destination.string(),config,*device,backend);
+            ASSERT_EQ(resumedCompression->requests.size(),referenceCompression->requests.size());
+            for (std::size_t index = 0; index < resumedCompression->requests.size(); ++index) {
+                const auto& actual = resumedCompression->requests[index];
+                const auto& expected = referenceCompression->requests[index];
+                EXPECT_EQ(actual.sourceIndex,expected.sourceIndex);
+                EXPECT_EQ(actual.timestamp,expected.timestamp);
+                EXPECT_EQ(actual.sceneSerial,expected.sceneSerial);
+                EXPECT_EQ(actual.deblockStrength,expected.deblockStrength);
+            }
+            EXPECT_EQ(resumed.sourceDecodeAcceleration,"software");
+            EXPECT_EQ(resumed.automaticCompressionAnalyzedFrames,12U);
+            EXPECT_EQ(resumed.automaticCompressionAppliedFrames,reference.automaticCompressionAppliedFrames);
+            EXPECT_EQ(resumed.reusedFrames,reused);
+            EXPECT_EQ(resumed.processedFrames + resumed.reusedFrames,24U);
+            EXPECT_EQ(resumed.video.endExclusive,reference.video.endExclusive);
+            const auto pixels = readExposurePixels(destination);
+            EXPECT_EQ(pixels.timestamps,referencePixels.timestamps);
+            EXPECT_EQ(pixels.frames,referencePixels.frames);
+        }
     }
 
     void verifyConditioningAndTiming() {

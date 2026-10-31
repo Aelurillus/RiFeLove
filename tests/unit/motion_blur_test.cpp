@@ -11,6 +11,7 @@
 // integration coverage does not require a second build configuration.
 #include "../integration/motion_blur_pipeline_test.hpp"
 #include "../integration/automatic_denoise_pipeline_test.hpp"
+#include "../integration/restoration_diagnostics_pipeline_test.hpp"
 
 using rifelove::Rational;
 using rifelove::quality::PairAction;
@@ -25,10 +26,14 @@ TEST_F(MotionBlurPipeline, InsufficientFullShutterBudgetFailsWithoutPublishingOr
 TEST_F(MotionBlurPipeline, CancellationAfterProcessingRemovesUnpublishedOutput) { verifyCancellation(); }
 TEST_F(AutomaticDenoisePipeline, ConditionsRealTemporalRequestsResetsAtCutsAndPreservesTimeline) { verifyConditioningAndTiming(); }
 TEST_F(AutomaticDenoisePipeline, CompressionDeblockRunsBeforeFastDvdnetAndPreservesScenePts) { verifyCompressionStage(); }
+TEST_F(AutomaticDenoisePipeline, AutomaticCompressionAnalyzesSourcePtsAndBypassesCleanScene) { verifyAutomaticCompression(); }
+TEST_F(AutomaticDenoisePipeline, AutomaticCompressionReplaysControlsAndDecodedPixelsAcrossCheckpointInterruptions) { verifyAutomaticCompressionReplay(); }
 TEST_F(AutomaticDenoisePipeline, CompressionDeblockDrainsOneFrameSceneAtClipEdges) { verifyCompressionShortClip(); }
 TEST_F(AutomaticDenoisePipeline, RejectsUnboundCheckpointAndAbsentModelBeforePublication) { verifyConfigurationSafety(); }
 TEST_F(AutomaticDenoisePipeline, CancelsWithoutPublishingPartialOutput) { verifyAutomaticCancellation(); }
 TEST_F(AutomaticDenoisePipeline, ReplaysSourcePtsAndConditioningExactlyAcrossCheckpointInterruptions) { verifyCheckpointReplay(); }
+TEST_F(RestorationDiagnosticsPipeline, RefreshesQualifiedCompressionDiagnosticsAfterEofDrainAndBeforePublication) { verifyCompressionDiagnostics(false); }
+TEST_F(RestorationDiagnosticsPipeline, AutomaticZeroBypassKeepsCompressionProfileVerificationPending) { verifyCompressionDiagnostics(true); }
 
 TEST(MotionBlurSampling, UsesExactSymmetricExposureOffsets) {
     const auto samples = motionBlurSampleTimes(Rational(1,60),Rational(60),180,4);

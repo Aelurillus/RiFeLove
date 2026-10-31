@@ -242,7 +242,7 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     job.settings.automaticTemporalDenoise = rifelove::restoration::AutomaticDenoiseSettings{-0.25,0.7,12.0,0.8};
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),11);
+    EXPECT_EQ(document.at("schemaVersion"),12);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),1);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("replayPolicy"),"software-source-pts-from-start-v1");
     const auto restored = parseJob(job.source,job.output,encoded);
@@ -268,6 +268,54 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     EXPECT_FALSE(fixed.settings.automaticTemporalDenoise);
     EXPECT_FLOAT_EQ(fixed.settings.temporalDenoiseSigma255,17.5F);
 }
+
+TEST(AutomaticCompressionConfiguration, IsExplicitOptInAndPinsEveryAnalyzerAndReplayParameter) {
+    auto job = configuredJob();
+    const auto disabled = nlohmann::json::parse(serializeJob(job));
+    EXPECT_TRUE(disabled.at("automaticCompressionRestoration").is_null());
+    job.settings.automaticCompressionRestoration.emplace();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationStrength = 0.75F;
+    job.settings.automaticCompressionRestoration = rifelove::restoration::AutomaticCompressionSettings{-0.25,0.7,0.4,0.8};
+    const auto encoded = serializeJob(job);
+    const auto document = nlohmann::json::parse(encoded);
+    EXPECT_EQ(document.at("schemaVersion"),12);
+    const auto& automatic = document.at("automaticCompressionRestoration");
+    EXPECT_EQ(automatic.at("algorithmVersion"),2);
+    EXPECT_EQ(automatic.at("analyzer"),"sdr8-luma-block8-stratified-v2");
+    EXPECT_EQ(automatic.at("replayPolicy"),"software-source-pts-from-start-v1");
+    const auto restored = parseJob(job.source,job.output,encoded);
+    ASSERT_TRUE(restored.settings.automaticCompressionRestoration);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticCompressionRestoration->relativeAdjustment,-0.25);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticCompressionRestoration->smoothingSeconds,0.7);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticCompressionRestoration->maximumStrengthChangePerSecond,0.4);
+    EXPECT_DOUBLE_EQ(restored.settings.automaticCompressionRestoration->minimumConfidence,0.8);
+    EXPECT_EQ(serializeJob(restored),encoded);
+    for (const auto* field : {"algorithmVersion","analyzer","replayPolicy","relativeAdjustment","smoothingSeconds","maximumStrengthChangePerSecond","minimumConfidence"}) {
+        auto bad = document; bad["automaticCompressionRestoration"].erase(field);
+        EXPECT_ANY_THROW((void)parseJob(job.source,job.output,bad.dump())) << field;
+    }
+    auto bad = document; bad["automaticCompressionRestoration"]["algorithmVersion"] = 1;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document;
+    bad["automaticCompressionRestoration"]["algorithmVersion"] = 1;
+    bad["automaticCompressionRestoration"]["analyzer"] = "sdr8-luma-block8-excess-v1";
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["automaticCompressionRestoration"]["analyzer"] = "unvalidated-codec-detector";
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["automaticCompressionRestoration"]["replayPolicy"] = "seek";
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["automaticCompressionRestoration"]["relativeAdjustment"] = 1.1;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["schemaVersion"] = 11;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad.erase("automaticCompressionRestoration");
+    EXPECT_ANY_THROW((void)parseJob(job.source,job.output,bad.dump()));
+    bad = document; bad["schemaVersion"] = 11; bad.erase("automaticCompressionRestoration");
+    EXPECT_FALSE(parseJob(job.source,job.output,bad.dump()).settings.automaticCompressionRestoration);
+}
 TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndLegacySchemasDefaultFullFrame) {
     auto job = configuredJob();
     job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
@@ -275,7 +323,7 @@ TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndLegacySchema
     job.compressionRestorationStrength = 0.75F;
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),11);
+    EXPECT_EQ(document.at("schemaVersion"),12);
     EXPECT_EQ(document.at("compressionRestorationModelDirectory"),"C:/models/stdf-r3");
     EXPECT_EQ(document.at("expectedCompressionRestorationDescriptorSha256"),std::string(64,'d'));
     EXPECT_FLOAT_EQ(document.at("compressionRestorationStrength").get<float>(),0.75F);
@@ -309,7 +357,7 @@ TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndLegacySchema
 TEST(ProcessingConfiguration, SchemaElevenAlwaysRecordsAnExplicitCompressionExecutionPolicy) {
     auto job = configuredJob();
     const auto disabled = nlohmann::json::parse(serializeJob(job));
-    EXPECT_EQ(disabled.at("schemaVersion"),11);
+    EXPECT_EQ(disabled.at("schemaVersion"),12);
     ASSERT_TRUE(disabled.at("compressionRestorationTiled").is_boolean());
     EXPECT_FALSE(disabled.at("compressionRestorationTiled").get<bool>());
     EXPECT_EQ(disabled.at("compressionRestorationPolicy").dump(),serializeCompressionRestorationPolicy(false));

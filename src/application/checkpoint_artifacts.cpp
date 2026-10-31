@@ -159,7 +159,7 @@ bool validCompressionRuntime(const Json& manifest) {
             if (!compressionEnabled && (!directory.empty() || !descriptor.empty() || strength != 0.0)) return false;
         }
         if (schema >= 11) {
-            if (schema != 11 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
+            if (schema > 12 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
             tiled = job.at("compressionRestorationTiled").get<bool>();
             if (!job.contains("compressionRestorationPolicy") ||
                 job.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(tiled)) return false;
@@ -169,11 +169,27 @@ bool validCompressionRuntime(const Json& manifest) {
             (job.contains("compressionRestorationPolicy") && job.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(false))) {
             return false;
         }
+        if (schema >= 12) {
+            if (!job.contains("automaticCompressionRestoration")) return false;
+            const auto& automatic = job.at("automaticCompressionRestoration");
+            if (!automatic.is_null()) {
+                if (!compressionEnabled || !automatic.is_object() || automatic.size() != 7 ||
+                    automatic.at("algorithmVersion") != restoration::automaticCompressionAlgorithmVersion ||
+                    automatic.at("analyzer") != restoration::automaticCompressionAnalyzerId ||
+                    automatic.at("replayPolicy") != restoration::automaticCompressionReplayPolicy) return false;
+                (void)restoration::AutomaticCompressionController({automatic.at("relativeAdjustment").get<double>(),
+                    automatic.at("smoothingSeconds").get<double>(),automatic.at("maximumStrengthChangePerSecond").get<double>(),
+                    automatic.at("minimumConfidence").get<double>()});
+            }
+        } else if (job.contains("automaticCompressionRestoration") && !job.at("automaticCompressionRestoration").is_null()) return false;
     }
     const auto found = manifest.find("compressionRestorationRuntime");
-    if (found == manifest.end()) return !tiled;
+    if (found == manifest.end()) return !tiled && !compressionEnabled;
     if (!configuredJob || !found->is_object()) return false;
     const auto& runtime = *found;
+    const auto* automatic = configuredJob && configuredJob->contains("automaticCompressionRestoration") &&
+        !configuredJob->at("automaticCompressionRestoration").is_null() ? &configuredJob->at("automaticCompressionRestoration") : nullptr;
+    if (automatic ? (!runtime.contains("automaticControl") || runtime.at("automaticControl") != *automatic) : runtime.contains("automaticControl")) return false;
     if (configuredJob && (!compressionEnabled ||
         runtime.value("descriptorSha256",std::string()) != configuredJob->at("expectedCompressionRestorationDescriptorSha256").get<std::string>() ||
         runtime.value("strength",-1.0) != configuredJob->at("compressionRestorationStrength").get<double>())) return false;
@@ -404,6 +420,20 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
             requireMediaPipelineIdentity(saved,expected);
         if (!validCompressionRuntime(actual) || !validCompressionRuntime(wanted)) return false;
         if (actual == wanted) return true;
+        // Schema 12 chooses per-source automatic STDF blending. Only its
+        // explicit disabled value can adopt historical fixed-strength output.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 12 && actual.at("job").value("schemaVersion",0) < 12) {
+            if (!wanted.at("job").at("automaticCompressionRestoration").is_null() ||
+                (actual.at("job").contains("automaticCompressionRestoration") && !actual.at("job").at("automaticCompressionRestoration").is_null())) return false;
+            auto previous = wanted;
+            previous["job"].erase("automaticCompressionRestoration");
+            previous["job"]["schemaVersion"] = 11;
+            auto priorSaved = actual;
+            priorSaved["job"].erase("automaticCompressionRestoration");
+            return manifestMatches(priorSaved.dump(),previous.dump());
+        }
         // Schema 11 makes the algorithm choice explicit. A historical task can
         // migrate only to the exact legacy full-frame policy, preserving its
         // old runtime signature and all existing model/strength/replay checks.

@@ -255,6 +255,12 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             throw std::invalid_argument("The compression restoration backend must support scene and clip boundary padding");
         requireRestorationProfile(*compressionCapabilities);
     }
+    std::optional<restoration::AutomaticCompressionController> automaticCompression;
+    if (settings.automaticCompressionRestoration) {
+        if (!compressionBackend)
+            throw std::invalid_argument("Automatic compression restoration requires the STDF deblock backend");
+        automaticCompression.emplace(*settings.automaticCompressionRestoration);
+    }
     std::optional<restoration::AutomaticDenoiseController> automaticDenoise;
     if (settings.automaticTemporalDenoise) {
         if (!temporalBackend)
@@ -390,29 +396,43 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.timings.encoderSetupSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - encoderSetupStarted).count();
     result.modelId = capabilities.modelId; result.backend = capabilities.backend;
     result.adapterId = capabilities.adapterId; result.adapterVersion = capabilities.adapterVersion;
-    if (outputRateCapabilities) {
-        result.restorationModelId = outputRateCapabilities->modelId;
-        result.restorationBackend = outputRateCapabilities->runtimeBackend;
-        result.restorationFallbackReason = outputRateCapabilities->fallbackReason;
-        result.restorationScaleNumerator = outputRateCapabilities->scaleNumerator;
-        result.restorationScaleDenominator = outputRateCapabilities->scaleDenominator;
-    }
-    if (temporalCapabilities) {
-        result.temporalRestorationModelId = temporalCapabilities->modelId;
-        result.temporalRestorationBackend = temporalCapabilities->runtimeBackend;
-        result.temporalRestorationFallbackReason = temporalCapabilities->fallbackReason;
-        result.temporalRestorationScaleNumerator = temporalCapabilities->scaleNumerator;
-        result.temporalRestorationScaleDenominator = temporalCapabilities->scaleDenominator;
-        // Preserve the old result contract for callers that only understand a
-        // single temporal restoration backend.
-        if (!outputRateCapabilities) {
-            result.restorationModelId = result.temporalRestorationModelId;
-            result.restorationBackend = result.temporalRestorationBackend;
-            result.restorationFallbackReason = result.temporalRestorationFallbackReason;
-            result.restorationScaleNumerator = result.temporalRestorationScaleNumerator;
-            result.restorationScaleDenominator = result.temporalRestorationScaleDenominator;
+    const auto refreshRestorationResult = [&] {
+        // Keep the validated structural snapshots above fixed for scheduling,
+        // but read live diagnostics: a backend can qualify its CUDA path only
+        // after executing its first restoration request.
+        if (outputBackend) {
+            const auto actual = outputBackend->capabilities();
+            result.restorationModelId = actual.modelId;
+            result.restorationBackend = actual.runtimeBackend;
+            result.restorationFallbackReason = actual.fallbackReason;
+            result.restorationScaleNumerator = actual.scaleNumerator;
+            result.restorationScaleDenominator = actual.scaleDenominator;
         }
-    }
+        if (temporalBackend) {
+            const auto actual = temporalBackend->capabilities();
+            result.temporalRestorationModelId = actual.modelId;
+            result.temporalRestorationBackend = actual.runtimeBackend;
+            result.temporalRestorationFallbackReason = actual.fallbackReason;
+            result.temporalRestorationScaleNumerator = actual.scaleNumerator;
+            result.temporalRestorationScaleDenominator = actual.scaleDenominator;
+            // Preserve the old result contract for callers that only understand a
+            // single temporal restoration backend.
+            if (!outputBackend) {
+                result.restorationModelId = result.temporalRestorationModelId;
+                result.restorationBackend = result.temporalRestorationBackend;
+                result.restorationFallbackReason = result.temporalRestorationFallbackReason;
+                result.restorationScaleNumerator = result.temporalRestorationScaleNumerator;
+                result.restorationScaleDenominator = result.temporalRestorationScaleDenominator;
+            }
+        }
+        if (compressionBackend) {
+            const auto actual = compressionBackend->capabilities();
+            result.compressionRestorationModelId = actual.modelId;
+            result.compressionRestorationBackend = actual.runtimeBackend;
+            result.compressionRestorationFallbackReason = actual.fallbackReason;
+        }
+    };
+    refreshRestorationResult();
     result.inferenceFallbackReason = capabilities.fallbackReason; result.encoderFallbackReason = fallback;
     std::optional<CachedFrame> left;
     std::optional<CachedFrame> right;
@@ -438,12 +458,19 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::optional<restoration::TemporalWindow> temporalWindow;
     if (temporalCapabilities) temporalWindow.emplace(*temporalCapabilities);
     result.automaticTemporalDenoiseActive = automaticDenoise.has_value();
+    result.automaticCompressionRestorationActive = automaticCompression.has_value();
     struct SourceNoiseObservation {
         std::size_t index;
         restoration::GaussianNoiseEstimate estimate;
         bool sceneCut;
     };
     std::deque<SourceNoiseObservation> sourceNoise;
+    struct SourceCompressionObservation {
+        std::size_t index;
+        restoration::CompressionEstimate estimate;
+        bool sceneCut;
+    };
+    std::deque<SourceCompressionObservation> sourceCompression;
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
         if (progress) {
             const double seconds = elapsed();
@@ -744,6 +771,15 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 throw std::logic_error("Automatic denoise source observations exceeded the bounded restoration pipeline window");
             ++result.automaticDenoiseAnalyzedFrames;
         }
+        if (automaticCompression) {
+            auto estimate = measure(result.timings.sceneAnalysisSeconds,[&] {
+                return restoration::estimateCompressionArtifacts(frame,stop);
+            });
+            sourceCompression.push_back({frame.index,estimate,cut});
+            if (sourceCompression.size() > 64)
+                throw std::logic_error("Automatic compression observations exceeded the bounded restoration pipeline window");
+            ++result.automaticCompressionAnalyzedFrames;
+        }
         temporalPreviousPrepared = std::move(prepared);
         return cut;
     };
@@ -789,6 +825,16 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             request.stop = stop;
             if (!request.sceneBounds)
                 throw std::logic_error("Compression restoration request is missing its source scene identity");
+            if (automaticCompression) {
+                const auto& center = request.context[request.centerIndex];
+                if (sourceCompression.empty() || sourceCompression.front().index != center.index)
+                    throw std::logic_error("Automatic compression observation does not match the source-frame window");
+                const auto value = automaticCompression->update(*center.timestamp,sourceCompression.front().estimate,sourceCompression.front().sceneCut);
+                request.deblockStrength = value.strength;
+                if (value.confident) ++result.automaticCompressionConfidentFrames;
+                if (value.strength > 0.0F) ++result.automaticCompressionAppliedFrames;
+                sourceCompression.pop_front();
+            }
             restoration::validateRequest(*compressionCapabilities,request);
             const auto scene = *request.sceneBounds;
             auto restored = measure(result.timings.restorationSeconds,[&] {
@@ -869,6 +915,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         }
     }
     if (!sourceNoise.empty()) throw std::logic_error("Automatic denoise observations were not fully drained");
+    if (!sourceCompression.empty()) throw std::logic_error("Automatic compression observations were not fully drained");
     if (motionBlurActive ? blurFrames.empty() : !left) throw std::runtime_error("Source produced no video frames");
     if (!motionBlurActive && right) pair(*left,*pairAnalysis,*right);
     // Copy the decoder reference: draining/pruning the shutter window below
@@ -908,6 +955,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         throw std::runtime_error("No valid final output frame boundary");
     if (pending && pendingTime)
         measure(result.timings.frameEncodeSeconds,[&] { writePending(*pending,*pendingTime,end - *pendingTime); });
+    // All restoration windows and output-rate requests have drained. Refresh
+    // before checkpoint publication persists the result as well as returning
+    // it. An all-zero bypass keeps the backend's unqualified diagnostics.
+    refreshRestorationResult();
     notify("validating",pendingTime.value_or(end));
     const auto finishStarted = std::chrono::steady_clock::now();
     const auto validateTemporary = [&](const std::string& temporary) {

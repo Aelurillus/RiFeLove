@@ -67,6 +67,8 @@ set(rifelove_processing_identity_sources
   src/media/video_writer.hpp
   src/restoration/dynamic_control.cpp
   src/restoration/dynamic_control.hpp
+  src/restoration/compression_estimate.cpp
+  src/restoration/compression_estimate.hpp
   src/restoration/model_pack.cpp
   src/restoration/model_pack.hpp
   src/restoration/noise_estimate.cpp

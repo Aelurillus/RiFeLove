@@ -646,6 +646,14 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
             add(L"动态曝光参数");
         }
     }
+    if (automaticTemporalDenoise_) {
+        try { (void)nativeRelativeAdjustment(controlText(denoiseAdjustmentEdit_)); }
+        catch (const std::exception&) { add(L"自动降噪相对偏移（−100%…+100%）"); }
+    }
+    if (automaticCompressionRestoration_) {
+        try { (void)nativeRelativeAdjustment(controlText(compressionAdjustmentEdit_)); }
+        catch (const std::exception&) { add(L"自动压缩相对偏移（−100%…+100%）"); }
+    }
     const int temporalRestorationIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const int restorationIndex = restorationCombo_ ? static_cast<int>(SendMessageW(restorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const int outputSizeIndex = outputSizeCombo_ ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
@@ -808,11 +816,27 @@ void NativeApp::createControls() {
     historyButton_ = createButton(L"任务历史", kTaskHistory);
     comparisonButton_ = createButton(L"逐帧比较", kComparison);
     automaticDenoiseButton_ = createButton(L"自动降噪：关", kAutomaticDenoise);
+    denoiseAdjustmentEdit_ = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kDenoiseAdjustmentEdit)), instance_, nullptr);
+    SendMessageW(denoiseAdjustmentEdit_, EM_SETLIMITTEXT, 24, 0);
+    SendMessageW(denoiseAdjustmentEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"-100 … +100；0 跟随自动"));
+    denoiseAdjustmentResetButton_ = createButton(L"归零", kDenoiseAdjustmentReset);
+    automaticCompressionButton_ = createButton(L"自动压缩：关", kAutomaticCompression);
+    compressionAdjustmentEdit_ = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCompressionAdjustmentEdit)), instance_, nullptr);
+    SendMessageW(compressionAdjustmentEdit_, EM_SETLIMITTEXT, 24, 0);
+    SendMessageW(compressionAdjustmentEdit_, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"-100 … +100；0 跟随自动"));
+    compressionAdjustmentResetButton_ = createButton(L"归零", kCompressionAdjustmentReset);
+    EnableWindow(denoiseAdjustmentEdit_, FALSE);
+    EnableWindow(denoiseAdjustmentResetButton_, FALSE);
+    EnableWindow(compressionAdjustmentEdit_, FALSE);
+    EnableWindow(compressionAdjustmentResetButton_, FALSE);
     ShowWindow(rejectionDetailsButton_, SW_HIDE);
 #ifndef RIFELOVE_NATIVE_HAS_PROCESSING
     ShowWindow(historyButton_, SW_HIDE);
     EnableWindow(comparisonButton_, FALSE);
     EnableWindow(automaticDenoiseButton_, FALSE);
+    EnableWindow(automaticCompressionButton_, FALSE);
 #endif
     for (const auto checkbox : {motionBlurCheck_, compressionTilingCheck_}) {
         const auto checkboxProc = SetWindowLongPtrW(checkbox, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::checkboxProcedure));
@@ -876,7 +900,7 @@ void NativeApp::createControls() {
     ShowWindow(outputSizeLabel_, SW_HIDE);
     ShowWindow(outputSizeCombo_, SW_HIDE);
     setFonts();
-    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) {
+    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) {
         if (!control) continue;
         const auto original = SetWindowLongPtrW(control, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::scrollChildProcedure));
         SetPropW(control, L"RifeLoveScrollChildProc", reinterpret_cast<HANDLE>(original));
@@ -892,7 +916,7 @@ void NativeApp::setFonts() {
     font_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         L"Microsoft YaHei UI");
-    const std::array<HWND, 39> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 44> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
         sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_, platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_};
     for (const auto control : controls) if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
     for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) {
@@ -977,19 +1001,27 @@ void NativeApp::layoutControls() {
     move(sourceButton_, layout.compactImport ? left : layout.split - 126, layout.sourceActionsTop, 106, 34);
     move(sourceEdit_, left + 10, layout.sourceInputTop, leftWidth - 20, 42);
     move(automaticDenoiseButton_, layout.split - 130, 300, 110, 30);
-    // Keep each field below its painted label (331/397/463 DIP). The old
-    // 11-DIP offset let the HWND cover the lower half of the label text.
+    // Each field leaves its painted label unobstructed. Automatic adjustment
+    // owns a separate row rather than squeezing a signed value into a model
+    // selector or changing the unrelated spatial/compression controls.
     moveCombo(temporalRestorationCombo_, left, 354, leftWidth, 36);
-    moveCombo(restorationCombo_, left, 420, leftWidth, 36);
-    moveCombo(outputSizeCombo_, left, 486, leftWidth, 36);
-    moveCombo(compressionRestorationCombo_, left, 552, (leftWidth - 8) * 0.68F, 36);
-    moveCombo(compressionStrengthCombo_, left + (leftWidth - 8) * 0.68F + 8, 552, (leftWidth - 8) * 0.32F, 36);
-    move(compressionTilingCheck_, left, 590, leftWidth, 30);
-    move(motionBlurCheck_, left, 684, leftWidth - 100, 32);
-    move(advancedButton_, layout.split - 110, 684, 90, 32);
+    move(denoiseAdjustmentEdit_, left + 10, 420, leftWidth - 110, 30);
+    move(denoiseAdjustmentResetButton_, layout.split - 100, 420, 80, 30);
+    const float qualityOffset = NativeLayout::denoiseAdjustmentHeight;
+    moveCombo(restorationCombo_, left, 420 + qualityOffset, leftWidth, 36);
+    moveCombo(outputSizeCombo_, left, 486 + qualityOffset, leftWidth, 36);
+    moveCombo(compressionRestorationCombo_, left, 552 + qualityOffset, (leftWidth - 8) * 0.68F, 36);
+    moveCombo(compressionStrengthCombo_, left + (leftWidth - 8) * 0.68F + 8, 552 + qualityOffset, (leftWidth - 8) * 0.32F, 36);
+    move(compressionTilingCheck_, left, 590 + qualityOffset, leftWidth, 30);
+    move(automaticCompressionButton_, layout.split - 140, 630 + qualityOffset, 120, 30);
+    move(compressionAdjustmentEdit_, left + 10, 693 + qualityOffset, leftWidth - 110, 30);
+    move(compressionAdjustmentResetButton_, layout.split - 100, 693 + qualityOffset, 80, 30);
+    const float finalQualityOffset = NativeLayout::qualityControlsHeight;
+    move(motionBlurCheck_, left, 684 + finalQualityOffset, leftWidth - 100, 32);
+    move(advancedButton_, layout.split - 110, 684 + finalQualityOffset, 90, 32);
     const bool blurEnabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    move(shutterEdit_, left + 68, 732, 64, 30, advancedExpanded_);
-    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 732, leftWidth < 280 ? 50 : 54, 30, advancedExpanded_);
+    move(shutterEdit_, left + 68, 732 + finalQualityOffset, 64, 30, advancedExpanded_);
+    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 732 + finalQualityOffset, leftWidth < 280 ? 50 : 54, 30, advancedExpanded_);
     EnableWindow(shutterEdit_, blurEnabled);
     EnableWindow(samplesEdit_, blurEnabled);
     const float exportY = layout.exportOffset;
@@ -1100,7 +1132,7 @@ void NativeApp::ensureControlVisible(HWND control) {
 }
 
 bool NativeApp::focusNextControl(bool reverse) {
-    const std::array<HWND, 28> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_,
+    const std::array<HWND, 33> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
         motionBlurCheck_, advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
         modelButton_, runtimeButton_, comparisonButton_, historyButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
     const auto found = std::find(order.begin(), order.end(), GetFocus());
@@ -1135,6 +1167,9 @@ LRESULT CALLBACK NativeApp::scrollChildProcedure(HWND window, UINT message, WPAR
 void NativeApp::updateView() {
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (rejectionDetailsButton_) ShowWindow(rejectionDetailsButton_, queueRejections_.empty() ? SW_HIDE : SW_SHOW);
+    // Reset unavailable-model opt-ins before composing summaries or captured
+    // settings so a removed model never leaves one stale automatic frame.
+    updateRestorationControls();
 #endif
     state_.sourcePath = pathText(currentSource());
     state_.outputPath = pathText(currentOutput());
@@ -1166,7 +1201,9 @@ void NativeApp::updateView() {
         : L"自然曝光：关闭；可手动开启并修改参数";
     state_.restorationSummary = L"降噪：关闭 · 超分：关闭";
     state_.denoiseModeSummary = L"可选降噪：关闭 · 默认项见模型中心";
+    state_.denoiseAdjustmentSummary = L"请选择降噪模型并启用自动模式；0% 跟随自动。";
     state_.compressionSummary = L"默认关闭 · CUDA / BT.709 SDR8 · 仅验证至 384 × 256";
+    state_.compressionAdjustmentSummary = L"自动模式关闭；手动强度保持独立。";
     state_.outputSizeSummary = L"原始输出尺寸";
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     const int temporalIndex = temporalRestorationCombo_ ? static_cast<int>(SendMessageW(temporalRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
@@ -1185,6 +1222,15 @@ void NativeApp::updateView() {
     if (hasTemporal) state_.denoiseModeSummary = automaticTemporalDenoise_
         ? L"实验自动高斯降噪 · 软件解码 / 恢复重放"
         : L"固定 σ25 · 自动估计关闭（仍降噪）";
+    if (hasTemporal) {
+        state_.denoiseAdjustmentSummary = automaticTemporalDenoise_
+            ? L"−100%…+100% · 0 跟随自动；负值更轻，正值更强。"
+            : L"自动模式关闭：固定 σ25；相对偏移不生效。";
+        if (automaticTemporalDenoise_) {
+            try { (void)nativeRelativeAdjustment(controlText(denoiseAdjustmentEdit_)); }
+            catch (const std::exception&) { state_.denoiseAdjustmentSummary = L"偏移无效：请输入 −100 到 +100 的数值；0 跟随自动。"; }
+        }
+    }
     const int compressionStrengthIndex = compressionStrengthCombo_ ? static_cast<int>(SendMessageW(compressionStrengthCombo_, CB_GETCURSEL, 0, 0)) : 0;
     if (compressionRestorationModels_.empty())
         state_.compressionSummary = L"关闭 · 请在本地模型中心登记已验证 STDF；仅支持 CUDA / SDR8 / 384 × 256";
@@ -1193,16 +1239,23 @@ void NativeApp::updateView() {
         state_.compressionSummary = L"STDF " + std::to_wstring(static_cast<int>(nativeCompressionStrength(compressionStrengthIndex) * 100)) +
             (tiled ? L"% · 高清分块评估 / 较慢 · CUDA / BT.709 SDR8" : L"% · 整帧评估 · CUDA / BT.709 SDR8 / ≤384 × 256");
         state_.restorationSummary += L" · 压缩修复：STDF";
+        state_.compressionAdjustmentSummary = automaticCompressionRestoration_
+            ? L"−100%…+100% · 0 跟随自动；低置信度帧自动跳过。"
+            : L"自动模式关闭：使用上方手动强度；相对偏移不生效。";
+        if (automaticCompressionRestoration_) {
+            try { (void)nativeRelativeAdjustment(controlText(compressionAdjustmentEdit_)); }
+            catch (const std::exception&) { state_.compressionAdjustmentSummary = L"偏移无效：请输入 −100 到 +100 的数值；0 跟随自动。"; }
+        }
     }
     const int outputSizeIndex = outputSizeCombo_ ? static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0)) : 0;
     if (outputSizeIndex > 0) state_.outputSizeSummary = outputTargetLabel(outputSizeIndex);
 #endif
     state_.advancedExpanded = advancedExpanded_;
     state_.automaticTemporalDenoise = automaticTemporalDenoise_;
+    state_.automaticCompressionRestoration = automaticCompressionRestoration_;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     state_.sourceReady = sourceInspected_;
     if (modelLabel_) SetWindowTextW(modelLabel_, state_.modelReady && state_.runtimeReady ? L"模型和运行库 · 已就绪" : L"模型和运行库 · 待检查");
-    updateRestorationControls();
 #endif
     if (window_) {
         InvalidateRect(window_, nullptr, FALSE);
@@ -1234,7 +1287,8 @@ void NativeApp::updateButtonState() {
 #endif
     for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_,
         rateCustomEdit_, encoderCombo_, platformCombo_, modelButton_, runtimeButton_, motionBlurCheck_,
-        temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) if (control) EnableWindow(control, !serviceBusy);
+        temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_,
+        automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, restorationCombo_, outputSizeCombo_}) if (control) EnableWindow(control, !serviceBusy);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     EnableWindow(automaticDenoiseButton_, !serviceBusy);
 #endif
@@ -1243,6 +1297,11 @@ void NativeApp::updateButtonState() {
     updateModelDetails();
 #else
     if (modelButton_) EnableWindow(modelButton_, FALSE);
+    EnableWindow(denoiseAdjustmentEdit_, FALSE);
+    EnableWindow(denoiseAdjustmentResetButton_, FALSE);
+    EnableWindow(automaticCompressionButton_, FALSE);
+    EnableWindow(compressionAdjustmentEdit_, FALSE);
+    EnableWindow(compressionAdjustmentResetButton_, FALSE);
 #endif
 }
 
@@ -1783,6 +1842,7 @@ bool NativeApp::automaticDenoiseAvailable() const {
 }
 
 bool NativeApp::setAutomaticDenoise(bool enabled) {
+    if (!modelChangesAllowed()) return false;
     if (enabled && !automaticDenoiseAvailable()) return false;
     automaticTemporalDenoise_ = enabled;
     updateView();
@@ -1790,6 +1850,7 @@ bool NativeApp::setAutomaticDenoise(bool enabled) {
 }
 
 void NativeApp::configureAutomaticDenoise() {
+    if (!modelChangesAllowed()) return;
     if (!automaticDenoiseAvailable()) {
         MessageBoxW(window_, L"请先在可选降噪中选择已校验的 FastDVDnet。\n\n实验性自动高斯降噪默认关闭，不是压缩修复或一般细节恢复。",
             L"实验性自动高斯降噪", MB_OK | MB_ICONINFORMATION);
@@ -1799,10 +1860,41 @@ void NativeApp::configureAutomaticDenoise() {
         L"实验性自动高斯降噪仅估计近似高斯噪声并调节 FastDVDnet。\n\n"
         L"可能将胶片颗粒误判为噪声并损失细节；不能修复压缩伪影，也不等于一般细节恢复。\n"
         L"当前实现强制软件解码；断点恢复时需要从头重放。默认关闭。\n\n"
-        L"是：启用实验性自动模式\n否：使用固定 σ25（仍降噪）\n取消：保持当前设置\n\n"
+        L"是：启用实验性自动模式（可独立设置相对偏移；0 跟随自动）\n否：使用固定 σ25（仍降噪）\n取消：保持当前设置\n\n"
         L"若要完全关闭降噪，请在“可选降噪”中选择关闭。",
         L"实验性自动高斯降噪", MB_YESNOCANCEL | MB_ICONINFORMATION | (automaticTemporalDenoise_ ? MB_DEFBUTTON1 : MB_DEFBUTTON2));
     if (choice == IDYES || choice == IDNO) (void)setAutomaticDenoise(choice == IDYES);
+}
+
+bool NativeApp::automaticCompressionAvailable() const {
+    const int model = static_cast<int>(SendMessageW(compressionRestorationCombo_, CB_GETCURSEL, 0, 0));
+    const int strength = static_cast<int>(SendMessageW(compressionStrengthCombo_, CB_GETCURSEL, 0, 0));
+    return model > 0 && model <= static_cast<int>(compressionRestorationModels_.size()) && strength > 0 && strength <= 3 &&
+        restoration::supportsStdfCudaModel(compressionRestorationModels_[static_cast<std::size_t>(model - 1)]);
+}
+
+bool NativeApp::setAutomaticCompression(bool enabled) {
+    if (!modelChangesAllowed() || (enabled && !automaticCompressionAvailable())) return false;
+    automaticCompressionRestoration_ = enabled;
+    updateView();
+    return true;
+}
+
+void NativeApp::configureAutomaticCompression() {
+    if (!modelChangesAllowed()) return;
+    if (!automaticCompressionAvailable()) {
+        MessageBoxW(window_, L"请先选择已校验 STDF 模型并将手动强度设为 25%、50% 或 100%。\n\n自动模式会独立分析源亮度块状不连续；默认关闭，不等于通用压缩修复或细节增强。",
+            L"实验性自动压缩修复", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const int choice = MessageBoxW(window_,
+        L"实验性自动压缩修复只检测原始 SDR8 亮度中的分布式 8 像素块状不连续，逐源帧调节 STDF 混合强度。\n\n"
+        L"纹理可能误判；低置信度帧直接跳过。它不是编码器/QP 检测器，也不是细节增强模型。\n"
+        L"强制软件解码；恢复任务需从原始时间轴开头重放。默认关闭。\n\n"
+        L"是：启用自动（偏移 0 跟随估计，−100% 更轻，+100% 更强）\n"
+        L"否：返回所选手动强度\n取消：保持当前设置",
+        L"实验性自动压缩修复", MB_YESNOCANCEL | MB_ICONINFORMATION | (automaticCompressionRestoration_ ? MB_DEFBUTTON1 : MB_DEFBUTTON2));
+    if (choice == IDYES || choice == IDNO) (void)setAutomaticCompression(choice == IDYES);
 }
 
 void NativeApp::refreshTaskHistory() {
@@ -1844,10 +1936,17 @@ void NativeApp::handleHistoryResult(NativeHistoryResult result) {
 
 void NativeApp::applyExportControls(PipelineSettings& settings) const {
     settings.automaticTemporalDenoise.reset();
+    settings.automaticCompressionRestoration.reset();
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     if (automaticTemporalDenoise_) {
         if (!automaticDenoiseAvailable()) throw std::invalid_argument("experimental automatic Gaussian denoise requires a selected validated FastDVDnet model");
         settings.automaticTemporalDenoise.emplace();
+        settings.automaticTemporalDenoise->relativeAdjustment = nativeRelativeAdjustment(controlText(denoiseAdjustmentEdit_));
+    }
+    if (automaticCompressionRestoration_) {
+        if (!automaticCompressionAvailable()) throw std::invalid_argument("automatic compression restoration requires an enabled, qualified STDF model");
+        settings.automaticCompressionRestoration.emplace();
+        settings.automaticCompressionRestoration->relativeAdjustment = nativeRelativeAdjustment(controlText(compressionAdjustmentEdit_));
     }
 #endif
     const int rateIndex = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
@@ -2610,9 +2709,18 @@ void NativeApp::syncRestorationSelectors() {
 
 void NativeApp::updateRestorationControls() {
     if (!temporalRestorationCombo_ || !restorationCombo_ || !outputSizeCombo_) return;
-    if (!automaticDenoiseAvailable()) automaticTemporalDenoise_ = false;
+    if (!automaticDenoiseAvailable()) {
+        automaticTemporalDenoise_ = false;
+        if (denoiseAdjustmentEdit_ && controlText(denoiseAdjustmentEdit_) != L"0") SetWindowTextW(denoiseAdjustmentEdit_, L"0");
+    }
     state_.automaticTemporalDenoise = automaticTemporalDenoise_;
     if (automaticDenoiseButton_) SetWindowTextW(automaticDenoiseButton_, automaticTemporalDenoise_ ? L"自动降噪：开*" : L"自动降噪：关");
+    if (!automaticCompressionAvailable()) {
+        automaticCompressionRestoration_ = false;
+        if (compressionAdjustmentEdit_ && controlText(compressionAdjustmentEdit_) != L"0") SetWindowTextW(compressionAdjustmentEdit_, L"0");
+    }
+    state_.automaticCompressionRestoration = automaticCompressionRestoration_;
+    if (automaticCompressionButton_) SetWindowTextW(automaticCompressionButton_, automaticCompressionRestoration_ ? L"自动压缩：开*" : L"自动压缩：关");
     const int priorSize = static_cast<int>(SendMessageW(outputSizeCombo_, CB_GETCURSEL, 0, 0));
     if (SendMessageW(outputSizeCombo_, CB_GETCOUNT, 0, 0) >= 3) {
         SendMessageW(outputSizeCombo_, CB_DELETESTRING, 2, 0);
@@ -2627,12 +2735,18 @@ void NativeApp::updateRestorationControls() {
     const bool hasModel = restorationIndex > 0 && restorationIndex <= static_cast<int>(spatialRestorationModels_.size());
     const bool supportsFixedSize = hasModel && isUpscaleRestoration(spatialRestorationModels_[static_cast<std::size_t>(restorationIndex - 1)]);
     const bool editable = modelChangesAllowed();
+    EnableWindow(automaticDenoiseButton_, editable);
+    EnableWindow(denoiseAdjustmentEdit_, editable && automaticTemporalDenoise_);
+    EnableWindow(denoiseAdjustmentResetButton_, editable && automaticTemporalDenoise_);
     EnableWindow(temporalRestorationCombo_, editable && !temporalRestorationModels_.empty());
     const int compressionIndex = compressionRestorationCombo_ ? static_cast<int>(SendMessageW(compressionRestorationCombo_, CB_GETCURSEL, 0, 0)) : 0;
     const bool compressionSelected = compressionIndex > 0 && compressionIndex <= static_cast<int>(compressionRestorationModels_.size());
     EnableWindow(compressionRestorationCombo_, editable && !compressionRestorationModels_.empty());
-    EnableWindow(compressionStrengthCombo_, editable && compressionSelected);
+    EnableWindow(compressionStrengthCombo_, editable && compressionSelected && !automaticCompressionRestoration_);
     EnableWindow(compressionTilingCheck_, editable && compressionSelected);
+    EnableWindow(automaticCompressionButton_, editable);
+    EnableWindow(compressionAdjustmentEdit_, editable && automaticCompressionRestoration_);
+    EnableWindow(compressionAdjustmentResetButton_, editable && automaticCompressionRestoration_);
     if (!compressionSelected && compressionStrengthCombo_) SendMessageW(compressionStrengthCombo_, CB_SETCURSEL, 0, 0);
     if (!compressionSelected && compressionTilingCheck_) SendMessageW(compressionTilingCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
     EnableWindow(restorationCombo_, editable && !spatialRestorationModels_.empty());
@@ -3079,6 +3193,13 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             case kComparison: showComparison(); return 0;
             case kAutomaticDenoise: configureAutomaticDenoise(); return 0;
+            case kAutomaticCompression: configureAutomaticCompression(); return 0;
+            case kDenoiseAdjustmentReset:
+                if (modelChangesAllowed() && automaticTemporalDenoise_) SetWindowTextW(denoiseAdjustmentEdit_, L"0");
+                return 0;
+            case kCompressionAdjustmentReset:
+                if (modelChangesAllowed() && automaticCompressionRestoration_) SetWindowTextW(compressionAdjustmentEdit_, L"0");
+                return 0;
             case kTaskHistory: showTaskHistory(); return 0;
             case kRejectionDetails: {
                 if (queueRejections_.empty()) return 0;
@@ -3158,7 +3279,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             refreshReadinessStatus();
             updateView();
         }
-        if ((LOWORD(wParam) == kRateCustomEdit || LOWORD(wParam) == kShutterEdit || LOWORD(wParam) == kSamplesEdit) && HIWORD(wParam) == EN_CHANGE) {
+        if ((LOWORD(wParam) == kRateCustomEdit || LOWORD(wParam) == kShutterEdit || LOWORD(wParam) == kSamplesEdit || LOWORD(wParam) == kDenoiseAdjustmentEdit || LOWORD(wParam) == kCompressionAdjustmentEdit) && HIWORD(wParam) == EN_CHANGE) {
             refreshReadinessStatus();
             updateView();
         }

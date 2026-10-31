@@ -80,3 +80,75 @@ function Set-NativePackageDataModeMetadata {
         $Metadata['packagedDataState'] = $DataMode.dataState
     }
 }
+
+# Model selection is intentionally separate from data-mode handling so both
+# full packaging and hard-link reuse resolve the bundle before touching any
+# optional model directory.  Existing callers that do not pass BaseModelsOnly
+# retain the historical four-model behavior.
+function Resolve-NativeModelBundleSelection {
+    param(
+        [switch]$BaseModelsOnly,
+        [switch]$IncludeTemporalRestoration,
+        [switch]$IncludeCompressionRestoration
+    )
+    $includeTemporal = if ($BaseModelsOnly) { [bool]$IncludeTemporalRestoration } else { $true }
+    $includeCompression = if ($BaseModelsOnly) { [bool]$IncludeCompressionRestoration } else { $true }
+    $modelIds = @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2')
+    if ($includeTemporal) { $modelIds += 'fastdvdnet-clipped-five-frame-sdr8-eval' }
+    if ($includeCompression) { $modelIds += 'stdf-r3-y7-sdr8-local-eval' }
+    [pscustomobject]@{
+        mode = if ($BaseModelsOnly) { 'base' } else { 'full' }
+        baseModels = @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2')
+        includeTemporalRestoration = $includeTemporal
+        includeCompressionRestoration = $includeCompression
+        requireCompressionRestoration = [bool]$IncludeCompressionRestoration
+        modelIds = $modelIds
+    }
+}
+
+function Get-NativeExcludedModelRoots {
+    param([Parameter(Mandatory=$true)][object]$Selection)
+    $roots = @()
+    if (-not $Selection.includeTemporalRestoration) {
+        $roots += @(
+            'models/fastdvdnet-clipped-five-frame-sdr8-eval',
+            'licenses/Model-fastdvdnet-clipped-five-frame-sdr8-eval'
+        )
+    }
+    if (-not $Selection.includeCompressionRestoration) {
+        $roots += @(
+            'models/stdf-r3-y7-sdr8-local-eval',
+            'licenses/Model-stdf-r3-y7-sdr8-local-eval'
+        )
+    }
+    if ($Selection.mode -ceq 'base') {
+        # A base bundle has no recovery data to migrate, so a hidden legacy
+        # RIFE checkpoint is not copied as a second interpolation model.
+        $roots += @(
+            'models/rife-4.25-fp32-sdr8-v2',
+            'licenses/Model-rife-4.25-fp32-sdr8-v2'
+        )
+    }
+    return @($roots | Sort-Object -Unique)
+}
+
+function Test-NativeRelativePathExcluded {
+    param([Parameter(Mandatory=$true)][string]$RelativePath,
+          [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$ExcludedRoots,
+          [object]$Selection = $null)
+    $relative = $RelativePath.Replace('\','/').TrimStart('/')
+    if ($null -ne $Selection -and $Selection.mode -ceq 'base' -and $relative.StartsWith('models/',[StringComparison]::OrdinalIgnoreCase)) {
+        $modelName = ($relative -split '/')[1]
+        if ($modelName -cne 'default-model.txt' -and $Selection.modelIds -notcontains $modelName) { return $true }
+    }
+    foreach ($root in $ExcludedRoots) {
+        $normalizedRoot = ([string]$root).Replace('\','/').TrimEnd('/')
+        if ([string]::Equals($relative,$normalizedRoot,[StringComparison]::OrdinalIgnoreCase) -or
+            $relative.StartsWith($normalizedRoot + '/',[StringComparison]::OrdinalIgnoreCase) -or
+            ($normalizedRoot.StartsWith('licenses/Model-',[StringComparison]::OrdinalIgnoreCase) -and
+             $relative.StartsWith($normalizedRoot + '-',[StringComparison]::OrdinalIgnoreCase))) {
+            return $true
+        }
+    }
+    return $false
+}

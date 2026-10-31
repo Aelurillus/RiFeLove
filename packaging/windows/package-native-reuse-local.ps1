@@ -5,6 +5,10 @@ param(
     [string]$OutputDirectory = "",
     [string]$TemporalRestorationModelDirectory = "",
     [string]$CompressionRestorationModelDirectory = "",
+    # Fresh base bundle: only RIFE + SR are staged; experiments are explicit.
+    [switch]$BaseModelsOnly,
+    [switch]$IncludeTemporalRestoration,
+    [switch]$IncludeCompressionRestoration,
     # Explicitly restage only differing FFmpeg DLLs from the selected build's
     # SDK. Source/model/inference files remain verified, immutable hard links.
     [switch]$RefreshFfmpegRuntime,
@@ -22,10 +26,12 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "native-build-dependencies.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
+$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration
 if (-not $SourceDirectory) { $SourceDirectory = Join-Path $outputRoot "RifeLoveNative-local-nvenc" }
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $repositoryRoot "build/native-ui-review" }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $outputRoot "RifeLoveNative-local-ui-preview" }
 if (-not $TemporalRestorationModelDirectory) { $TemporalRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/fastdvdnet-clipped-five-frame-sdr8-eval" }
+if (-not $CompressionRestorationModelDirectory -and $IncludeCompressionRestoration) { $CompressionRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/stdf-r3-y7-sdr8-local-eval" }
 $source = [IO.Path]::GetFullPath($SourceDirectory)
 $build = [IO.Path]::GetFullPath($BuildDirectory)
 $target = [IO.Path]::GetFullPath($OutputDirectory)
@@ -45,11 +51,13 @@ foreach ($directory in @($outputRoot, $source, $build)) {
 $exe = Join-Path $build "RifeLoveNative.exe"
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Native executable is missing: $exe" }
 
-function Get-SafeFiles([string]$directory) {
+function Get-SafeFiles([string]$directory, [string[]]$ExcludedRoots = @(), [string]$TreeRoot = $directory, [object]$Selection = $null) {
     foreach ($item in (Get-ChildItem -LiteralPath $directory -Force)) {
+        $relative = [IO.Path]::GetRelativePath($TreeRoot, $item.FullName).Replace('\','/')
+        if ($relative -ieq 'data' -or (Test-NativeRelativePathExcluded $relative $ExcludedRoots $Selection)) { continue }
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Source package contains a link: $($item.FullName)" }
         if ($item.PSIsContainer) {
-            if ($item.FullName -ne (Join-Path $source "data")) { Get-SafeFiles $item.FullName }
+            Get-SafeFiles $item.FullName $ExcludedRoots $TreeRoot $Selection
         } else { $item }
     }
 }
@@ -118,11 +126,14 @@ function Get-NativeModelRole([string]$relative) {
 
 function Get-NativeOptionalRestorationPacks(
     [object]$Manifest, [string]$SourceDirectory,
-    [string]$TemporalModelDirectory, [string]$CompressionModelDirectory) {
+    [string]$TemporalModelDirectory, [string]$CompressionModelDirectory,
+    [object]$Selection = $null) {
     foreach ($spec in @(
         [pscustomobject]@{ id = "fastdvdnet-clipped-five-frame-sdr8-eval"; local = $TemporalModelDirectory; label = "FastDVDnet" },
         [pscustomobject]@{ id = "stdf-r3-y7-sdr8-local-eval"; local = $CompressionModelDirectory; label = "STDF-R3" }
     )) {
+        if ($null -ne $Selection -and $spec.id -ceq 'fastdvdnet-clipped-five-frame-sdr8-eval' -and -not $Selection.includeTemporalRestoration) { continue }
+        if ($null -ne $Selection -and $spec.id -ceq 'stdf-r3-y7-sdr8-local-eval' -and -not $Selection.includeCompressionRestoration) { continue }
         $relative = "models/$($spec.id)"
         $entries = @($Manifest.models | Where-Object { ([string]$_.directory).Replace('\', '/') -ieq $relative })
         if ($entries.Count -gt 1) { throw "Duplicate source model manifest entry: $relative" }
@@ -130,8 +141,10 @@ function Get-NativeOptionalRestorationPacks(
         # An older three-model bundle remains usable without claiming it has
         # STDF. Adding STDF from a local cache requires the explicit parameter.
         if (-not $inSource -and $spec.id -ceq "stdf-r3-y7-sdr8-local-eval" -and
-            [string]::IsNullOrWhiteSpace($spec.local)) { continue }
+            [string]::IsNullOrWhiteSpace($spec.local) -and
+            ($null -eq $Selection -or -not $Selection.requireCompressionRestoration)) { continue }
         $packRoot = if ($inSource) { Join-Path $SourceDirectory $relative } else { $spec.local }
+        if ([string]::IsNullOrWhiteSpace($packRoot)) { throw "$($spec.label) model directory is missing; selected models require an existing source or explicit local pack." }
         if (-not $inSource -and (Test-Path -LiteralPath (Join-Path $SourceDirectory $relative))) {
             throw "Source model directory is not declared in its manifest: $relative"
         }
@@ -158,15 +171,16 @@ function Get-NativeOptionalRestorationPacks(
 }
 
 function Set-NativeRestorationDefaults(
-    [System.Collections.IDictionary]$Defaults, [bool]$CompressionModelIncluded = $true) {
-    $Defaults["temporalRestorationModelDirectory"] = "models/fastdvdnet-clipped-five-frame-sdr8-eval"
+    [System.Collections.IDictionary]$Defaults, [bool]$CompressionModelIncluded = $true,
+    [bool]$TemporalModelIncluded = $true) {
+    $Defaults["temporalRestorationModelDirectory"] = if ($TemporalModelIncluded) { "models/fastdvdnet-clipped-five-frame-sdr8-eval" } else { $null }
     $Defaults["temporalRestorationDefaultEnabled"] = $false
-    $Defaults["temporalRestorationMode"] = "experimental-optional"
+    $Defaults["temporalRestorationMode"] = if ($TemporalModelIncluded) { "experimental-optional" } else { "not-bundled" }
     $Defaults["compressionRestorationModelDirectory"] = if ($CompressionModelIncluded) { "models/stdf-r3-y7-sdr8-local-eval" } else { $null }
     $Defaults["compressionRestorationDefaultEnabled"] = $false
     $Defaults["compressionRestorationTiled"] = $false
     $Defaults["compressionRestorationStrength"] = 0.75
-    $Defaults["compressionRestorationMode"] = "experimental-local-evaluation"
+    $Defaults["compressionRestorationMode"] = if ($CompressionModelIncluded) { "experimental-local-evaluation" } else { "not-bundled" }
 }
 
 function Update-NativeOptionalRestorationManifest(
@@ -204,6 +218,24 @@ function Resolve-ManifestPath([string]$relative) {
     $prefix = $source.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     if (-not $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Manifest path leaves source package: $relative" }
     return $full
+}
+
+function Read-NativeSourceChecksums([string]$ChecksumFile, [string[]]$ExcludedRoots = @(), [object]$Selection = $null) {
+    $result = @{}
+    $seen = @{}
+    foreach ($line in (Get-Content -LiteralPath $ChecksumFile)) {
+        if ($line -eq 'RifeLove native local bundle SHA-256' -or [string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line -notmatch '^([a-fA-F0-9]{64})  (.+)$') { throw 'Malformed source checksum entry.' }
+        $hash = $Matches[1].ToLowerInvariant()
+        $relative = $Matches[2].Replace('\','/')
+        if ($seen.ContainsKey($relative)) { throw "Duplicate source checksum path: $relative" }
+        $seen[$relative] = $true
+        $null = Resolve-ManifestPath $relative
+        if ($relative.StartsWith('data/',[StringComparison]::OrdinalIgnoreCase) -or
+            (Test-NativeRelativePathExcluded $relative $ExcludedRoots $Selection)) { continue }
+        $result[$relative] = $hash
+    }
+    return $result
 }
 
 function Resolve-ExistingFile([string]$Path, [string]$Label) {
@@ -320,6 +352,22 @@ $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json -AsHa
 if ($manifest.packageKind -ne "local-native-windows-x64" -or $manifest.qtIncluded -or $manifest.cliIncluded -or $manifest.ossEnabled) {
     throw "Source package is not the expected local, non-Qt desktop bundle."
 }
+$excludedModelRoots = @(Get-NativeExcludedModelRoots $modelSelection)
+if ($modelSelection.mode -ceq 'base') {
+    # Filter metadata before optional model validation and staging. This is the
+    # key isolation boundary: excluded model directories and their licenses are
+    # never opened, hashed, or hard-linked for a base bundle.
+    foreach ($entry in @($manifest.models)) {
+        $relative = ([string]$entry.directory).Replace('\','/')
+        if (Test-NativeRelativePathExcluded $relative $excludedModelRoots $modelSelection) {
+            $excludedModelRoots += @($relative, ('licenses/Model-' + ($relative -split '/')[-1]))
+        }
+    }
+    $manifest.models = @($manifest.models | Where-Object {
+        -not (Test-NativeRelativePathExcluded ([string]$_.directory) $excludedModelRoots $modelSelection)
+    })
+    $manifest['migration'] = [ordered]@{ legacyModelIncluded = $false; evidence = @(); sourceRecoveryDataCopied = $false }
+}
 if ([string]::IsNullOrWhiteSpace([string]$manifest.ffmpeg.root)) { throw "Source package has no FFmpeg SDK root; rebuild a full package first." }
 $ffmpegSdk = Read-FfmpegSdkIdentity $build $(if ($RefreshFfmpegRuntime) { 'local-sdk:ffmpeg' } else { [string]$manifest.ffmpeg.root })
 if ($null -eq $manifest.ffmpeg.binaries -or @($manifest.ffmpeg.binaries).Count -eq 0) {
@@ -380,6 +428,7 @@ $forbiddenDuplicateModelDirectories = @(
     "models/fastdvdnet-clipped-five-frame-sdr8"
 )
 foreach ($relative in $forbiddenDuplicateModelDirectories) {
+    if (Test-NativeRelativePathExcluded $relative $excludedModelRoots $modelSelection) { continue }
     if (Test-Path -LiteralPath (Join-Path $source ($relative.Replace('/', '\'))) -PathType Container) {
         throw "Source package contains a duplicate/legacy model basename: $relative"
     }
@@ -398,7 +447,7 @@ foreach ($name in $requiredRuntimeFiles) {
         throw "Source package lacks the required inference runtime DLL: $name"
     }
 }
-$optionalPacks = @(Get-NativeOptionalRestorationPacks $manifest $source $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory)
+$optionalPacks = @(Get-NativeOptionalRestorationPacks $manifest $source $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory $modelSelection)
 $additionalModelExpected = @{}
 foreach ($optional in @($optionalPacks | Where-Object { -not $_.inSource })) {
     foreach ($file in $optional.pack.files) {
@@ -407,17 +456,8 @@ foreach ($optional in @($optionalPacks | Where-Object { -not $_.inSource })) {
     }
     $additionalModelExpected[$optional.licenseRelative] = (Get-FileHash -LiteralPath $optional.pack.licensePath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$expected = @{}
-foreach ($line in (Get-Content -LiteralPath $sumFile)) {
-    if ($line -eq "RifeLove native local bundle SHA-256" -or [string]::IsNullOrWhiteSpace($line)) { continue }
-    if ($line -notmatch '^([a-fA-F0-9]{64})  (.+)$') { throw "Malformed source checksum entry." }
-    $hash = $Matches[1].ToLowerInvariant()
-    $relative = $Matches[2].Replace('\', '/')
-    if ($expected.ContainsKey($relative)) { throw "Duplicate source checksum path: $relative" }
-    $null = Resolve-ManifestPath $relative
-    $expected[$relative] = $hash
-}
-$files = @(Get-SafeFiles $source)
+$expected = Read-NativeSourceChecksums $sumFile $excludedModelRoots $modelSelection
+$files = @(Get-SafeFiles $source $excludedModelRoots $source $modelSelection)
 foreach ($file in $files) {
     $relative = $file.FullName.Substring($source.Length).TrimStart('\', '/').Replace('\', '/')
     if ($relative -eq "SHA256SUMS.txt") { continue }
@@ -485,6 +525,7 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($source.Length).TrimStart('\', '/').Replace('\', '/')
+        if ($BaseModelsOnly -and $relative -ceq 'models/default-model.txt') { continue }
         if ($relative -in @("SHA256SUMS.txt", "PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "dependency-imports.json", "portable.flag", "portable-mode.txt")) { continue }
         if ($relative -match '(?i)(^|/)qt|qml|(^|/)rifelove-cli(\.exe)?$') { throw "Unexpected Qt or CLI artifact: $relative" }
         $destination = Join-Path $stage ($relative.Replace('/', '\'))
@@ -507,7 +548,15 @@ try {
     $defaultsPath = Join-Path $source "config/defaults.json"
     if (-not (Test-Path -LiteralPath $defaultsPath -PathType Leaf)) { throw "Source package defaults are missing: $defaultsPath" }
     $defaults = Get-Content -Raw -LiteralPath $defaultsPath | ConvertFrom-Json -AsHashtable
-    Set-NativeRestorationDefaults $defaults (@($optionalPacks | Where-Object { $_.relative -ceq "models/stdf-r3-y7-sdr8-local-eval" }).Count -eq 1)
+    Set-NativeRestorationDefaults $defaults (@($optionalPacks | Where-Object { $_.relative -ceq "models/stdf-r3-y7-sdr8-local-eval" }).Count -eq 1) (@($optionalPacks | Where-Object { $_.relative -ceq "models/fastdvdnet-clipped-five-frame-sdr8-eval" }).Count -eq 1)
+    $defaults['modelBundleMode'] = if ($BaseModelsOnly) { 'base' } else { 'compatible-source' }
+    if ($BaseModelsOnly) {
+        $defaults['defaultModelDirectory'] = 'models/rife-4.25-fp32-sdr8-v3'
+        $defaults['legacyModelDirectory'] = $null
+        $defaults['legacyModelIncluded'] = $false
+        Set-Content -LiteralPath (Join-Path $stage 'models/default-model.txt') -Value 'rife-4.25-fp32-sdr8-v3' -Encoding utf8NoBOM
+        $additionalModelExpected['models/default-model.txt'] = (Get-FileHash -LiteralPath (Join-Path $stage 'models/default-model.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
     $defaults["ffmpeg"] = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm enabled=$($ffmpegSdk.configuration.x86asmEnabled); workload-specific throughput requires validation"
     Set-NativePackageDataModeMetadata -Metadata $defaults -DataMode $dataMode
     New-Item -ItemType Directory -Path (Join-Path $stage "config") -Force | Out-Null
@@ -535,6 +584,7 @@ try {
     $manifest.ffmpeg.x86asm = if ($ffmpegSdk.configuration.x86asmEnabled) { "enabled; end-to-end throughput remains workload-specific" } else { "disabled; CPU throughput remains unqualified" }
     $manifest.inferenceRuntime.source = "local TensorRT/ONNX Runtime CUDA SDK"
     $manifest.packageName = Split-Path -Leaf $target
+    $manifest.modelBundleMode = if ($BaseModelsOnly) { 'base' } else { 'compatible-source' }
     $manifest.generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $manifest.executableSha256 = (Get-FileHash -LiteralPath (Join-Path $stage "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest.ffmpeg.sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver }
@@ -545,6 +595,13 @@ try {
     } else {
         '此普通包未启用便携模式，未捆绑 portable-mode.txt。任务数据库与本机模型偏好使用 Windows 当前用户的 %LOCALAPPDATA%\RifeLove；本包 data 为空。需要专用隔离便携包时，请在新输出目录打包并显式传入 -PortableMode。'
     }
+    $includedModelsDescription = (@($manifest.models | ForEach-Object { [string]$_.directory }) -join '；')
+    $temporalDescription = if (@($optionalPacks | Where-Object { $_.relative -ceq 'models/fastdvdnet-clipped-five-frame-sdr8-eval' }).Count -eq 1) {
+        '包内 FastDVDnet 五帧模型仅是 SDR8 实验性时序降噪模型，默认关闭；它可与超分同时选择，但不代表通用压缩修复、去模糊或细节增强能力。'
+    } else { '本包未捆绑 FastDVDnet，相关默认路径为空。' }
+    $compressionDescription = if (@($optionalPacks | Where-Object { $_.relative -ceq 'models/stdf-r3-y7-sdr8-local-eval' }).Count -eq 1) {
+        '包内 STDF-R3 七帧模型仅供本地压缩修复评估，默认关闭；输入/尺寸/分块契约以模型描述和开发验证记录为准，不代表通用压缩修复或 Topaz 级质量。'
+    } else { '本包未捆绑 STDF-R3，相关默认路径为空。' }
     @"
 RifeLove 原生 Windows 本机预览
 
@@ -555,8 +612,9 @@ $dataModeDescription
 高帧率与长视频仍需更广泛的兼容性验收；失败时不会发布未通过验证的输出。TensorRT 初次加载可能较慢。
 FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-256 记录在 PACKAGE-MANIFEST.json；复用包和新 EXE 旁的 FFmpeg DLL 必须与所选 SDK 逐字节匹配。
 默认使用 RIFE 4.25 插帧模型；Real-ESRGAN x2plus 超分可选，默认关闭。
-包内 FastDVDnet 五帧模型仅是 SDR8 实验性时序降噪模型，默认关闭；它可与超分同时选择，但不代表通用压缩修复、去模糊或细节增强能力。
-包内 STDF-R3 七帧模型仅供本地压缩修复评估，默认关闭；当前验证范围为 BT.709 SDR、8-bit yuv420p、TV range，最大 384×256，不代表通用压缩修复或 Topaz 级质量。
+实际打包模型：$includedModelsDescription。
+$temporalDescription
+$compressionDescription
 此目录与旧本机预览使用 NTFS 硬链接复用不可变依赖，删除旧目录不会使本目录失效；直接修改共享依赖会同时影响两个目录。
 本次 FFmpeg 配置刷新：$($refreshedFfmpegFiles.Count) 个不同 DLL 独立复制（$($ffmpegRefreshPlan.replacementBytes) 字节）；旧包文件不被覆盖，模型和推理运行库保留校验后的硬链接。
 模型、视频和任务留在本机；阿里云 OSS 已停用。模型及 NVIDIA 运行库的公开再分发许可仍需审核。
@@ -565,7 +623,7 @@ FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-2
     foreach ($file in @(Get-SafeFiles $stage | Sort-Object FullName)) {
         $relative = $file.FullName.Substring($stage.Length).TrimStart('\', '/').Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        $knownHash = if ($relative -ceq $dataMode.markerName) { $dataMode.markerSha256 } elseif ($refreshedFfmpegFiles.ContainsKey($relative)) { $refreshedFfmpegFiles[$relative] } elseif ($expected.ContainsKey($relative)) { $expected[$relative] } elseif ($additionalModelExpected.ContainsKey($relative)) { $additionalModelExpected[$relative] } else { $null }
+        $knownHash = if ($relative -ceq $dataMode.markerName) { $dataMode.markerSha256 } elseif ($refreshedFfmpegFiles.ContainsKey($relative)) { $refreshedFfmpegFiles[$relative] } elseif ($additionalModelExpected.ContainsKey($relative)) { $additionalModelExpected[$relative] } elseif ($expected.ContainsKey($relative)) { $expected[$relative] } else { $null }
         if ($relative -notin @("PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "dependency-imports.json") -and
             ([string]::IsNullOrWhiteSpace($knownHash) -or $hash -ne $knownHash)) {
             throw "Linked dependency changed during packaging: $relative"

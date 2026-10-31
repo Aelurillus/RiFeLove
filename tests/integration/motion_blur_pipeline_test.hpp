@@ -55,7 +55,8 @@ private:
 // its actual rational decoded PTS (including quantized high-FPS cadence), rather
 // than the nominal rate below, drive the production exposure window.
 void writeExposureSource(const std::filesystem::path& path, int rate, int count, int cutAt = -1,
-    const std::function<int(int,int,int,int)>& lumaTransform = {}) {
+    const std::function<int(int,int,int,int)>& lumaTransform = {},
+    AVPixelFormat pixelFormat = AV_PIX_FMT_YUV444P) {
     using rifelove::media::detail::check;
     struct Output {
         AVFormatContext* value = nullptr;
@@ -80,7 +81,7 @@ void writeExposureSource(const std::filesystem::path& path, int rate, int count,
     codec.value = avcodec_alloc_context3(encoder);
     if (!codec.value) throw std::bad_alloc();
     codec.value->width = 64; codec.value->height = 64;
-    codec.value->pix_fmt = AV_PIX_FMT_YUV444P;
+    codec.value->pix_fmt = pixelFormat;
     codec.value->time_base = {1,rate}; codec.value->framerate = {rate,1};
     codec.value->color_primaries = AVCOL_PRI_BT709;
     codec.value->color_trc = AVCOL_TRC_BT709;
@@ -118,6 +119,10 @@ void writeExposureSource(const std::filesystem::path& path, int rate, int count,
             const bool after = cutAt >= 0 && index >= cutAt;
             const int luma = cutAt < 0 ? (bar ? 224 : 32) : after ? (bar ? 224 : 192) : (bar ? 64 : 32);
             frame.value->data[0][y * frame.value->linesize[0] + x] = static_cast<std::uint8_t>(lumaTransform ? lumaTransform(index,x,y,luma) : luma);
+        }
+        const int chromaWidth = pixelFormat == AV_PIX_FMT_YUV420P ? 32 : 64;
+        const int chromaHeight = pixelFormat == AV_PIX_FMT_YUV420P ? 32 : 64;
+        for (int y = 0; y < chromaHeight; ++y) for (int x = 0; x < chromaWidth; ++x) {
             frame.value->data[1][y * frame.value->linesize[1] + x] = 128;
             frame.value->data[2][y * frame.value->linesize[2] + x] = 128;
         }
