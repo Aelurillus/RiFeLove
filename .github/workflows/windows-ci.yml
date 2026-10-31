@@ -1,0 +1,42 @@
+name: Windows core and native controls
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-and-native-controls:
+    name: Windows x64 / GCC / CPU-only
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure core and native shell
+        run: >-
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+          -DRIFELOVE_ALLOW_DEPENDENCY_DOWNLOADS=ON
+          -DRIFELOVE_BUILD_NATIVE_DESKTOP=ON
+          -DRIFELOVE_BUILD_TESTS=ON
+          -DRIFELOVE_BUILD_MEDIA=OFF
+          -DRIFELOVE_BUILD_ONNX_CUDA=OFF
+          -DRIFELOVE_BUILD_CLI=OFF
+          -DRIFELOVE_BUILD_DESKTOP=OFF
+      - name: Build
+        run: cmake --build build/ci --parallel 4
+      - name: Run CPU and native control tests
+        run: ctest --test-dir build/ci --output-on-failure --parallel 2 -E '^CudaHardware\.'
