@@ -1,8 +1,10 @@
 #include "application/checkpoint_artifacts.hpp"
 #include "application/job_serialization.hpp"
 #include "application/task_queue.hpp"
+#include "inference/model_pack.hpp"
 #include "media/video_writer.hpp"
 #include "media/ffmpeg_helpers.hpp"
+#include "restoration/model_pack.hpp"
 extern "C" {
 #include <libswscale/swscale.h>
 }
@@ -77,6 +79,25 @@ rifelove::media::VideoSegmentInput createSegment(const CheckpointFixture& fixtur
     contract.pixelFormat = "bgr0";
     contract.bitDepth = 8;
     return {path.string(),contract};
+}
+
+std::optional<std::filesystem::path> findLocalStdfPack() {
+    std::vector<std::filesystem::path> roots;
+    roots.push_back(std::filesystem::current_path());
+    const auto sourceFile = std::filesystem::path(__FILE__);
+    roots.push_back(sourceFile.is_absolute() ? sourceFile.parent_path() : std::filesystem::absolute(sourceFile).parent_path());
+    for (const auto& initial : roots) {
+        auto root = initial;
+        while (!root.empty()) {
+            const auto candidate = root / "models" / "cache" / "stdf-r3-y7-sdr8-local-eval";
+            if (std::filesystem::is_regular_file(candidate / "model.json"))
+                return std::filesystem::weakly_canonical(candidate);
+            const auto parent = root.parent_path();
+            if (parent == root) break;
+            root = parent;
+        }
+    }
+    return std::nullopt;
 }
 }
 
@@ -393,6 +414,114 @@ TEST(CheckpointArtifacts, AutomaticNoiseIdentityRejectsEveryChangedParameterAndF
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
     changed = automatic; changed["temporalRestorationRuntime"] = {{"signature","changed runtime"}};
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
+}
+
+TEST(CheckpointArtifacts, CompressionRestorationIdentityRejectsChangedModelStrengthRuntimeShapeAndReplayPolicy) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    ProcessingJob job;
+    job.source = "C:/source.mkv"; job.output = "C:/output.mkv";
+    job.modelDirectory = "C:/model"; job.runtimeDirectory = "C:/runtime";
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationStrength = 0.75F;
+    Json enabled{{"schemaVersion",2},{"job",Json::parse(serializeJob(job))},{"identity",Json::object()},
+        {"compressionRestorationRuntime",{
+            {"modelId","stdf-r3-y7-sdr8"},{"adapterId","stdf-r3-y7-luma-v1"},{"adapterVersion",1},
+            {"backend","onnxruntime_cuda"},{"signature","stdf-r3-y7-luma-v1;graph-test;ort-1.22.0"},
+            {"descriptorSha256",std::string(64,'d')},{"strength",0.75F},
+            {"inputProfile","bt709-sdr8"},{"pixelFormat","yuv420p"},{"maximumWidth",384},{"maximumHeight",256},
+            {"tilePolicy","full-frame-bounded-384x256-v1"},
+            {"decoderReplayPolicy","software-source-pts-from-start-v1"},
+            {"sceneReplayPolicy","scene-bounds-serial-v1"}}}};
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(enabled.dump(),enabled.dump()));
+    for (const auto* field : {"descriptorSha256","strength","inputProfile","pixelFormat","maximumWidth","maximumHeight",
+                              "tilePolicy","decoderReplayPolicy","sceneReplayPolicy","signature"}) {
+        auto changed = enabled;
+        if (std::string(field) == "strength") changed["compressionRestorationRuntime"][field] = 0.5F;
+        else if (std::string(field) == "maximumWidth") changed["compressionRestorationRuntime"][field] = 512;
+        else changed["compressionRestorationRuntime"][field] = "changed";
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),changed.dump())) << field;
+    }
+    auto changedJob = enabled;
+    changedJob["job"]["compressionRestorationStrength"] = 0.5F;
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),changedJob.dump()));
+    auto missingPolicy = enabled;
+    missingPolicy["compressionRestorationRuntime"].erase("decoderReplayPolicy");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),missingPolicy.dump()));
+
+    auto disabled = enabled;
+    disabled["job"]["schemaVersion"] = 10;
+    disabled["job"]["compressionRestorationModelDirectory"] = "";
+    disabled["job"]["expectedCompressionRestorationDescriptorSha256"] = "";
+    disabled["job"]["compressionRestorationStrength"] = 0.0F;
+    disabled.erase("compressionRestorationRuntime");
+    auto legacy = disabled;
+    legacy["job"]["schemaVersion"] = 9;
+    legacy["job"].erase("compressionRestorationModelDirectory");
+    legacy["job"].erase("expectedCompressionRestorationDescriptorSha256");
+    legacy["job"].erase("compressionRestorationStrength");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(legacy.dump(),disabled.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(legacy.dump(),enabled.dump()));
+}
+
+TEST(CheckpointArtifacts, TaskQueueResumesEnabledCompressionCheckpointAfterLoadingSavedRuntimeIdentity) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    const auto packPath = findLocalStdfPack();
+    if (!packPath) GTEST_SKIP() << "local STDF evaluation model pack is not available";
+    const auto model = restoration::loadModelPack(*packPath);
+    ASSERT_TRUE(restoration::supportsStdfCudaModel(model));
+
+    CheckpointFixture fixture;
+    const auto database = fixture.directory / "queue.sqlite", output = fixture.directory / "result.mkv";
+    ProcessingJob job;
+    job.source = fixture.source.string(); job.output = output.string();
+    job.modelDirectory = fixture.directory / "missing-rife-model";
+    job.runtimeDirectory = fixture.directory / "missing-rife-runtime";
+    job.compressionRestorationModelDirectory = *packPath;
+    job.expectedCompressionRestorationDescriptorSha256 = inference::sha256File(*packPath / "model.json",256 * 1024);
+    job.compressionRestorationStrength = 0.75F;
+    job.settings.targetRate = Rational(50);
+    ProcessingIdentity identity{};
+    { SourceLease lease(fixture.source); identity.source = lease.fingerprint({}); }
+    identity.modelId = "rife-fixture"; identity.modelVersion = "1"; identity.modelSha256 = std::string(64,'a');
+    identity.backend = "onnxruntime_cuda"; identity.device.name = "CPU-only compression resume fixture";
+    applyStoredIdentity(job,serializeIdentity(identity));
+    const auto configuration = serializeJob(job);
+    const auto identityText = serializeIdentity(identity);
+    const Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},{"job",Json::parse(configuration)},
+        {"identity",Json::parse(identityText)},{"mediaRuntime",media::MediaEngine::runtimeVersion()},
+        {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())},{"framesPerSegment",256},
+        {"compressionRestorationRuntime",{
+            {"modelId",model.id},{"adapterId",model.capabilities.adapterId},{"adapterVersion",model.capabilities.adapterVersion},
+            {"backend","onnxruntime_cuda"},{"signature","stdf-r3-y7-luma-v1;resume-fixture-runtime"},
+            {"descriptorSha256",job.expectedCompressionRestorationDescriptorSha256},{"strength",job.compressionRestorationStrength},
+            {"inputProfile","bt709-sdr8"},{"pixelFormat","yuv420p"},{"maximumWidth",384},{"maximumHeight",256},
+            {"tilePolicy","full-frame-bounded-384x256-v1"},
+            {"decoderReplayPolicy","software-source-pts-from-start-v1"},
+            {"sceneReplayPolicy","scene-bounds-serial-v1"}}}};
+    std::string taskId;
+    {
+        TaskStore seed(database.string());
+        taskId = seed.createConfigured({{job.source,job.output,configuration}}).front();
+        seed.transition(taskId,TaskState::running); seed.saveIdentity(taskId,identityText);
+        CheckpointArtifacts artifacts(seed,taskId,output); artifacts.setManifest(manifest.dump());
+        const auto segment = createSegment(fixture,artifacts);
+        (void)artifacts.commit(0,0,2,segment);
+        ASSERT_EQ(seed.recoverConfigured(),1U);
+    }
+
+    TaskQueue queue(database);
+    EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
+    const auto rows = queue.list();
+    ASSERT_EQ(rows.size(),1U);
+    EXPECT_EQ(rows.front().task.state,TaskState::queued);
+    EXPECT_EQ(rows.front().configuration,configuration);
+    EXPECT_EQ(rows.front().identity,identityText);
+    EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),manifest.dump());
 }
 
 TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {

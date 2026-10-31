@@ -23,36 +23,67 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model_export"))
 from stdf_r3_portable import load_source_model, sha
 
+# Exact kernel counts are tied to the fixed STDF graph SHA and ORT 1.22.0
+# session configuration. A floor would allow a truncated or unexpected graph
+# profile to pass the provider gate.
+QUALIFIED_CUDA_CONV_KERNEL_MINIMUM = 20
+QUALIFIED_CUDA_GRIDSAMPLE_KERNEL_MINIMUM = 9
+
 
 def profile_summary(path: Path):
     events = json.loads(path.read_text(encoding="utf-8"))
     counts, operations, durations = Counter(), defaultdict(Counter), Counter()
     cpu_shape_only = True
+    unknown_provider_kernels = 0
+    allowed_cpu_ops = {"Gather", "Unsqueeze", "Mul", "Concat", "Cast", "Div"}
     for event in events:
+        if event.get("cat") != "Node" or not str(event.get("name", "")).endswith("_kernel_time"):
+            continue
         args = event.get("args", {})
-        provider = args.get("provider")
-        if event.get("cat") == "Node" and provider:
-            op = args.get("op_name", "unknown")
-            counts[provider] += 1
-            operations[provider][op] += 1
-            durations[provider] += event.get("dur", 0)
-            if provider == "CPUExecutionProvider":
-                if op not in {"Gather", "Unsqueeze", "Mul", "Concat", "Cast", "Div"}:
-                    cpu_shape_only = False
-                for typed in args.get("output_type_shape", []):
+        if not isinstance(args, dict) or not isinstance(args.get("provider"), str) or not isinstance(args.get("op_name"), str):
+            unknown_provider_kernels += 1
+            cpu_shape_only = False
+            continue
+        provider = args["provider"]
+        op = args["op_name"]
+        if provider not in {"CUDAExecutionProvider", "CPUExecutionProvider"}:
+            unknown_provider_kernels += 1
+            cpu_shape_only = False
+            continue
+        counts[provider] += 1
+        operations[provider][op] += 1
+        durations[provider] += event.get("dur", 0)
+        if provider == "CPUExecutionProvider":
+            output_shapes = args.get("output_type_shape")
+            scalar_only = op in allowed_cpu_ops and isinstance(output_shapes, list) and bool(output_shapes)
+            if scalar_only:
+                for typed in output_shapes:
+                    if not isinstance(typed, dict) or not typed:
+                        scalar_only = False
+                        break
                     for dtype, shape in typed.items():
+                        if not isinstance(shape, list) or any(not isinstance(dimension, int) or isinstance(dimension, bool) or dimension < 0
+                                                             for dimension in shape):
+                            scalar_only = False
+                            break
                         if math.prod(shape) > 8 or (dtype != "int64" and shape != []):
-                            cpu_shape_only = False
+                            scalar_only = False
+                            break
+            if not scalar_only:
+                cpu_shape_only = False
     gpu_ops = operations.get("CUDAExecutionProvider", {})
     cpu_compute = {op: count for op, count in operations.get("CPUExecutionProvider", {}).items()
                    if "Conv" in op or op in {"GridSample", "Gemm", "MatMul"}}
     return {"provider_kernel_events": dict(counts),
             "operations": {provider: dict(ops) for provider, ops in operations.items()},
             "profile_kernel_duration_us": dict(durations),
-            "critical_compute_is_cuda": bool(gpu_ops.get("GridSample", 0)) and
-                                        any("Conv" in op for op in gpu_ops) and not cpu_compute,
+            "critical_compute_is_cuda": gpu_ops.get("GridSample", 0) == QUALIFIED_CUDA_GRIDSAMPLE_KERNEL_MINIMUM and
+                                        gpu_ops.get("Conv", 0) == QUALIFIED_CUDA_CONV_KERNEL_MINIMUM and not cpu_compute and
+                                        cpu_shape_only and
+                                        unknown_provider_kernels == 0,
             "cpu_only_scalar_shape_outputs": cpu_shape_only,
-            "cpu_critical_compute": cpu_compute}
+            "cpu_critical_compute": cpu_compute,
+            "unknown_provider_kernel_events": unknown_provider_kernels}
 
 
 def device_memory():

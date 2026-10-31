@@ -152,6 +152,7 @@ private:
     LRESULT handleMessage(UINT message, WPARAM wParam, LPARAM lParam);
     void createControls();
     void layoutControls();
+    void resizeComboPopup(HWND combo) const;
     void setFonts();
     void styleCombo(HWND combo);
     bool focusNextControl(bool reverse);

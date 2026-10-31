@@ -1,4 +1,5 @@
 #include "restoration/model_pack.hpp"
+#include "restoration/stdf_luma_adapter.hpp"
 
 #include "inference/model_pack.hpp"
 
@@ -228,6 +229,22 @@ bool supportsOnnxCudaTemporalModel(const ModelPack& model) {
         model.numericalProfile == "sdr8-fp32-pytorch-reference" &&
         std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"pytorch_cpu_source") != model.validatedBackends.end() &&
         std::find(model.validatedBackends.begin(),model.validatedBackends.end(),"onnxruntime_cpu_derived") != model.validatedBackends.end();
+}
+
+bool supportsStdfCudaModel(const ModelPack& model) {
+    const auto& capabilities = model.capabilities;
+    const bool requiredBackendEvidence =
+        std::find(model.validatedBackends.begin(), model.validatedBackends.end(), validation::stdf::cpuValidationBackend) != model.validatedBackends.end() &&
+        std::find(model.validatedBackends.begin(), model.validatedBackends.end(), validation::stdf::cudaValidationBackend) != model.validatedBackends.end();
+    return model.metadataIntegrityVerified && model.graphSha256 == validation::stdf::graphSha256 &&
+        capabilities.modelId == model.id && capabilities.adapterId == validation::stdf::adapterId &&
+        capabilities.adapterVersion == validation::stdf::adapterVersion &&
+        capabilities.tasks == std::vector<Task>{Task::deblock} &&
+        capabilities.placements == std::vector<Placement>{Placement::sourceRateBeforeInterpolation} &&
+        capabilities.supportedInputProfiles == std::vector<std::string>{"bt709-sdr8"} &&
+        capabilities.temporalFramesBefore == 3 && capabilities.temporalFramesAfter == 3 &&
+        capabilities.scaleNumerator == 1 && capabilities.scaleDenominator == 1 && capabilities.supportsBoundaryPadding &&
+        model.numericalProfile == validation::stdf::numericalProfile && requiredBackendEvidence;
 }
 
 ModelPack loadModelPack(const std::filesystem::path& directory) {

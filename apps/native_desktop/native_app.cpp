@@ -890,7 +890,7 @@ void NativeApp::layoutControls() {
     const float right = layout.right;
     const float second = layout.exportContentLeft();
     const float rightWidth = layout.exportContentWidth();
-    const auto move = [&](HWND control, float x, float y, float width, float height, bool visible = true, bool fixed = false, float expandedHeight = 0) {
+    const auto move = [&](HWND control, float x, float y, float width, float height, bool visible = true, bool fixed = false) {
         if (!control) return;
         SetPropW(control, L"RifeLoveFocusEligible", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(visible ? 1 : 0)));
         SetPropW(control, L"RifeLoveScrollY", reinterpret_cast<HANDLE>(fixed ? 0 : static_cast<INT_PTR>(y) + 1));
@@ -898,16 +898,17 @@ void NativeApp::layoutControls() {
         if (!fixed) y -= layout.scroll;
         const bool inViewport = fixed || (y >= layout.contentTop && y + height <= layout.contentBottom);
         MoveWindow(control, scaled(static_cast<int>(x), s), scaled(static_cast<int>(y), s),
-            scaled(static_cast<int>(width), s), scaled(static_cast<int>(expandedHeight > 0 ? expandedHeight : height), s), TRUE);
+            scaled(static_cast<int>(width), s), scaled(static_cast<int>(height), s), TRUE);
         ShowWindow(control, visible && inViewport ? SW_SHOW : SW_HIDE);
     };
     const auto moveCombo = [&](HWND control, float x, float y, float width, float height) {
         if (!control) return;
         const auto count = static_cast<int>(SendMessageW(control, CB_GETCOUNT, 0, 0));
-        // A drop-down combo's window height includes its open list. Using only
-        // the closed field height leaves the user with an empty/tiny list.
-        const float expanded = height + static_cast<float>(std::clamp(count, 1, 8)) * 32.0F + 8.0F;
-        move(control, x, y, width, height, true, false, expanded);
+        // The combo HWND is only the closed field. Its list is a separate
+        // popup, so sizing the HWND to include the list makes it cover the
+        // controls below it and breaks hit testing.
+        move(control, x, y, width, height);
+        resizeComboPopup(control);
         // Keep the closed field aligned with its column, but let the popup
         // show complete model/preset names in narrow or high-DPI windows.
         int popupWidth = scaled(static_cast<int>(width), s);
@@ -994,6 +995,53 @@ void NativeApp::layoutControls() {
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     updateRestorationControls();
 #endif
+}
+
+void NativeApp::resizeComboPopup(HWND combo) const {
+    if (!combo) return;
+    const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
+    const int rowHeight = static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
+    if (count <= 0 || rowHeight <= 0) return;
+
+    const int visibleItems = std::clamp(count, 1, 8);
+    SendMessageW(combo, CB_SETMINVISIBLE, static_cast<WPARAM>(visibleItems), 0);
+
+    COMBOBOXINFO comboInfo{};
+    comboInfo.cbSize = sizeof(comboInfo);
+    if (!GetComboBoxInfo(combo, &comboInfo) || !comboInfo.hwndList) return;
+    RECT listRect{};
+    RECT fieldRect{};
+    if (!GetWindowRect(comboInfo.hwndList, &listRect) || !GetWindowRect(combo, &fieldRect)) return;
+
+    const float scale = dpiScale();
+    const RECT work = monitorWorkArea(MonitorFromWindow(combo, MONITOR_DEFAULTTONEAREST));
+    const int workHeight = std::max(1L, work.bottom - work.top);
+    int popupHeight = std::min(workHeight, rowHeight * visibleItems + scaled(8, scale));
+    const int below = std::max(0L, work.bottom - fieldRect.bottom);
+    const int above = std::max(0L, fieldRect.top - work.top);
+    int top = fieldRect.bottom;
+    if (below >= popupHeight) {
+        // Prefer the natural position immediately below the closed field.
+        top = fieldRect.bottom;
+    } else if (above >= popupHeight) {
+        // If the lower edge is tight, keep the popup immediately above it.
+        top = fieldRect.top - popupHeight;
+    } else if (below >= above) {
+        // A very small work area cannot fit all rows. Keep the popup attached
+        // below and let the native list scroll through the remaining items.
+        popupHeight = std::max(1, below);
+        top = fieldRect.bottom;
+    } else {
+        popupHeight = std::max(1, above);
+        top = fieldRect.top - popupHeight;
+    }
+    const int workTop = static_cast<int>(work.top);
+    const int workBottom = static_cast<int>(work.bottom);
+    top = std::clamp(top, workTop, std::max(workTop, workBottom - popupHeight));
+    const int width = listRect.right - listRect.left;
+    if (width <= 0) return;
+    SetWindowPos(comboInfo.hwndList, nullptr, listRect.left, top, width, popupHeight,
+        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
 }
 
 void NativeApp::scrollSettings(int delta) {
@@ -2708,6 +2756,11 @@ LRESULT CALLBACK NativeApp::comboProcedure(HWND window, UINT message, WPARAM wPa
         InvalidateRect(window, nullptr, FALSE);
         return result;
     }
+    case CB_SHOWDROPDOWN: {
+        const LRESULT result = CallWindowProcW(oldProc, window, message, wParam, lParam);
+        if (wParam != FALSE && app) app->resizeComboPopup(window);
+        return result;
+    }
     case WM_NCDESTROY:
         RemovePropW(window, L"RifeLoveComboProc");
         RemovePropW(window, L"RifeLoveComboOwner");
@@ -2914,6 +2967,9 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_ERASEBKGND:
         return 1;
     case WM_COMMAND:
+        if (HIWORD(wParam) == CBN_DROPDOWN) {
+            resizeComboPopup(reinterpret_cast<HWND>(lParam));
+        }
         if (HIWORD(wParam) == BN_CLICKED) {
             switch (LOWORD(wParam)) {
             case kSelectSource: selectSource(); return 0;

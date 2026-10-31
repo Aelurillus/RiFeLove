@@ -13,6 +13,7 @@ extern "C" {
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cctype>
 #include <cwctype>
 #include <iomanip>
@@ -129,6 +130,34 @@ std::optional<std::string> optionalString(const Json& object, const char* key) {
     if (found == object.end() || found->is_null()) return {};
     if (!found->is_string()) throw std::invalid_argument(std::string("invalid checkpoint contract field: ") + key);
     return found->get<std::string>();
+}
+
+bool sha256Text(const std::string& value) {
+    return value.size() == 64 && std::all_of(value.begin(),value.end(),[](const char character) {
+        return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
+    });
+}
+
+bool validCompressionRuntime(const Json& manifest) {
+    const auto found = manifest.find("compressionRestorationRuntime");
+    if (found == manifest.end()) return true;
+    if (!found->is_object()) return false;
+    const auto& runtime = *found;
+    if (!runtime.contains("modelId") || !runtime.at("modelId").is_string() || runtime.at("modelId").get<std::string>().empty() ||
+        !runtime.contains("adapterId") || !runtime.at("adapterId").is_string() || runtime.at("adapterId").get<std::string>().empty() ||
+        !runtime.contains("adapterVersion") || !runtime.at("adapterVersion").is_number_integer() || runtime.at("adapterVersion").get<int>() <= 0 ||
+        !runtime.contains("backend") || !runtime.at("backend").is_string() || runtime.at("backend").get<std::string>().empty() ||
+        runtime.at("backend").get<std::string>() == "unavailable" ||
+        !runtime.contains("signature") || !runtime.at("signature").is_string() || runtime.at("signature").get<std::string>().empty() ||
+        !runtime.contains("descriptorSha256") || !runtime.at("descriptorSha256").is_string() || !sha256Text(runtime.at("descriptorSha256").get<std::string>()) ||
+        !runtime.contains("strength") || !runtime.at("strength").is_number() || !std::isfinite(runtime.at("strength").get<double>()) ||
+        runtime.at("strength").get<double>() <= 0.0 || runtime.at("strength").get<double>() > 1.0 ||
+        runtime.value("inputProfile",std::string()) != "bt709-sdr8" || runtime.value("pixelFormat",std::string()) != "yuv420p" ||
+        runtime.value("maximumWidth",0) != 384 || runtime.value("maximumHeight",0) != 256 ||
+        runtime.value("tilePolicy",std::string()) != "full-frame-bounded-384x256-v1" ||
+        runtime.value("decoderReplayPolicy",std::string()) != "software-source-pts-from-start-v1" ||
+        runtime.value("sceneReplayPolicy",std::string()) != "scene-bounds-serial-v1") return false;
+    return true;
 }
 
 } // namespace
@@ -328,7 +357,42 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         // when neither side purports to carry the new proof.
         if (actual.contains("mediaPipelineIdentity") || wanted.contains("mediaPipelineIdentity"))
             requireMediaPipelineIdentity(saved,expected);
+        if (!validCompressionRuntime(actual) || !validCompressionRuntime(wanted)) return false;
         if (actual == wanted) return true;
+        // Schema 10 introduces the independent STDF compression-restoration
+        // model, strength and descriptor pin. Historical checkpoints may be
+        // upgraded only when the new stage is completely disabled; an old
+        // segment must never be reused for a newly enabled or partially
+        // configured compression path.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 10 && actual.at("job").value("schemaVersion",0) < 10) {
+            const auto& oldJob = actual.at("job");
+            const auto& newJob = wanted.at("job");
+            const auto oldDirectory = oldJob.value("compressionRestorationModelDirectory",std::string());
+            const auto oldHash = oldJob.value("expectedCompressionRestorationDescriptorSha256",std::string());
+            const auto oldStrength = oldJob.value("compressionRestorationStrength",0.0F);
+            const auto newDirectory = newJob.value("compressionRestorationModelDirectory",std::string());
+            const auto newHash = newJob.value("expectedCompressionRestorationDescriptorSha256",std::string());
+            const auto newStrength = newJob.value("compressionRestorationStrength",0.0F);
+            if (!oldDirectory.empty() || !oldHash.empty() || oldStrength != 0.0F ||
+                !newDirectory.empty() || !newHash.empty() || newStrength != 0.0F ||
+                wanted.contains("compressionRestorationRuntime")) return false;
+            auto previous = wanted;
+            previous["job"].erase("compressionRestorationModelDirectory");
+            previous["job"].erase("expectedCompressionRestorationDescriptorSha256");
+            previous["job"].erase("compressionRestorationStrength");
+            previous["job"]["schemaVersion"] = 9;
+            auto priorSaved = actual;
+            // Some fixtures and early schema-10 writers emitted the new
+            // disabled fields before lowering the historical schema number.
+            // Treat that exact disabled triple as absent for the migration;
+            // any non-empty/positive value was rejected above.
+            priorSaved["job"].erase("compressionRestorationModelDirectory");
+            priorSaved["job"].erase("expectedCompressionRestorationDescriptorSha256");
+            priorSaved["job"].erase("compressionRestorationStrength");
+            return manifestMatches(priorSaved.dump(),previous.dump());
+        }
         // Schema 9 makes automatic conditioning and its exact replay policy
         // explicit. Old fixed-sigma output is reusable only with auto absent.
         if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&

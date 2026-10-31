@@ -147,7 +147,7 @@ DecodedFrame restoreRifeSdr(const RifeSdrFrame& frame, std::stop_token stop) {
     if (sws_scale(context.get(),source,stride,0,frame.height,native->data,native->linesize) != frame.height) throw std::runtime_error("Incomplete RIFE SDR postprocessing");
     DecodedFrame output{};
     output.width = frame.width; output.height = frame.height; output.color = detail::color(native.get());
-    for (int plane = 0; plane < 4; ++plane) output.planes[plane] = {native->data[plane],native->linesize[plane]};
+    for (int plane = 0; plane < 4; ++plane) output.planes[plane] = {native->data[plane],native->linesize[plane],std::nullopt};
     output.storage = std::shared_ptr<const void>(native.release(), [](const void* pointer) { auto* owned = const_cast<AVFrame*>(static_cast<const AVFrame*>(pointer)); av_frame_free(&owned); });
     return output;
 }

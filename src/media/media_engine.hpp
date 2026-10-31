@@ -6,9 +6,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -106,7 +108,42 @@ struct MediaInfo {
     int preferredVideoStream = -1;
 };
 
-struct FramePlane { const std::uint8_t* data{}; int stride{}; };
+// A decoder-owned plane may be a slice of an AVBufferRef shared by several
+// planes.  The extent records that owning allocation and the offset of the
+// first visible row within it; it is populated only when the decoder can
+// prove the relationship from FFmpeg's retained buffer references.  A raw
+// data pointer and stride alone are deliberately insufficient for consumers
+// that need bounded reads.
+struct FramePlaneExtent {
+    const std::uint8_t* allocationBegin{};
+    std::size_t allocationBytes = 0;
+    std::size_t dataOffset = 0;
+};
+struct FramePlane {
+    const std::uint8_t* data{};
+    int stride{};
+    std::optional<FramePlaneExtent> extent;
+};
+// Returns the bytes proven readable from the first row toward increasing
+// addresses.  This is the safe input for positive-stride consumers.  A
+// negative-stride caller must use the allocation bounds itself or reject the
+// layout; it must never infer a span from width and height alone.
+[[nodiscard]] inline std::optional<std::size_t> provenBytesFromData(const FramePlane& plane) noexcept {
+    if (!plane.data || plane.stride <= 0 || !plane.extent || !plane.extent->allocationBegin || plane.extent->allocationBytes == 0)
+        return std::nullopt;
+    const auto begin = reinterpret_cast<std::uintptr_t>(plane.extent->allocationBegin);
+    const auto bytes = plane.extent->allocationBytes;
+    if (begin > std::numeric_limits<std::uintptr_t>::max() - bytes) return std::nullopt;
+    const auto data = reinterpret_cast<std::uintptr_t>(plane.data);
+    const auto end = begin + bytes;
+    if (data < begin || data >= end || data - begin != plane.extent->dataOffset) return std::nullopt;
+    return bytes - plane.extent->dataOffset;
+}
+[[nodiscard]] inline std::optional<std::span<const std::uint8_t>> provenPlaneSpan(const FramePlane& plane) noexcept {
+    const auto bytes = provenBytesFromData(plane);
+    if (!bytes) return std::nullopt;
+    return std::span<const std::uint8_t>(plane.data,*bytes);
+}
 struct DecodedFrame {
     std::size_t index;
     int width;

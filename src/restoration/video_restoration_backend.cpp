@@ -50,6 +50,21 @@ bool sameColor(const media::ColorInfo& left, const media::ColorInfo& right) {
 void validateFrame(const media::DecodedFrame& frame, const char* role) {
     if (!frame.timestamp || !hasPixels(frame)) throw std::invalid_argument(std::string("Video restoration ") + role + " frame needs owned pixels and an exact timestamp");
 }
+void validateSceneBounds(const Request& request) {
+    if (!request.sceneBounds) return;
+    const auto& bounds = *request.sceneBounds;
+    if (bounds.serial == 0 || (bounds.lastIndex && *bounds.lastIndex < bounds.firstIndex))
+        throw std::invalid_argument("Video restoration scene bounds are invalid");
+    if (request.context.empty()) throw std::invalid_argument("Video restoration scene bounds need a non-empty context");
+    for (const auto& frame : request.context) {
+        if (frame.index < bounds.firstIndex || (bounds.lastIndex && frame.index > *bounds.lastIndex))
+            throw std::invalid_argument("Video restoration context crosses the declared scene bounds");
+    }
+    if (request.missingFramesBefore && request.context.front().index != bounds.firstIndex)
+        throw std::invalid_argument("Video restoration cannot pad history inside a scene");
+    if (request.missingFramesAfter && (!bounds.lastIndex || request.context.back().index != *bounds.lastIndex))
+        throw std::invalid_argument("Video restoration future padding needs a declared scene end");
+}
 }
 
 void validateCapabilities(const Capabilities& capabilities) {
@@ -122,6 +137,7 @@ void validateRequest(const Capabilities& capabilities, const Request& request) {
         if (index && !(*request.context[index - 1].timestamp < *frame.timestamp))
             throw std::invalid_argument("Video restoration context timestamps must be strictly increasing");
     }
+    validateSceneBounds(request);
 }
 
 void validateResult(const Capabilities& capabilities, const Request& request, const Result& result) {

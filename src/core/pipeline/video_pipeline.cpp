@@ -203,8 +203,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     // single backend is classified by its verified capabilities so old
     // temporal-only jobs continue to work unchanged.
     std::shared_ptr<restoration::IVideoRestorationBackend> temporalBackend = settings.temporalRestorationBackend;
+    std::shared_ptr<restoration::IVideoRestorationBackend> compressionBackend = settings.compressionRestorationBackend;
     std::shared_ptr<restoration::IVideoRestorationBackend> outputBackend;
     std::optional<restoration::Capabilities> temporalCapabilities;
+    std::optional<restoration::Capabilities> compressionCapabilities;
     std::optional<restoration::Capabilities> outputRateCapabilities;
     const auto requireRestorationProfile = [&](const restoration::Capabilities& caps) {
         const auto profile = media::rifeSdrInputProfile(video->color);
@@ -238,6 +240,21 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             settings.temporalDenoiseSigma255 > 55.0F || (settings.temporalDenoiseSigma255 > 0.0F && settings.temporalDenoiseSigma255 < 5.0F))
             throw std::invalid_argument("Temporal restoration noise sigma must be zero or a value from 5 to 55");
     }
+    if (compressionBackend) {
+        compressionCapabilities = compressionBackend->capabilities();
+        restoration::validateCapabilities(*compressionCapabilities);
+        if (compressionCapabilities->tasks.size() != 1 || compressionCapabilities->tasks.front() != restoration::Task::deblock)
+            throw std::invalid_argument("The compression restoration backend must declare exactly the deblock task");
+        if (compressionCapabilities->placements.size() != 1 || compressionCapabilities->placements.front() != restoration::Placement::sourceRateBeforeInterpolation)
+            throw std::invalid_argument("The compression restoration backend must run at source rate before interpolation");
+        if (compressionCapabilities->temporalFramesBefore != 3 || compressionCapabilities->temporalFramesAfter != 3)
+            throw std::invalid_argument("The compression restoration backend must use an exact seven-frame window");
+        if (compressionCapabilities->scaleNumerator != 1 || compressionCapabilities->scaleDenominator != 1)
+            throw std::invalid_argument("Compression restoration must preserve the source dimensions");
+        if (!compressionCapabilities->supportsBoundaryPadding)
+            throw std::invalid_argument("The compression restoration backend must support scene and clip boundary padding");
+        requireRestorationProfile(*compressionCapabilities);
+    }
     std::optional<restoration::AutomaticDenoiseController> automaticDenoise;
     if (settings.automaticTemporalDenoise) {
         if (!temporalBackend)
@@ -254,7 +271,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             throw std::invalid_argument("The selected restoration scale exceeds the supported output dimensions");
         requireRestorationProfile(*outputRateCapabilities);
     }
-    if ((temporalBackend || outputBackend) && settings.checkpoint && !settings.checkpoint->restorationIdentityVerified)
+    if ((compressionBackend || temporalBackend || outputBackend) && settings.checkpoint && !settings.checkpoint->restorationIdentityVerified)
         throw std::invalid_argument("Checkpoint resume requires verified restoration model and runtime identities");
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
     encoding.frameRate = settings.targetRate;
@@ -416,6 +433,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::deque<CachedFrame> blurFrames;
     std::deque<quality::SceneAnalysis> blurAnalyses;
     bool blurBeginsAtSourceStart = true;
+    std::optional<restoration::TemporalWindow> compressionWindow;
+    if (compressionCapabilities) compressionWindow.emplace(*compressionCapabilities);
     std::optional<restoration::TemporalWindow> temporalWindow;
     if (temporalCapabilities) temporalWindow.emplace(*temporalCapabilities);
     result.automaticTemporalDenoiseActive = automaticDenoise.has_value();
@@ -705,12 +724,13 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             pairAnalysis = std::move(nextAnalysis);
         }
     };
-    // Temporal models need a scene boundary before their five-frame request is
-    // assembled. Use the same analysis policy on the real source frames, but
-    // keep its counters attached to the post-restoration interpolation stream.
+    // Source-rate restoration windows need a scene boundary before their
+    // seven-frame requests are assembled. Analyze the real decoded source
+    // once and carry that identity through any chained restoration windows;
+    // repaired frames are never used to guess a new boundary.
     std::optional<media::RifeSdrFrame> temporalPreviousPrepared;
-    const auto temporalSceneCutBefore = [&](const media::DecodedFrame& frame) {
-        if (!temporalWindow) return false;
+    const auto sourceSceneCutBefore = [&](const media::DecodedFrame& frame) {
+        if (!compressionWindow && !temporalWindow) return false;
         auto prepared = media::prepareRifeSdr(frame,settings.hostFloatBufferLimit,stop);
         bool cut = false;
         if (temporalPreviousPrepared) {
@@ -720,6 +740,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         if (automaticDenoise) {
             auto estimate = measure(result.timings.sceneAnalysisSeconds,[&] { return restoration::estimateGaussianNoise(prepared,stop); });
             sourceNoise.push_back({frame.index,estimate,cut});
+            if (sourceNoise.size() > 64)
+                throw std::logic_error("Automatic denoise source observations exceeded the bounded restoration pipeline window");
             ++result.automaticDenoiseAnalyzedFrames;
         }
         temporalPreviousPrepared = std::move(prepared);
@@ -729,6 +751,9 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         for (auto& request : requests) {
             request.stop = stop;
             request.denoiseSigma255 = settings.temporalDenoiseSigma255;
+            if (!temporalCapabilities || !temporalBackend)
+                throw std::logic_error("Temporal restoration request has no configured backend");
+            restoration::validateRequest(*temporalCapabilities,request);
             if (automaticDenoise) {
                 const auto& center = request.context[request.centerIndex];
                 if (sourceNoise.empty() || sourceNoise.front().index != center.index)
@@ -740,24 +765,86 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 sourceNoise.pop_front();
             }
             auto restored = measure(result.timings.restorationSeconds,[&] {
-                return temporalBackend->restore(std::move(request)).get().centerFrame;
+                auto resultValue = temporalBackend->restore(request).get();
+                restoration::validateResult(*temporalCapabilities,request,resultValue);
+                return std::move(resultValue.centerFrame);
             });
             processSourceFrame(std::move(restored));
+        }
+    };
+    struct RestoredSceneFrame {
+        std::size_t index = 0;
+        restoration::SceneBounds scene;
+    };
+    std::deque<RestoredSceneFrame> secondStageSceneFrames;
+    std::optional<restoration::SceneBounds> compressionScene;
+    const auto sameSceneIdentity = [](const restoration::SceneBounds& first, const restoration::SceneBounds& second) {
+        return first.serial == second.serial && first.firstIndex == second.firstIndex;
+    };
+    const auto processCompressionRequests = [&](std::vector<restoration::Request> requests) {
+        if (!compressionCapabilities || !compressionBackend)
+            throw std::logic_error("Compression restoration request has no configured backend");
+        for (auto& request : requests) {
+            checkStop(stop);
+            request.stop = stop;
+            if (!request.sceneBounds)
+                throw std::logic_error("Compression restoration request is missing its source scene identity");
+            restoration::validateRequest(*compressionCapabilities,request);
+            const auto scene = *request.sceneBounds;
+            auto restored = measure(result.timings.restorationSeconds,[&] {
+                auto resultValue = compressionBackend->restore(request).get();
+                restoration::validateResult(*compressionCapabilities,request,resultValue);
+                return std::move(resultValue.centerFrame);
+            });
+            if (!temporalWindow) {
+                processSourceFrame(std::move(restored));
+                compressionScene = scene;
+                continue;
+            }
+            const bool sceneCut = compressionScene && !sameSceneIdentity(*compressionScene,scene);
+            compressionScene = scene;
+            secondStageSceneFrames.push_back({restored.index,scene});
+            if (secondStageSceneFrames.size() > 64)
+                throw std::logic_error("Chained restoration scene identity state exceeded its bounded window");
+            auto secondRequests = temporalWindow->push(std::move(restored),sceneCut);
+            for (auto& secondRequest : secondRequests) {
+                if (!secondRequest.sceneBounds || secondRequest.context.empty())
+                    throw std::logic_error("Second restoration request is missing its scene identity or context");
+                const auto centerIndex = secondRequest.context[secondRequest.centerIndex].index;
+                const auto firstContextIndex = secondRequest.context.front().index;
+                const auto expected = std::find_if(secondStageSceneFrames.begin(),secondStageSceneFrames.end(),
+                    [&](const RestoredSceneFrame& frame) { return frame.index == centerIndex; });
+                if (expected == secondStageSceneFrames.end() ||
+                    !sameSceneIdentity(*secondRequest.sceneBounds,expected->scene))
+                    throw std::logic_error("Second restoration request scene identity does not match the first restoration window");
+                processTemporalRequests({std::move(secondRequest)});
+                while (!secondStageSceneFrames.empty() && secondStageSceneFrames.front().index < firstContextIndex)
+                    secondStageSceneFrames.pop_front();
+            }
         }
     };
     notify("decoding",{});
     double decodeCallbackSeconds = 0;
     const auto decodeStarted = std::chrono::steady_clock::now();
+    // STDF's verified native adapter consumes bounded planar YUV420P. NVDEC
+    // may deliver NV12 for the same source, so compression restoration opts
+    // into the software decoder just like automatic denoise. This keeps the
+    // decoder layout part of the restoration runtime contract instead of
+    // allowing a provider-dependent plane interpretation.
     const auto decoded = media::MediaEngine::decodeVideo(source,[&](const media::DecodedFrame& frame) {
         ScopedTiming callbackTiming(decodeCallbackSeconds);
         checkStop(stop);
-        if (!temporalWindow) processSourceFrame(frame);
-        else processTemporalRequests(temporalWindow->push(frame,temporalSceneCutBefore(frame)));
+        const auto sceneCut = sourceSceneCutBefore(frame);
+        if (compressionWindow) processCompressionRequests(compressionWindow->push(frame,sceneCut));
+        else if (temporalWindow) processTemporalRequests(temporalWindow->push(frame,sceneCut));
+        else processSourceFrame(frame);
     // Automatic sigma must replay the identical source samples before a
     // checkpoint boundary. Bind this software decode policy in job identity
     // rather than allowing a later NVDEC/software fallback to change samples.
     // decodeVideo starts at the beginning even when output segments are reused.
-    },encoding.videoStreamIndex,stop,{automaticDenoise ? media::DecodeAcceleration::software : media::DecodeAcceleration::preferCuda,device.info().ordinal});
+    },encoding.videoStreamIndex,stop,{
+        (automaticDenoise || compressionBackend) ? media::DecodeAcceleration::software : media::DecodeAcceleration::preferCuda,
+        device.info().ordinal});
     const auto decodeWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - decodeStarted).count();
     result.timings.sourceDecodeSeconds = std::max(0.0,decodeWallSeconds - decodeCallbackSeconds);
     result.sourceFrames = decoded.frameCount;
@@ -765,7 +852,22 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     result.sourceDecoder = decoded.decoder;
     result.sourceDecodeAcceleration = decoded.acceleration;
     result.sourceDecodeFallbackReason = decoded.accelerationFallbackReason;
-    if (temporalWindow) processTemporalRequests(temporalWindow->finish());
+    if (compressionWindow) processCompressionRequests(compressionWindow->finish());
+    if (temporalWindow) {
+        auto finalRequests = temporalWindow->finish();
+        for (auto& request : finalRequests) {
+            if (compressionWindow) {
+                if (!request.sceneBounds || request.context.empty())
+                    throw std::logic_error("Second restoration EOF request is missing its scene identity or context");
+                const auto centerIndex = request.context[request.centerIndex].index;
+                const auto expected = std::find_if(secondStageSceneFrames.begin(),secondStageSceneFrames.end(),
+                    [&](const RestoredSceneFrame& frame) { return frame.index == centerIndex; });
+                if (expected == secondStageSceneFrames.end() || !sameSceneIdentity(*request.sceneBounds,expected->scene))
+                    throw std::logic_error("Second restoration EOF request scene identity does not match the first restoration window");
+            }
+            processTemporalRequests({std::move(request)});
+        }
+    }
     if (!sourceNoise.empty()) throw std::logic_error("Automatic denoise observations were not fully drained");
     if (motionBlurActive ? blurFrames.empty() : !left) throw std::runtime_error("Source produced no video frames");
     if (!motionBlurActive && right) pair(*left,*pairAnalysis,*right);

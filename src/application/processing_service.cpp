@@ -4,14 +4,38 @@
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
 #include "restoration/onnx_cuda_backend.hpp"
+#include "restoration/stdf_cuda_backend.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 
 namespace rifelove::application {
 namespace {
 std::filesystem::path localPath(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(),value.end())); }
 std::timed_mutex engineSlot;
+constexpr int compressionMaximumWidth = 384;
+constexpr int compressionMaximumHeight = 256;
+constexpr const char* compressionInputProfile = "bt709-sdr8";
+constexpr const char* compressionPixelFormat = "yuv420p";
+
+void validateCompressionSource(const std::string& source, int requestedVideoStream, std::stop_token stop) {
+    const auto info = media::MediaEngine::probe(source,stop);
+    const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const auto& stream) {
+        const auto selected = requestedVideoStream >= 0 ? requestedVideoStream : info.preferredVideoStream;
+        return stream.index == selected && stream.type == "video";
+    });
+    if (video == info.streams.end()) throw std::invalid_argument("STDF compression restoration requires a selected video stream");
+    if (video->width <= 0 || video->height <= 0 || video->width > compressionMaximumWidth || video->height > compressionMaximumHeight)
+        throw std::invalid_argument("STDF compression restoration is currently qualified only through 384x256; larger inputs require a separately verified tiled model");
+    if (video->color.pixelFormat != compressionPixelFormat || video->color.bitDepth != 8)
+        throw std::invalid_argument("STDF compression restoration requires software-decoded 8-bit yuv420p input");
+    if (video->color.primaries != "bt709" || video->color.transfer != "bt709" || video->color.matrix != "bt709" ||
+        video->color.range != "tv" || video->color.hdrTransfer || video->color.masteringDisplay || video->color.contentLight)
+        throw std::invalid_argument("STDF compression restoration requires exact BT.709 limited-range SDR metadata");
+    if (media::rifeSdrInputProfile(video->color) != compressionInputProfile)
+        throw std::invalid_argument("STDF compression restoration requires tagged BT.709 SDR8 input");
+}
 }
 PipelineResult executeProcessingJob(const ProcessingJob& job, const std::function<void(ProcessingEvent)>& progress,
     std::stop_token stop, PauseGate& pause,
@@ -74,6 +98,7 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     auto pipelineSettings = job.settings;
     std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> restorationBackend;
     std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> temporalRestorationBackend;
+    std::shared_ptr<restoration::StdfCudaVideoRestorationBackend> compressionRestorationBackend;
     const auto loadRestoration = [&](const std::filesystem::path& directory, const std::string& expectedHash,
                                      bool requireTemporal, bool requireImage) {
         ProcessingEvent restorationLoading; restorationLoading.stage = "loading_restoration_model";
@@ -104,6 +129,37 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
         temporalRestorationBackend = loadRestoration(job.temporalRestorationModelDirectory,
             job.expectedTemporalRestorationDescriptorSha256,true,false);
         pipelineSettings.temporalRestorationBackend = temporalRestorationBackend;
+    }
+    if (!job.compressionRestorationModelDirectory.empty()) {
+        if (!std::isfinite(job.compressionRestorationStrength) || job.compressionRestorationStrength <= 0.0F ||
+            job.compressionRestorationStrength > 1.0F)
+            throw std::invalid_argument("STDF compression restoration strength must be finite and greater than zero through one");
+        validateCompressionSource(job.source,job.settings.encoding.videoStreamIndex,stop);
+        ProcessingEvent compressionLoading; compressionLoading.stage = "loading_compression_restoration_model";
+        send(std::move(compressionLoading));
+        const auto compressionPack = restoration::loadModelPack(job.compressionRestorationModelDirectory);
+        if (!restoration::supportsStdfCudaModel(compressionPack))
+            throw std::runtime_error("Selected compression restoration model is not the strictly qualified STDF CUDA model");
+        const auto descriptorHash = inference::sha256File(compressionPack.directory / "model.json",256 * 1024);
+        if (job.expectedCompressionRestorationDescriptorSha256.empty() ||
+            descriptorHash != job.expectedCompressionRestorationDescriptorSha256)
+            throw std::runtime_error("Selected compression restoration model changed after this task was configured");
+        restoration::StdfCudaConfig compressionConfig;
+        compressionConfig.runtimeDirectory = job.runtimeDirectory;
+        compressionConfig.hostFloatBufferLimit = pipelineSettings.hostFloatBufferLimit;
+        compressionConfig.deviceOrdinal = job.deviceOrdinal;
+        compressionConfig.strength = job.compressionRestorationStrength;
+        compressionConfig.maximumWidth = compressionMaximumWidth;
+        compressionConfig.maximumHeight = compressionMaximumHeight;
+        compressionConfig.requireCriticalCudaProfile = true;
+        compressionRestorationBackend = std::make_shared<restoration::StdfCudaVideoRestorationBackend>(std::move(compressionConfig));
+        compressionRestorationBackend->loadModel(compressionPack);
+        const auto capabilities = compressionRestorationBackend->capabilities();
+        if (capabilities.modelId != compressionPack.id || capabilities.adapterId != compressionPack.capabilities.adapterId ||
+            capabilities.adapterVersion != compressionPack.capabilities.adapterVersion || capabilities.runtimeBackend.empty() ||
+            capabilities.runtimeSignature.empty())
+            throw std::runtime_error("STDF compression restoration runtime identity is incomplete");
+        pipelineSettings.compressionRestorationBackend = compressionRestorationBackend;
     }
     if (configurePipeline) configurePipeline(processingIdentity,pipelineSettings);
     checkpoint();

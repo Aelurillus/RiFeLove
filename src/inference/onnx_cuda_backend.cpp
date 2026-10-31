@@ -1,4 +1,5 @@
 #include "inference/onnx_cuda_backend.hpp"
+#include "inference/ort_runtime_lease.hpp"
 #include "inference/tensorrt_cache.hpp"
 #ifdef RIFELOVE_HAS_MEDIA
 #include "media/rife_color.hpp"
@@ -268,6 +269,27 @@ void validateContract(const OrtApi& api, const OrtSession* session) {
         if (!valid) throw InferenceError(InferenceErrorKind::invalidRequest, "RIFE shape contract requires a batch-one RGB tensor, dynamic spatial axes and scalar timestep");
     }
 }
+}
+
+OrtRuntimeLease acquireOrtRuntimeLease(const std::filesystem::path& directory) {
+    auto runtime = processRuntime(directory);
+    OrtRuntimeLease lease;
+    lease.owner = runtime;
+    lease.api = runtime->api;
+    lease.environment = runtime->environment();
+    lease.directory = std::filesystem::canonical(directory);
+    lease.version = "1.22.0";
+    char** providers = nullptr;
+    int count = 0;
+    check(*lease.api, lease.api->GetAvailableProviders(&providers, &count));
+    for (int index = 0; index < count; ++index) {
+        if (providers[index] && std::string(providers[index]) == "CUDAExecutionProvider") {
+            lease.cudaProviderAvailable = true;
+            break;
+        }
+    }
+    lease.api->ReleaseAvailableProviders(providers, count);
+    return lease;
 }
 
 class OnnxCudaBackend::Impl final {

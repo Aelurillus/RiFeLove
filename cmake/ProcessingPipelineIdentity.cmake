@@ -41,6 +41,7 @@ set(rifelove_processing_identity_sources
   src/inference/model_pack.hpp
   src/inference/onnx_cuda_backend.cpp
   src/inference/onnx_cuda_backend.hpp
+  src/inference/ort_runtime_lease.hpp
   src/inference/tensorrt_cache.cpp
   src/inference/tensorrt_cache.hpp
   src/interpolation/model_adapter.cpp
@@ -71,6 +72,9 @@ set(rifelove_processing_identity_sources
   src/restoration/noise_estimate.cpp
   src/restoration/noise_estimate.hpp
   src/restoration/onnx_cuda_backend.hpp
+  src/restoration/stdf_cuda_backend.cpp
+  src/restoration/stdf_cuda_backend.hpp
+  src/restoration/stdf_luma_adapter.hpp
   src/restoration/temporal_window.cpp
   src/restoration/temporal_window.hpp
   src/restoration/video_restoration_backend.cpp

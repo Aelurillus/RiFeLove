@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <random>
@@ -123,6 +124,98 @@ ProcessingJob configuredJob() {
     e.encoderOptions = {{"cq","20"},{"preset","p5"}};
     job.settings.scene = {0.2,0.3,0.6,1e-4}; return job;
 }
+std::optional<std::filesystem::path> repositoryPath(const std::filesystem::path& relative) {
+    std::vector<std::filesystem::path> roots{std::filesystem::current_path()};
+    const auto source = std::filesystem::path(__FILE__);
+    roots.push_back(source.is_absolute() ? source.parent_path() : std::filesystem::absolute(source).parent_path());
+    for (auto root : roots) {
+        while (!root.empty()) {
+            const auto candidate = root / relative;
+            if (std::filesystem::is_regular_file(candidate / "model.json")) return std::filesystem::weakly_canonical(candidate);
+            const auto parent = root.parent_path();
+            if (parent == root) break;
+            root = parent;
+        }
+    }
+    return std::nullopt;
+}
+bool writeTaggedImportSource(const std::filesystem::path& path, const std::string& colorSettings) {
+    const auto range = colorSettings.find("range=full") != std::string::npos ? "pc" : "tv";
+    const auto transfer = colorSettings.find("iec61966-2-1") != std::string::npos ? "iec61966-2-1" : "bt709";
+    const auto command = "ffmpeg.exe -y -v error -f lavfi -i \"testsrc2=size=256x144:rate=2:duration=0.5\" -vf \"format=yuv420p,setparams=" +
+        colorSettings + "\" -color_range " + range + " -color_primaries bt709 -color_trc " + transfer +
+        " -colorspace bt709 -c:v ffv1 -frames:v 1 \"" + path.string() + "\"";
+    return std::system(command.c_str()) == 0;
+}
+bool writeDualTaggedImportSource(const std::filesystem::path& path) {
+    const auto command = "ffmpeg.exe -y -v error -f lavfi -i \"testsrc2=size=256x144:rate=2:duration=0.5\" -f lavfi -i \"testsrc2=size=256x144:rate=2:duration=0.5\" "
+        "-map 0:v -map 1:v -filter:v:0 \"format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709\" "
+        "-filter:v:1 \"format=yuv420p,setparams=range=full:color_primaries=bt709:color_trc=bt709:colorspace=bt709\" "
+        "-color_range:v:0 tv -color_range:v:1 pc -color_primaries:v:0 bt709 -color_primaries:v:1 bt709 "
+        "-color_trc:v:0 bt709 -color_trc:v:1 bt709 -colorspace:v:0 bt709 -colorspace:v:1 bt709 -c:v ffv1 -frames:v 1 \"" + path.string() + "\"";
+    return std::system(command.c_str()) == 0;
+}
+}
+TEST(BatchImport, CompressionUsesExplicitVideoStreamAndExactStdfColorContract) {
+    const auto rife = repositoryPath("models/cache/rife-4.25-fp32-sdr8-v3");
+    const auto stdf = repositoryPath("models/cache/stdf-r3-y7-sdr8-local-eval");
+    if (!rife || !stdf) GTEST_SKIP() << "local RIFE/STDF evaluation model packs are not available";
+    rifelove::tests::platform_import::Fixture fixture;
+    const auto tagged = fixture.directory / "tagged.mkv";
+    rifelove::tests::platform_import::writeSource(tagged,256,144);
+
+    auto makeRequest = [&](const std::filesystem::path& source, int streamIndex) {
+        rifelove::application::ImportRequest request;
+        request.inputs = {source}; request.outputDirectory = fixture.directory;
+        request.settings.modelDirectory = *rife;
+        request.settings.runtimeDirectory = fixture.directory / "runtime";
+        request.settings.compressionRestorationModelDirectory = *stdf;
+        request.settings.compressionRestorationStrength = 0.75F;
+        request.settings.settings.targetRate = rifelove::Rational(60);
+        request.settings.settings.encoding.videoStreamIndex = streamIndex;
+        return request;
+    };
+
+    {
+        rifelove::application::TaskQueue queue(fixture.directory / "invalid-stream.sqlite");
+        const auto imported = rifelove::application::importVideos(queue,makeRequest(tagged,42));
+        ASSERT_TRUE(imported.taskIds.empty());
+        ASSERT_EQ(imported.rejected.size(),1U);
+        EXPECT_EQ(imported.rejected.front().reason,rifelove::application::ImportRejection::noVideo);
+    }
+
+    const auto dual = fixture.directory / "dual-profile.mkv";
+    ASSERT_TRUE(writeDualTaggedImportSource(dual));
+    const auto dualInfo = rifelove::media::MediaEngine::probe(dual.string());
+    ASSERT_EQ(dualInfo.streams.size(),2U);
+    ASSERT_EQ(dualInfo.streams[0].color.range,"tv");
+    ASSERT_EQ(dualInfo.streams[1].color.range,"pc");
+    {
+        rifelove::application::TaskQueue queue(fixture.directory / "explicit-profile-stream.sqlite");
+        const auto imported = rifelove::application::importVideos(queue,makeRequest(dual,1));
+        EXPECT_TRUE(imported.taskIds.empty());
+        ASSERT_EQ(imported.rejected.size(),1U);
+        EXPECT_EQ(imported.rejected.front().reason,rifelove::application::ImportRejection::unsupportedRestorationModelProfile);
+    }
+
+    for (const auto& [name, colorSettings] : std::array<std::pair<const char*,const char*>,2>{
+             std::pair{"full-range", "range=full:color_primaries=bt709:color_trc=bt709:colorspace=bt709"},
+             std::pair{"srgb-transfer", "range=tv:color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709"}}) {
+        const auto source = fixture.directory / (std::string(name) + ".mkv");
+        ASSERT_TRUE(writeTaggedImportSource(source,colorSettings));
+        const auto info = rifelove::media::MediaEngine::probe(source.string());
+        const auto selected = std::find_if(info.streams.begin(),info.streams.end(),[&](const auto& stream) {
+            return stream.index == info.preferredVideoStream && stream.type == "video";
+        });
+        ASSERT_NE(selected,info.streams.end());
+        if (std::string(name) == "full-range") EXPECT_EQ(selected->color.range,"pc");
+        else EXPECT_EQ(selected->color.transfer,"iec61966-2-1");
+        rifelove::application::TaskQueue queue(fixture.directory / (std::string(name) + ".sqlite"));
+        const auto imported = rifelove::application::importVideos(queue,makeRequest(source,-1));
+        EXPECT_TRUE(imported.taskIds.empty());
+        ASSERT_EQ(imported.rejected.size(),1U);
+        EXPECT_EQ(imported.rejected.front().reason,rifelove::application::ImportRejection::unsupportedRestorationModelProfile);
+    }
 }
 TEST(ProcessingConfiguration, RoundTripsAllAdvancedSettingsAndPinnedIdentity) {
     const auto job = configuredJob(); const auto encoded = serializeJob(job);
@@ -149,7 +242,7 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     job.settings.automaticTemporalDenoise = rifelove::restoration::AutomaticDenoiseSettings{-0.25,0.7,12.0,0.8};
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),9);
+    EXPECT_EQ(document.at("schemaVersion"),10);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),1);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("replayPolicy"),"software-source-pts-from-start-v1");
     const auto restored = parseJob(job.source,job.output,encoded);
@@ -174,6 +267,53 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     const auto fixed = parseJob(job.source,job.output,legacy.dump());
     EXPECT_FALSE(fixed.settings.automaticTemporalDenoise);
     EXPECT_FLOAT_EQ(fixed.settings.temporalDenoiseSigma255,17.5F);
+}
+TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndSchemaTenDefaultsLegacyDisabled) {
+    auto job = configuredJob();
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationStrength = 0.75F;
+    const auto encoded = serializeJob(job);
+    const auto document = nlohmann::json::parse(encoded);
+    EXPECT_EQ(document.at("schemaVersion"),10);
+    EXPECT_EQ(document.at("compressionRestorationModelDirectory"),"C:/models/stdf-r3");
+    EXPECT_EQ(document.at("expectedCompressionRestorationDescriptorSha256"),std::string(64,'d'));
+    EXPECT_FLOAT_EQ(document.at("compressionRestorationStrength").get<float>(),0.75F);
+    const auto restored = parseJob(job.source,job.output,encoded);
+    EXPECT_EQ(restored.compressionRestorationModelDirectory,job.compressionRestorationModelDirectory);
+    EXPECT_EQ(restored.expectedCompressionRestorationDescriptorSha256,job.expectedCompressionRestorationDescriptorSha256);
+    EXPECT_FLOAT_EQ(restored.compressionRestorationStrength,0.75F);
+
+    auto legacy = document;
+    legacy["schemaVersion"] = 9;
+    legacy.erase("compressionRestorationModelDirectory");
+    legacy.erase("expectedCompressionRestorationDescriptorSha256");
+    legacy.erase("compressionRestorationStrength");
+    const auto disabled = parseJob(job.source,job.output,legacy.dump());
+    EXPECT_TRUE(disabled.compressionRestorationModelDirectory.empty());
+    EXPECT_TRUE(disabled.expectedCompressionRestorationDescriptorSha256.empty());
+    EXPECT_FLOAT_EQ(disabled.compressionRestorationStrength,0.0F);
+}
+TEST(ProcessingConfiguration, CompressionRestorationStrengthAndBundleAreStrictlyValidated) {
+    auto job = configuredJob();
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationStrength = 0.0F;
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationStrength = -0.01F;
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationStrength = 1.01F;
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationStrength = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationStrength = std::numeric_limits<float>::infinity();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationStrength = 0.5F;
+    job.expectedCompressionRestorationDescriptorSha256.clear();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationModelDirectory.clear();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
 }
 TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThresholds) {
     const auto job = configuredJob(); auto json = nlohmann::json::parse(serializeJob(job));

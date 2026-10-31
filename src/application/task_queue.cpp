@@ -3,10 +3,13 @@
 #include "application/checkpoint_artifacts.hpp"
 #include "application/job_serialization.hpp"
 #include "application/local_lease.hpp"
+#include "inference/model_pack.hpp"
 #include "media/media_engine.hpp"
 #include <nlohmann/json.hpp>
+#include "restoration/model_pack.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <set>
 #ifndef NOMINMAX
@@ -18,6 +21,13 @@ namespace rifelove::application {
 namespace {
 using Json = nlohmann::json;
 constexpr std::size_t defaultCheckpointFramesPerSegment = 256;
+constexpr int compressionMaximumWidth = 384;
+constexpr int compressionMaximumHeight = 256;
+constexpr const char* compressionInputProfile = "bt709-sdr8";
+constexpr const char* compressionPixelFormat = "yuv420p";
+constexpr const char* compressionTilePolicy = "full-frame-bounded-384x256-v1";
+constexpr const char* compressionDecoderReplayPolicy = "software-source-pts-from-start-v1";
+constexpr const char* compressionSceneReplayPolicy = "scene-bounds-serial-v1";
 std::string utf8(const std::filesystem::path& path) { const auto value = path.u8string(); return {value.begin(),value.end()}; }
 std::filesystem::path path(const std::string& value) { return std::filesystem::path(std::u8string(value.begin(),value.end())); }
 bool samePath(const std::string& a, const std::string& b) {
@@ -43,7 +53,8 @@ const ConfiguredTask& find(const std::vector<ConfiguredTask>& rows, const std::s
 bool ownsOutput(TaskState state) { return state == TaskState::queued || state == TaskState::running || state == TaskState::paused || state == TaskState::interrupted; }
 std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment,
     const std::optional<restoration::Capabilities>& restorationRuntime = std::nullopt,
-    const std::optional<restoration::Capabilities>& temporalRestorationRuntime = std::nullopt, std::stop_token stop = {}) {
+    const std::optional<restoration::Capabilities>& temporalRestorationRuntime = std::nullopt,
+    const std::optional<restoration::Capabilities>& compressionRestorationRuntime = std::nullopt, std::stop_token stop = {}) {
     auto identity = Json::parse(identityText);
     if (identity.value("schemaVersion",0) != 1 && identity.value("schemaVersion",0) != 2)
         throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
@@ -70,6 +81,25 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
     };
     recordRuntime("restorationRuntime",restorationRuntime,job.restorationModelDirectory);
     recordRuntime("temporalRestorationRuntime",temporalRestorationRuntime,job.temporalRestorationModelDirectory);
+    if (compressionRestorationRuntime) {
+        const auto& caps = *compressionRestorationRuntime;
+        if (job.compressionRestorationModelDirectory.empty() ||
+            job.expectedCompressionRestorationDescriptorSha256.empty() ||
+            !std::isfinite(job.compressionRestorationStrength) || job.compressionRestorationStrength <= 0.0F ||
+            caps.modelId.empty() || caps.adapterId.empty() || caps.adapterVersion <= 0 ||
+            caps.runtimeBackend.empty() || caps.runtimeBackend == "unavailable" || caps.runtimeSignature.empty())
+            throw std::invalid_argument("Compression restoration checkpoint identity is incomplete");
+        manifest["compressionRestorationRuntime"] = {
+            {"modelId",caps.modelId}, {"adapterId",caps.adapterId}, {"adapterVersion",caps.adapterVersion},
+            {"backend",caps.runtimeBackend}, {"signature",caps.runtimeSignature},
+            {"descriptorSha256",job.expectedCompressionRestorationDescriptorSha256},
+            {"strength",job.compressionRestorationStrength},
+            {"inputProfile",compressionInputProfile}, {"pixelFormat",compressionPixelFormat},
+            {"maximumWidth",compressionMaximumWidth}, {"maximumHeight",compressionMaximumHeight},
+            {"tilePolicy",compressionTilePolicy}, {"decoderReplayPolicy",compressionDecoderReplayPolicy},
+            {"sceneReplayPolicy",compressionSceneReplayPolicy}
+        };
+    }
     return manifest.dump();
 }
 void validatePublishedResult(const std::string& serialized) {
@@ -152,6 +182,8 @@ std::vector<std::string> TaskQueue::enqueue(std::vector<ProcessingJob> jobs, std
             job.restorationModelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.restorationModelDirectory));
         if (!job.temporalRestorationModelDirectory.empty())
             job.temporalRestorationModelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.temporalRestorationModelDirectory));
+        if (!job.compressionRestorationModelDirectory.empty())
+            job.compressionRestorationModelDirectory = std::filesystem::weakly_canonical(std::filesystem::absolute(job.compressionRestorationModelDirectory));
         if (!std::filesystem::is_regular_file(path(job.source)) || std::filesystem::exists(path(job.output)) || !std::filesystem::is_directory(path(job.output).parent_path()))
             throw std::invalid_argument("Source must exist and output must be a new file in an existing local directory");
         if (!outputs.insert(path(job.output).wstring()).second) throw std::invalid_argument("Another pending/interrupted task or this batch owns this output path");
@@ -245,6 +277,31 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
         restoreRuntime("restorationRuntime",job.restorationModelDirectory);
         restoreRuntime("temporalRestorationRuntime",job.temporalRestorationModelDirectory);
     }
+    if (!job.compressionRestorationModelDirectory.empty()) {
+        const auto saved = Json::parse(manifest);
+        if (!saved.contains("compressionRestorationRuntime") || !saved.at("compressionRestorationRuntime").is_object())
+            throw std::logic_error("This checkpoint has no verified compression restoration runtime identity; restart with a new output");
+        const auto& runtime = saved.at("compressionRestorationRuntime");
+        const auto model = restoration::loadModelPack(job.compressionRestorationModelDirectory);
+        if (!restoration::supportsStdfCudaModel(model))
+            throw std::logic_error("The selected compression restoration model is no longer a strictly qualified STDF CUDA model; restart with a new output");
+        const auto descriptorHash = inference::sha256File(model.directory / "model.json",256 * 1024);
+        if (runtime.value("descriptorSha256",std::string()) != job.expectedCompressionRestorationDescriptorSha256 ||
+            runtime.value("descriptorSha256",std::string()) != descriptorHash ||
+            runtime.value("modelId",std::string()) != model.id ||
+            runtime.value("adapterId",std::string()) != model.capabilities.adapterId ||
+            runtime.value("adapterVersion",0) != model.capabilities.adapterVersion ||
+            runtime.value("inputProfile",std::string()) != compressionInputProfile ||
+            runtime.value("pixelFormat",std::string()) != compressionPixelFormat ||
+            runtime.value("maximumWidth",0) != compressionMaximumWidth ||
+            runtime.value("maximumHeight",0) != compressionMaximumHeight ||
+            runtime.value("tilePolicy",std::string()) != compressionTilePolicy ||
+            runtime.value("decoderReplayPolicy",std::string()) != compressionDecoderReplayPolicy ||
+            runtime.value("sceneReplayPolicy",std::string()) != compressionSceneReplayPolicy ||
+            runtime.value("strength",std::numeric_limits<float>::quiet_NaN()) != job.compressionRestorationStrength)
+            throw std::logic_error("Compression restoration model, strength, shape or replay identity changed; restart with a new output");
+        expectedManifest["compressionRestorationRuntime"] = runtime;
+    }
     if (!CheckpointArtifacts::manifestMatches(manifest,expectedManifest.dump()))
         throw std::logic_error("Task settings, model identity or local media runtime changed; restart with a new output");
     CheckpointArtifacts artifacts(store_,id,path(task.task.outputPath));
@@ -315,7 +372,12 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (settings.temporalRestorationBackend) temporalRestorationRuntime = settings.temporalRestorationBackend->capabilities();
                 if (job.temporalRestorationModelDirectory.empty() == temporalRestorationRuntime.has_value())
                     throw std::logic_error("Temporal restoration model and runtime identity do not match");
-                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime,temporalRestorationRuntime,cancellation.get_token());
+                std::optional<restoration::Capabilities> compressionRestorationRuntime;
+                if (settings.compressionRestorationBackend) compressionRestorationRuntime = settings.compressionRestorationBackend->capabilities();
+                if (job.compressionRestorationModelDirectory.empty() == compressionRestorationRuntime.has_value())
+                    throw std::logic_error("Compression restoration model and runtime identity do not match");
+                const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime,
+                    temporalRestorationRuntime,compressionRestorationRuntime,cancellation.get_token());
                 const auto previousManifest = artifacts.manifest();
                 if (!previousManifest.empty()) CheckpointArtifacts::requireMediaPipelineIdentity(previousManifest,manifest);
                 if (!previousManifest.empty() && !CheckpointArtifacts::manifestMatches(previousManifest,manifest))
@@ -324,7 +386,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (previousManifest.empty()) artifacts.setManifest(manifest);
                 PipelineCheckpoint checkpoint;
                 checkpoint.framesPerSegment = checkpointFramesPerSegment_;
-                checkpoint.restorationIdentityVerified = restorationRuntime.has_value() || temporalRestorationRuntime.has_value();
+                checkpoint.restorationIdentityVerified = restorationRuntime.has_value() || temporalRestorationRuntime.has_value() || compressionRestorationRuntime.has_value();
                 checkpoint.completedSegments = artifacts.verifyCommitted(cancellation.get_token());
                 checkpoint.segmentPath = [&artifacts](std::uint64_t index) { return utf8(artifacts.segmentPath(index)); };
                 checkpoint.commitSegment = [&artifacts,token = cancellation.get_token()](std::uint64_t index,std::uint64_t first,

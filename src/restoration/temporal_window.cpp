@@ -24,6 +24,9 @@ Request TemporalWindow::takeCenter() {
     request.missingFramesAfter = capabilities_.temporalFramesAfter - after;
     request.centerIndex = before;
     request.inputProfile = media::rifeSdrInputProfile(frames_[nextCenter_].color);
+    if (!sceneFirstIndex_ || sceneSerial_ == 0)
+        throw std::logic_error("Temporal restoration scene state is not initialized");
+    request.sceneBounds = SceneBounds{*sceneFirstIndex_,sceneEndKnown_ ? sceneLastIndex_ : std::nullopt,sceneSerial_};
     for (auto index = nextCenter_ - before; index <= nextCenter_ + after; ++index)
         request.context.push_back(frames_[index]);
     validateRequest(capabilities_,request);
@@ -63,12 +66,25 @@ std::vector<Request> TemporalWindow::push(media::DecodedFrame frame, bool sceneC
     }
     std::vector<Request> ready;
     if (sceneCutBefore) {
+        if (!frames_.empty()) {
+            sceneLastIndex_ = frames_.back().index;
+            sceneEndKnown_ = true;
+        }
         while (nextCenter_ < frames_.size()) ready.push_back(takeCenter());
         frames_.clear();
         nextCenter_ = 0;
+        sceneFirstIndex_.reset();
+        sceneLastIndex_.reset();
+        sceneEndKnown_ = false;
     }
     lastTimestamp_ = frame.timestamp;
     lastIndex_ = frame.index;
+    if (!sceneFirstIndex_) {
+        sceneFirstIndex_ = frame.index;
+        sceneLastIndex_.reset();
+        sceneEndKnown_ = false;
+        ++sceneSerial_;
+    }
     frames_.push_back(std::move(frame));
     while (nextCenter_ + capabilities_.temporalFramesAfter < frames_.size()) ready.push_back(takeCenter());
     return ready;
@@ -77,6 +93,10 @@ std::vector<Request> TemporalWindow::push(media::DecodedFrame frame, bool sceneC
 std::vector<Request> TemporalWindow::finish() {
     if (finished_) return {};
     std::vector<Request> ready;
+    if (!frames_.empty()) {
+        sceneLastIndex_ = frames_.back().index;
+        sceneEndKnown_ = true;
+    }
     while (nextCenter_ < frames_.size()) ready.push_back(takeCenter());
     frames_.clear();
     nextCenter_ = 0;

@@ -114,15 +114,26 @@ void validate(const ProcessingJob& job) {
     text(job.source,32768); text(job.output,32768); text(utf8(job.modelDirectory),32768); text(utf8(job.runtimeDirectory),32768);
     text(utf8(job.restorationModelDirectory),32768,false);
     text(utf8(job.temporalRestorationModelDirectory),32768,false);
+    text(utf8(job.compressionRestorationModelDirectory),32768,false);
     if (job.deviceOrdinal < 0 || job.settings.targetRate <= Rational(0) || !job.settings.hostFloatBufferLimit) throw std::invalid_argument("Invalid target/device/buffer configuration");
     if (job.sourceDurationEstimate && *job.sourceDurationEstimate <= Rational(0)) throw std::invalid_argument("Invalid source duration estimate");
     hash(job.expectedSourceSha256); hash(job.expectedModelSha256);
     hash(job.expectedRestorationDescriptorSha256);
     hash(job.expectedTemporalRestorationDescriptorSha256);
+    hash(job.expectedCompressionRestorationDescriptorSha256);
     if (job.restorationModelDirectory.empty() != job.expectedRestorationDescriptorSha256.empty())
         throw std::invalid_argument("A local restoration model path and pinned descriptor hash must be supplied together");
     if (job.temporalRestorationModelDirectory.empty() != job.expectedTemporalRestorationDescriptorSha256.empty())
         throw std::invalid_argument("A temporal restoration model path and pinned descriptor hash must be supplied together");
+    if (!std::isfinite(job.compressionRestorationStrength) || job.compressionRestorationStrength < 0.0F ||
+        job.compressionRestorationStrength > 1.0F)
+        throw std::invalid_argument("Compression restoration strength must be a finite value from zero to one");
+    const bool compressionDisabled = job.compressionRestorationModelDirectory.empty() &&
+        job.expectedCompressionRestorationDescriptorSha256.empty() && job.compressionRestorationStrength == 0.0F;
+    const bool compressionEnabled = !job.compressionRestorationModelDirectory.empty() &&
+        !job.expectedCompressionRestorationDescriptorSha256.empty() && job.compressionRestorationStrength > 0.0F;
+    if (!compressionDisabled && !compressionEnabled)
+        throw std::invalid_argument("Compression restoration directory, descriptor hash and strength must be enabled together");
     temporalDenoiseSigma(job.settings.temporalDenoiseSigma255);
     if (job.settings.automaticTemporalDenoise)
         (void)restoration::AutomaticDenoiseController(*job.settings.automaticTemporalDenoise);
@@ -153,11 +164,14 @@ void validate(const ProcessingJob& job) {
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",9},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",10},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
         {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
         {"temporalRestorationModelDirectory",utf8(job.temporalRestorationModelDirectory)},
         {"expectedTemporalRestorationDescriptorSha256",job.expectedTemporalRestorationDescriptorSha256},
+        {"compressionRestorationModelDirectory",utf8(job.compressionRestorationModelDirectory)},
+        {"expectedCompressionRestorationDescriptorSha256",job.expectedCompressionRestorationDescriptorSha256},
+        {"compressionRestorationStrength",job.compressionRestorationStrength},
         {"runtimeDirectory",utf8(job.runtimeDirectory)},{"deviceOrdinal",job.deviceOrdinal},{"hostFloatBufferLimit",job.settings.hostFloatBufferLimit},
         {"inferenceBackend",job.settings.inferenceBackend},
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
@@ -185,7 +199,7 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion < 1 || schemaVersion > 9) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion < 1 || schemaVersion > 10) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -197,6 +211,11 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (schemaVersion >= 8) {
         job.temporalRestorationModelDirectory = path(json.at("temporalRestorationModelDirectory").get<std::string>());
         job.expectedTemporalRestorationDescriptorSha256 = json.at("expectedTemporalRestorationDescriptorSha256").get<std::string>();
+    }
+    if (schemaVersion >= 10) {
+        job.compressionRestorationModelDirectory = path(json.at("compressionRestorationModelDirectory").get<std::string>());
+        job.expectedCompressionRestorationDescriptorSha256 = json.at("expectedCompressionRestorationDescriptorSha256").get<std::string>();
+        job.compressionRestorationStrength = json.at("compressionRestorationStrength").get<float>();
     }
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
     if (schemaVersion >= 3) job.settings.inferenceBackend = json.at("inferenceBackend").get<std::string>();
@@ -289,6 +308,26 @@ void pinRestorationModelDescriptor(ProcessingJob& job) {
     job.expectedRestorationDescriptorSha256 = std::move(imageHash);
     job.temporalRestorationModelDirectory = std::move(temporalDirectory);
     job.expectedTemporalRestorationDescriptorSha256 = std::move(temporalHash);
+
+    if (!std::isfinite(job.compressionRestorationStrength) || job.compressionRestorationStrength < 0.0F ||
+        job.compressionRestorationStrength > 1.0F)
+        throw std::invalid_argument("Compression restoration strength must be a finite value from zero to one");
+    if (job.compressionRestorationModelDirectory.empty()) {
+        if (!job.expectedCompressionRestorationDescriptorSha256.empty() || job.compressionRestorationStrength != 0.0F)
+            throw std::invalid_argument("A compression restoration model, descriptor hash and strength must be supplied together");
+        return;
+    }
+    if (job.compressionRestorationStrength <= 0.0F)
+        throw std::invalid_argument("Compression restoration strength must be greater than zero when a model is selected");
+    const auto model = restoration::loadModelPack(job.compressionRestorationModelDirectory);
+    if (!restoration::supportsStdfCudaModel(model))
+        throw std::invalid_argument("The selected compression restoration model is not the strictly qualified STDF CUDA model");
+    const auto descriptorHash = inference::sha256File(model.directory / "model.json",256 * 1024);
+    if (!job.expectedCompressionRestorationDescriptorSha256.empty() &&
+        job.expectedCompressionRestorationDescriptorSha256 != descriptorHash)
+        throw std::invalid_argument("Selected compression restoration model differs from its pinned local descriptor");
+    job.compressionRestorationModelDirectory = model.directory;
+    job.expectedCompressionRestorationDescriptorSha256 = descriptorHash;
 }
 std::string serializeIdentity(const ProcessingIdentity& i) {
     if (!adapterIdentifier(i.adapterId) || i.adapterVersion <= 0) throw std::invalid_argument("Processing identity has an invalid model adapter");

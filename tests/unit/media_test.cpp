@@ -114,6 +114,36 @@ TEST(MediaEngine, DecodedPixelsRemainOwnedAfterDecoderCloses) {
     EXPECT_EQ(retained.planes[0].data[4], 255);
 }
 
+TEST(MediaEngine, DecoderPublishesExactOwnedPlaneExtent) {
+    ImageFixture fixture;
+    DecodedFrame retained{};
+    (void)MediaEngine::decodeVideo(fixture.path.string(), [&](const DecodedFrame& frame) { retained = frame; });
+    ASSERT_TRUE(retained.storage);
+    ASSERT_TRUE(retained.planes[0].extent);
+    const auto& extent = *retained.planes[0].extent;
+    ASSERT_NE(extent.allocationBegin,nullptr);
+    EXPECT_GT(extent.allocationBytes,extent.dataOffset);
+    const auto proven = rifelove::media::provenBytesFromData(retained.planes[0]);
+    ASSERT_TRUE(proven);
+    EXPECT_GE(*proven,6U);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(retained.planes[0].data) -
+                  reinterpret_cast<std::uintptr_t>(extent.allocationBegin), extent.dataOffset);
+}
+
+TEST(MediaEngine, ProvenPlaneBytesRejectNegativeStrideAndMismatchedBounds) {
+    std::array<std::uint8_t,32> bytes{};
+    rifelove::media::FramePlane plane{bytes.data() + 8, -4,
+        rifelove::media::FramePlaneExtent{bytes.data(),bytes.size(),8}};
+    EXPECT_FALSE(rifelove::media::provenBytesFromData(plane));
+    plane.stride = 4;
+    ASSERT_TRUE(rifelove::media::provenBytesFromData(plane));
+    ASSERT_TRUE(rifelove::media::provenPlaneSpan(plane));
+    EXPECT_EQ(rifelove::media::provenPlaneSpan(plane)->data(),plane.data);
+    EXPECT_EQ(*rifelove::media::provenBytesFromData(plane),24U);
+    plane.extent->dataOffset = 7;
+    EXPECT_FALSE(rifelove::media::provenBytesFromData(plane));
+}
+
 TEST(MediaEngine, NvencApiMismatchReportsDriverAndFfmpegRequirements) {
     const auto mismatch = rifelove::media::findNvencApiMismatch(
         rifelove::media::NvencApiVersion{12,2},{13,0},"570.0");

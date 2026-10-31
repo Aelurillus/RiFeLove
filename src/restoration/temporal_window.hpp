@@ -22,6 +22,10 @@ private:
     std::size_t nextCenter_ = 0;
     std::optional<Rational> lastTimestamp_;
     std::optional<std::size_t> lastIndex_;
+    std::optional<std::size_t> sceneFirstIndex_;
+    std::optional<std::size_t> sceneLastIndex_;
+    std::uint64_t sceneSerial_ = 0;
+    bool sceneEndKnown_ = false;
     bool finished_ = false;
 };
 

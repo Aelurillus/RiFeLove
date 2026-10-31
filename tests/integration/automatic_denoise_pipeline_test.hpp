@@ -4,6 +4,10 @@
 #include "application/job_serialization.hpp"
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <string>
+
 namespace {
 // The identity backend records real production requests. These tests establish
 // conditioning/scene/timeline plumbing, not neural denoising quality.
@@ -20,6 +24,7 @@ public:
         sigmas.push_back(*request.denoiseSigma255);
         const auto& center = request.context[request.centerIndex];
         timestamps.push_back(*center.timestamp);
+        if (order) order->push_back("temporal:" + std::to_string(center.index));
         for (const auto& frame : request.context)
             EXPECT_EQ(frame.index < 6,center.index < 6) << "Temporal input crossed the fixture scene cut";
         auto output = center;
@@ -36,11 +41,109 @@ public:
     }
     std::vector<float> sigmas;
     std::vector<Rational> timestamps;
+    std::vector<std::string>* order = nullptr;
     bool conditioningChangesPixels = false; // Protocol fixture, not neural enhancement.
+};
+
+class RecordingCompressionBackend final : public rifelove::restoration::IVideoRestorationBackend {
+public:
+    struct RequestRecord {
+        std::size_t centerIndex = 0;
+        std::size_t contextSize = 0;
+        std::size_t missingBefore = 0;
+        std::size_t missingAfter = 0;
+        std::size_t sourceIndex = 0;
+        rifelove::Rational timestamp;
+        std::uint64_t sceneSerial = 0;
+        std::size_t sceneFirstIndex = 0;
+    };
+    rifelove::restoration::Capabilities capabilities() const override {
+        using namespace rifelove::restoration;
+        return {"test-deblock","stdf-test-v1",1,tasks,
+            {Placement::sourceRateBeforeInterpolation},{"bt709-sdr8"},framesBefore,framesAfter,1,1,true};
+    }
+    std::future<rifelove::restoration::Result> restore(rifelove::restoration::Request request) override {
+        rifelove::restoration::validateRequest(capabilities(),request);
+        if (!request.sceneBounds) throw std::runtime_error("Compression fixture requires scene bounds");
+        const auto& center = request.context[request.centerIndex];
+        requests.push_back({request.centerIndex,request.context.size(),request.missingFramesBefore,
+            request.missingFramesAfter,center.index,*center.timestamp,request.sceneBounds->serial,request.sceneBounds->firstIndex});
+        if (order) order->push_back("compression:" + std::to_string(center.index));
+        std::promise<rifelove::restoration::Result> promise;
+        promise.set_value({center,0.0});
+        return promise.get_future();
+    }
+    std::vector<RequestRecord> requests;
+    std::vector<std::string>* order = nullptr;
+    std::vector<rifelove::restoration::Task> tasks{rifelove::restoration::Task::deblock};
+    std::size_t framesBefore = 3;
+    std::size_t framesAfter = 3;
 };
 
 class AutomaticDenoisePipeline : public MotionBlurPipeline {
 protected:
+    void verifyCompressionShortClip() {
+        const auto source = directory / "short-source.mkv";
+        writeExposureSource(source,30,1);
+        ExposureLinearBackend backend(*device);
+        auto compression = std::make_shared<RecordingCompressionBackend>();
+        auto config = settings();
+        config.motionBlur.enabled = false;
+        config.compressionRestorationBackend = compression;
+        const auto output = directory / "short-compression.mkv";
+        const auto result = rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend);
+        ASSERT_EQ(compression->requests.size(),1U);
+        EXPECT_EQ(compression->requests.front().contextSize,1U);
+        EXPECT_EQ(compression->requests.front().missingBefore,3U);
+        EXPECT_EQ(compression->requests.front().missingAfter,3U);
+        EXPECT_EQ(compression->requests.front().sceneSerial,1U);
+        EXPECT_EQ(compression->requests.front().sceneFirstIndex,0U);
+        EXPECT_EQ(result.sourceDecodeAcceleration,"software");
+        EXPECT_EQ(result.validation.decodedFrames,2U);
+    }
+
+    void verifyCompressionStage() {
+        const auto source = directory / "source.mkv";
+        writeExposureSource(source,30,12,6);
+        ExposureLinearBackend backend(*device);
+        auto compression = std::make_shared<RecordingCompressionBackend>();
+        auto temporal = std::make_shared<RecordingTemporalDenoiseBackend>();
+        std::vector<std::string> order;
+        compression->order = &order;
+        temporal->order = &order;
+        auto config = settings();
+        config.motionBlur.enabled = false;
+        config.compressionRestorationBackend = compression;
+        config.temporalRestorationBackend = temporal;
+        const auto output = directory / "compression-and-denoise.mkv";
+        const auto result = rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend);
+        ASSERT_EQ(compression->requests.size(),12U);
+        ASSERT_EQ(temporal->timestamps.size(),12U);
+        ASSERT_EQ(result.sourceFrames,12U);
+        EXPECT_EQ(result.sourceDecodeAcceleration,"software");
+        ASSERT_EQ(result.validation.decodedFrames,24U);
+        ASSERT_EQ(order.front(),"compression:0");
+        const auto firstTemporal = std::find_if(order.begin(),order.end(),[](const std::string& value) {
+            return value.rfind("temporal:",0) == 0;
+        });
+        ASSERT_NE(firstTemporal,order.end());
+        EXPECT_TRUE(std::all_of(order.begin(),firstTemporal,[](const std::string& value) {
+            return value.rfind("compression:",0) == 0;
+        }));
+        for (std::size_t index = 0; index < compression->requests.size(); ++index) {
+            const auto& request = compression->requests[index];
+            EXPECT_EQ(request.contextSize + request.missingBefore + request.missingAfter,7U);
+            EXPECT_LE(request.contextSize,7U);
+            const auto scene = index < 6 ? 1U : 2U;
+            const auto first = index < 6 ? 0U : 6U;
+            EXPECT_EQ(request.sceneSerial,scene);
+            EXPECT_EQ(request.sceneFirstIndex,first);
+            EXPECT_EQ(request.sourceIndex,index);
+        }
+        const auto original = readExposurePixels(source);
+        EXPECT_EQ(temporal->timestamps,original.timestamps);
+    }
+
     void verifyConditioningAndTiming() {
         const auto source = directory / "source.mkv";
         std::mt19937 random(98123);
@@ -104,6 +207,17 @@ protected:
         expectNoPublication(output);
         config.temporalRestorationBackend = std::make_shared<RecordingTemporalDenoiseBackend>();
         config.checkpoint.emplace();
+        EXPECT_THROW((void)rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend),std::invalid_argument);
+        expectNoPublication(output);
+        config.automaticTemporalDenoise.reset();
+        config.temporalRestorationBackend.reset();
+        config.compressionRestorationBackend = std::make_shared<RecordingCompressionBackend>();
+        EXPECT_THROW((void)rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend),std::invalid_argument);
+        expectNoPublication(output);
+        config.checkpoint.reset();
+        auto invalidCompression = std::make_shared<RecordingCompressionBackend>();
+        invalidCompression->framesBefore = 2;
+        config.compressionRestorationBackend = invalidCompression;
         EXPECT_THROW((void)rifelove::interpolateVideo(source.string(),output.string(),config,*device,backend),std::invalid_argument);
         expectNoPublication(output);
     }

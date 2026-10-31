@@ -11,7 +11,9 @@ extern "C" {
 }
 
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 
 namespace rifelove::media {
@@ -24,6 +26,33 @@ std::string ffmpegError(int code) {
     std::array<char, AV_ERROR_MAX_STRING_SIZE> message{};
     if (av_strerror(code,message.data(),message.size()) < 0) return "FFmpeg error " + std::to_string(code);
     return message.data();
+}
+
+// AVFrame data pointers may point into one shared allocation (for example a
+// single buffer containing all YUV planes), and a negative linesize may make
+// data[i] point at the last visible row.  Retain the actual AVBufferRef range
+// rather than estimating width*height or assuming one buffer per plane.
+std::optional<FramePlaneExtent> extentFor(const AVFrame* frame, int plane) {
+    if (!frame || plane < 0 || plane >= AV_NUM_DATA_POINTERS || !frame->data[plane]) return std::nullopt;
+    const auto dataAddress = reinterpret_cast<std::uintptr_t>(frame->data[plane]);
+    std::optional<FramePlaneExtent> best;
+    auto inspect = [&](const AVBufferRef* buffer) {
+        if (!buffer || !buffer->data || buffer->size <= 0) return;
+        const auto begin = reinterpret_cast<std::uintptr_t>(buffer->data);
+        const auto bytes = static_cast<std::size_t>(buffer->size);
+        if (begin > std::numeric_limits<std::uintptr_t>::max() - bytes) return;
+        const auto end = begin + bytes;
+        if (dataAddress < begin || dataAddress >= end) return;
+        const auto offset = static_cast<std::size_t>(dataAddress - begin);
+        if (offset > bytes) return;
+        // If a pointer is covered by multiple retained buffers, prefer the
+        // smallest proven allocation to keep the consumer's bound tight.
+        if (!best || bytes < best->allocationBytes)
+            best = FramePlaneExtent{buffer->data,bytes,offset};
+    };
+    for (int index = 0; index < AV_NUM_DATA_POINTERS; ++index) inspect(frame->buf[index]);
+    for (int index = 0; index < frame->nb_extended_buf; ++index) inspect(frame->extended_buf[index]);
+    return best;
 }
 
 struct HardwareFormatSelection {
@@ -197,7 +226,8 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
                 output.duration = duration;
                 output.timestampRecovered = resolution.recovered;
                 output.color = normalizeDecodedSdrColor(detail::color(retained.get()), streamColor);
-                for (std::size_t i = 0; i < output.planes.size(); ++i) output.planes[i] = {retained->data[i], retained->linesize[i]};
+                for (std::size_t i = 0; i < output.planes.size(); ++i)
+                    output.planes[i] = {retained->data[i], retained->linesize[i], extentFor(retained.get(),static_cast<int>(i))};
                 output.storage = std::move(retained);
                 onFrame(output);
             }

@@ -38,5 +38,9 @@ struct ModelPack {
 [[nodiscard]] bool supportsOnnxCudaOutputRateModel(const ModelPack& model);
 [[nodiscard]] bool supportsOnnxCudaTemporalAdapter(const Capabilities& capabilities);
 [[nodiscard]] bool supportsOnnxCudaTemporalModel(const ModelPack& model);
+// Strict local identity gate for the experimental STDF-R3 seven-frame luma
+// adapter. A matching descriptor is still not a claim of high-resolution
+// qualification; the adapter remains bounded by its reviewed 384x256 ceiling.
+[[nodiscard]] bool supportsStdfCudaModel(const ModelPack& model);
 
 } // namespace rifelove::restoration

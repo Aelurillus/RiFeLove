@@ -35,6 +35,21 @@ void check(bool condition, const char* message) {
     }
 }
 
+bool pumpNativeMessages(const std::function<bool()>& condition, std::chrono::milliseconds timeout = std::chrono::milliseconds(800)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) return false;
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (condition()) return true;
+        Sleep(10);
+    }
+    return condition();
+}
+
 BOOL CALLBACK findWindow(HWND window, LPARAM result) {
     wchar_t name[128]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
@@ -757,6 +772,123 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
     scrollTop(); SetFocus(source);
 }
 
+bool openComboByPostedMouse(HWND combo) {
+    if (!combo) return false;
+    RECT client{};
+    GetClientRect(combo, &client);
+    const LPARAM point = MAKELPARAM((client.right - client.left) / 2, (client.bottom - client.top) / 2);
+    SetFocus(combo);
+    PostMessageW(combo, WM_LBUTTONDOWN, MK_LBUTTON, point);
+    PostMessageW(combo, WM_LBUTTONUP, 0, point);
+    return pumpNativeMessages([&] { return SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != FALSE; });
+}
+
+bool openComboByPostedKey(HWND combo, bool altDown) {
+    if (!combo) return false;
+    SetFocus(combo);
+    if (altDown) {
+        constexpr LPARAM context = static_cast<LPARAM>(1) << 29;
+        PostMessageW(combo, WM_SYSKEYDOWN, VK_DOWN, context | 1);
+        PostMessageW(combo, WM_SYSKEYUP, VK_DOWN, context | (static_cast<LPARAM>(1) << 30) | (static_cast<LPARAM>(1) << 31) | 1);
+    } else {
+        PostMessageW(combo, WM_KEYDOWN, VK_F4, 1);
+        PostMessageW(combo, WM_KEYUP, VK_F4, (static_cast<LPARAM>(1) << 30) | (static_cast<LPARAM>(1) << 31) | 1);
+    }
+    return pumpNativeMessages([&] { return SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != FALSE; });
+}
+
+bool closeComboByPostedEscape(HWND combo) {
+    if (!combo) return false;
+    PostMessageW(combo, WM_KEYDOWN, VK_ESCAPE, 1);
+    PostMessageW(combo, WM_KEYUP, VK_ESCAPE, (static_cast<LPARAM>(1) << 30) | (static_cast<LPARAM>(1) << 31) | 1);
+    return pumpNativeMessages([&] { return SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) == FALSE; });
+}
+
+void checkPostedComboInteraction(HWND window, HWND combo, HWND button) {
+    check(combo && button, "find combo and button for posted native input regression");
+    if (!combo || !button) return;
+    const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
+    const int itemHeight = static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
+    check(count > 0 && itemHeight > 0, "posted-input combo has measurable items");
+    if (count <= 0 || itemHeight <= 0) return;
+
+    RECT originalWindow{};
+    GetWindowRect(window, &originalWindow);
+    const auto checkPopup = [&](const char* source, bool expectAbove) {
+        COMBOBOXINFO info{};
+        info.cbSize = sizeof(info);
+        RECT field{};
+        check(GetWindowRect(combo, &field) && GetComboBoxInfo(combo, &info) && info.hwndList,
+              source);
+        if (!info.hwndList) return;
+        RECT list{};
+        GetWindowRect(info.hwndList, &list);
+        RECT dropped{};
+        const LRESULT droppedResult = SendMessageW(combo, CB_GETDROPPEDCONTROLRECT, 0, reinterpret_cast<LPARAM>(&dropped));
+        check(droppedResult != CB_ERR && dropped.right > dropped.left && dropped.bottom > dropped.top,
+              "native combo reports a valid dropped-control rectangle");
+        MONITORINFO monitor{};
+        monitor.cbSize = sizeof(monitor);
+        check(GetMonitorInfoW(MonitorFromWindow(combo, MONITOR_DEFAULTTONEAREST), &monitor) != FALSE,
+              "read work area for posted combo popup");
+        const RECT work = monitor.rcWork;
+        check(IsWindowVisible(info.hwndList), "posted combo input makes the native popup visible");
+        check(list.top >= work.top && list.bottom <= work.bottom,
+              "posted combo popup stays inside the monitor work area");
+        check(list.bottom <= field.top || list.top >= field.bottom,
+              "posted combo popup does not overlap the closed combo field");
+        if (expectAbove) check(list.bottom <= field.top, "bottom-edge popup is attached above the field");
+        else check(list.top >= field.bottom, "normal popup is attached below the field");
+        check(list.bottom - list.top >= itemHeight * std::min(count, 3),
+              "posted combo popup exposes complete rows");
+    };
+    const auto checkButtonHit = [&] {
+        RECT buttonRect{};
+        GetWindowRect(button, &buttonRect);
+        POINT point{(buttonRect.left + buttonRect.right) / 2, (buttonRect.top + buttonRect.bottom) / 2};
+        ScreenToClient(window, &point);
+        check(ChildWindowFromPointEx(window, point, CWP_SKIPINVISIBLE) == button,
+              "closing the popup restores the button hit target");
+    };
+
+    check(openComboByPostedMouse(combo), "posted mouse click opens the combo popup");
+    if (SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) checkPopup("read popup after posted mouse click", false);
+    check(closeComboByPostedEscape(combo), "posted Escape closes the mouse-opened combo popup");
+    checkButtonHit();
+
+    check(openComboByPostedKey(combo, false), "posted F4 opens the combo popup");
+    if (SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) checkPopup("read popup after posted F4", false);
+    check(closeComboByPostedEscape(combo), "posted Escape closes the F4-opened combo popup");
+    checkButtonHit();
+
+    check(openComboByPostedKey(combo, true), "posted Alt+Down opens the combo popup");
+    if (SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) checkPopup("read popup after posted Alt+Down", false);
+    check(closeComboByPostedEscape(combo), "posted Escape closes the Alt+Down-opened combo popup");
+    checkButtonHit();
+
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) {
+        const int width = originalWindow.right - originalWindow.left;
+        const int height = originalWindow.bottom - originalWindow.top;
+        RECT field{};
+        GetWindowRect(combo, &field);
+        const int fieldBottomOffset = field.bottom - originalWindow.top;
+        const int edgeTop = monitor.rcWork.bottom - fieldBottomOffset - 4;
+        SetWindowPos(window, nullptr, monitor.rcWork.left + 16, edgeTop,
+            width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+        SendMessageW(window, WM_SIZE, SIZE_RESTORED, 0);
+        SetFocus(combo);
+        check(openComboByPostedKey(combo, false), "bottom-edge F4 opens the combo popup");
+        if (SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) checkPopup("read popup at the bottom edge", true);
+        check(closeComboByPostedEscape(combo), "posted Escape closes the bottom-edge popup");
+        checkButtonHit();
+    }
+    SetWindowPos(window, nullptr, originalWindow.left, originalWindow.top,
+        originalWindow.right - originalWindow.left, originalWindow.bottom - originalWindow.top,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 void checkMissingRestorationDescriptor(NativeApp& app, HWND window) {
     using namespace rifelove;
@@ -1260,15 +1392,16 @@ int wmain(int argc, wchar_t** argv) {
                 const HWND combo = GetDlgItem(window, id);
                 check(combo != nullptr, "find combo box");
                 if (!combo) continue;
-                RECT field{}, dropped{};
+                RECT field{};
                 GetWindowRect(combo, &field);
-                const LRESULT result = SendMessageW(combo, CB_GETDROPPEDCONTROLRECT, 0, reinterpret_cast<LPARAM>(&dropped));
                 const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
                 const int itemHeight = static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
-                check(result != CB_ERR && count > 0 && itemHeight > 0, "read combo dimensions and items");
+                check(count > 0 && itemHeight > 0, "read combo dimensions and items");
+                const UINT dpi = GetDpiForWindow(window);
+                const int maxClosedHeight = itemHeight + MulDiv(16, static_cast<int>(dpi ? dpi : 96U), 96);
+                check(field.bottom - field.top <= maxClosedHeight,
+                      "closed combo field keeps its own height instead of covering following controls");
                 const int visibleItems = std::min(count, 3);
-                check(dropped.bottom - dropped.top >= field.bottom - field.top + itemHeight * visibleItems,
-                      "drop-down has room for its options");
                 if (IsWindowEnabled(combo)) {
                     SendMessageW(combo, CB_SHOWDROPDOWN, TRUE, 0);
                     check(SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != FALSE, "open combo drop-down");
@@ -1278,7 +1411,7 @@ int wmain(int argc, wchar_t** argv) {
                         RECT list{};
                         GetWindowRect(info.hwndList, &list);
                         check(list.bottom - list.top >= itemHeight * visibleItems,
-                              "open list exposes multiple complete items");
+                              "open drop-down has room for its options and exposes complete items");
                     } else check(false, "find combo list window");
                     SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
                     check(SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) == FALSE, "close combo drop-down");
@@ -1317,6 +1450,7 @@ int wmain(int argc, wchar_t** argv) {
                 SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
                 check(openedByMouse, "mouse press opens combo list");
             }
+            checkPostedComboInteraction(window, combo, GetDlgItem(window, 1004));
             const bool processingRun = (argc == 4 || argc == 5) && (std::wstring(argv[1]) == L"--processing" || std::wstring(argv[1]) == L"--cancel" || std::wstring(argv[1]) == L"--upscale-youtube" || std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" || std::wstring(argv[1]) == L"--pause-resume" || std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");
             const bool batchRun = argc == 3 && (std::wstring(argv[1]) == L"--batch" || std::wstring(argv[1]) == L"--batch-reject" || std::wstring(argv[1]) == L"--batch-cancel" || std::wstring(argv[1]) == L"--batch-all-rejected" || std::wstring(argv[1]) == L"--batch-youtube");
             const bool switchRun = argc == 4 && std::wstring(argv[1]) == L"--switch";

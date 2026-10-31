@@ -17,6 +17,11 @@ struct ProcessingJob {
     // Optional source-rate denoiser alongside the existing output-rate model.
     // The legacy restorationModelDirectory still accepts a temporal-only job.
     std::filesystem::path temporalRestorationModelDirectory;
+    // Optional strictly-qualified STDF source-rate compression/deblock model.
+    // This identity is deliberately independent from the legacy output-rate
+    // and temporal restoration fields so a checkpoint cannot silently switch
+    // restoration stages.
+    std::filesystem::path compressionRestorationModelDirectory;
     PipelineSettings settings;
     std::optional<Rational> sourceDurationEstimate;
     int deviceOrdinal = 0;
@@ -32,6 +37,10 @@ struct ProcessingJob {
     // sidecar metadata for persistent queue and checkpoint identity.
     std::string expectedRestorationDescriptorSha256;
     std::string expectedTemporalRestorationDescriptorSha256;
+    std::string expectedCompressionRestorationDescriptorSha256;
+    // Zero disables the compression-restoration stage. A non-zero value must
+    // be paired with a pinned local model directory and descriptor hash.
+    float compressionRestorationStrength = 0.0F;
 };
 struct ProcessingIdentity {
     FileIdentity source;

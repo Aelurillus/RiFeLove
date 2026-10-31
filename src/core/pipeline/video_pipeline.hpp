@@ -55,6 +55,10 @@ struct PipelineSettings {
     // The pipeline deliberately keeps this separate from restorationBackend so
     // temporal denoising and output-rate restoration can run in one task.
     std::shared_ptr<restoration::IVideoRestorationBackend> temporalRestorationBackend;
+    // Optional source-rate compression/deblock restoration. When selected it
+    // is the first bounded temporal stage and its scene identity is passed to
+    // temporalRestorationBackend without re-running cut detection.
+    std::shared_ptr<restoration::IVideoRestorationBackend> compressionRestorationBackend;
     // FastDVDnet-style temporal denoisers require an explicit Gaussian-noise
     // conditioning level. It is persisted with queue jobs so a checkpoint is
     // reused only with the same conditioning; it is not a generic quality or

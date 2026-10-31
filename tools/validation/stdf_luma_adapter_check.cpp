@@ -49,7 +49,8 @@ Fixture fixture(std::string name, std::size_t first = 100, std::size_t count = 7
                 pixels->planes[p][static_cast<std::size_t>(y) * stride + x] = static_cast<std::uint8_t>(
                     p == 0 ? 16 + ((x * 7 + y * 11 + frame.index * 13 + ((x + y) % 5) * 9) % 220)
                            : 16 + ((x * 3 + y * 5 + frame.index * 17 + p * 53) % 225));
-            frame.planes[p] = {pixels->planes[p].data(), stride};
+            frame.planes[p] = {pixels->planes[p].data(), stride,
+                               rifelove::media::FramePlaneExtent{pixels->planes[p].data(), pixels->planes[p].size(), 0}};
             bounds[p] = pixels->planes[p];
         }
         frame.storage = pixels;

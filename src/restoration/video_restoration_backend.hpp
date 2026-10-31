@@ -3,6 +3,7 @@
 #include "media/media_engine.hpp"
 
 #include <future>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -38,6 +39,17 @@ struct Capabilities {
     std::string runtimeSignature;
 };
 
+// Inclusive source-index bounds for one scene.  The first index is known as
+// soon as a scene starts.  The last index becomes known when a cut or EOF has
+// drained the scene; it is required whenever a request pads future context.
+// A monotonically increasing serial lets replay/checkpoint code distinguish
+// equal-looking index ranges from different scene instances.
+struct SceneBounds {
+    std::size_t firstIndex = 0;
+    std::optional<std::size_t> lastIndex;
+    std::uint64_t serial = 0;
+};
+
 struct Request {
     Task task = Task::denoise;
     Placement placement = Placement::sourceRateBeforeInterpolation;
@@ -52,6 +64,10 @@ struct Request {
     // FastDVDnet's explicit Gaussian-noise conditioning, in 8-bit levels.
     // It is not a deblock/detail/deblur control. Required by that adapter only.
     std::optional<float> denoiseSigma255;
+    // Populated by TemporalWindow for source-rate temporal requests. Existing
+    // callers may omit it; STDF and other edge-sensitive adapters must require
+    // it before accepting a boundary-padded request.
+    std::optional<SceneBounds> sceneBounds;
 };
 
 struct Result {

@@ -139,6 +139,37 @@ TEST(TemporalRestorationWindow, DeliversEveryRealVfrFrameInOrderWithBoundedMemor
     EXPECT_THROW((void)window.push(frame(50)),std::invalid_argument);
 }
 
+TEST(TemporalRestorationWindow, DeclaresSceneBoundsForEdgePaddingAtCutAndEof) {
+    TemporalWindow window(temporalCaps());
+    std::vector<Request> requests;
+    for (std::size_t index = 0; index < 4; ++index) {
+        auto ready = window.push(frame(index));
+        requests.insert(requests.end(),ready.begin(),ready.end());
+    }
+    auto cut = window.push(frame(4),true);
+    requests.insert(requests.end(),cut.begin(),cut.end());
+    auto end = window.finish();
+    requests.insert(requests.end(),end.begin(),end.end());
+    ASSERT_EQ(requests.size(),5U);
+    for (const auto& request : requests) {
+        ASSERT_TRUE(request.sceneBounds);
+        EXPECT_GT(request.sceneBounds->serial,0U);
+        const auto center = request.context[request.centerIndex].index;
+        if (center < 4) {
+            EXPECT_EQ(request.sceneBounds->firstIndex,0U);
+            if (request.missingFramesAfter) {
+                ASSERT_TRUE(request.sceneBounds->lastIndex);
+                EXPECT_EQ(*request.sceneBounds->lastIndex,3U);
+            }
+        } else {
+            EXPECT_EQ(request.sceneBounds->firstIndex,4U);
+            ASSERT_TRUE(request.sceneBounds->lastIndex);
+            EXPECT_EQ(*request.sceneBounds->lastIndex,4U);
+        }
+    }
+    EXPECT_EQ(requests.back().sceneBounds->serial,2U);
+}
+
 TEST(TemporalRestorationWindow, NeverIncludesTheOtherSceneEvenForOneFrameClips) {
     TemporalWindow window(temporalCaps());
     std::vector<Request> requests;
@@ -173,6 +204,7 @@ media::RifeSdrFrame noiseFrame(int width, int height, double sigma255 = 0.0) {
     const int paddedWidth = ((width + 63) / 64) * 64, paddedHeight = ((height + 63) / 64) * 64;
     const auto plane = static_cast<std::size_t>(paddedWidth) * static_cast<std::size_t>(paddedHeight);
     media::RifeSdrFrame result{width,height,paddedWidth,paddedHeight,{},std::vector<float>(plane * 3,0.5F)};
+    if (sigma255 <= 0.0) return result;
     std::mt19937 random(87943);
     std::normal_distribution<float> normal(0.0F,static_cast<float>(sigma255 / 255.0));
     for (std::size_t channel = 0; channel < 3; ++channel)

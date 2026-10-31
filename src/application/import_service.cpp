@@ -31,6 +31,13 @@ bool videoName(const fs::path& value) {
     static const std::set<std::wstring> names{L".mp4",L".mkv",L".mov",L".avi",L".webm",L".m4v",L".ts",L".m2ts",L".mts",L".mpeg",L".mpg",L".wmv",L".flv",L".mxf",L".ogv",L".vob",L".3gp",L".asf",L".gif"};
     return names.contains(extension);
 }
+const media::StreamInfo* selectedVideoStream(const media::MediaInfo& info, int requestedVideoStream) {
+    const auto selected = requestedVideoStream >= 0 ? requestedVideoStream : info.preferredVideoStream;
+    const auto found = std::find_if(info.streams.begin(),info.streams.end(),[selected](const auto& stream) {
+        return stream.index == selected && stream.type == "video";
+    });
+    return found == info.streams.end() ? nullptr : &*found;
+}
 fs::path outputPath(const fs::path& directory, const fs::path& source, const std::string& container, std::set<fs::path,PathLess>& reserved) {
     const auto stem = source.stem().native() + L"_RifeLove";
     for (int i = 1; i <= 100000; ++i) {
@@ -66,6 +73,12 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
     if (!settings.restorationModelDirectory.empty()) restorationPack = restoration::loadModelPack(settings.restorationModelDirectory);
     std::optional<restoration::ModelPack> temporalRestorationPack;
     if (!settings.temporalRestorationModelDirectory.empty()) temporalRestorationPack = restoration::loadModelPack(settings.temporalRestorationModelDirectory);
+    std::optional<restoration::ModelPack> compressionRestorationPack;
+    if (!settings.compressionRestorationModelDirectory.empty()) {
+        compressionRestorationPack = restoration::loadModelPack(settings.compressionRestorationModelDirectory);
+        if (!restoration::supportsStdfCudaModel(*compressionRestorationPack))
+            throw std::invalid_argument("Selected compression restoration model is not the strictly qualified STDF CUDA model");
+    }
     const auto first = normalized(request.inputs.front());
     ImportResult result; result.outputDirectory = request.outputDirectory.empty() ? (fs::is_directory(first) ? first : first.parent_path()) : normalized(request.outputDirectory);
     if (!fs::is_directory(result.outputDirectory)) throw std::invalid_argument("Output directory does not exist");
@@ -99,8 +112,8 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
         checkStop(stop); const auto& source = sources[index];
         try {
             const auto info = media::MediaEngine::probe(utf8(source),stop);
-            const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const auto& stream) { return stream.index == info.preferredVideoStream; });
-            if (video == info.streams.end()) result.rejected.push_back({source,ImportRejection::noVideo,"No video stream"});
+            const auto* video = selectedVideoStream(info,settings.settings.encoding.videoStreamIndex);
+            if (!video) result.rejected.push_back({source,ImportRejection::noVideo,"Selected video stream does not exist or is not a video stream"});
             else {
                 bool valid = true;
                 std::string profile;
@@ -128,6 +141,21 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                     result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
                         "Selected temporal denoiser does not declare support for input profile " + profile});
                     valid = false;
+                }
+                if (valid && compressionRestorationPack) {
+                    if (profile != "bt709-sdr8" || video->color.pixelFormat != "yuv420p" || video->color.bitDepth != 8 ||
+                        video->color.primaries != "bt709" || video->color.transfer != "bt709" || video->color.matrix != "bt709" ||
+                        video->color.range != "tv" || video->color.hdrTransfer || video->color.masteringDisplay || video->color.contentLight ||
+                        video->width <= 0 || video->height <= 0 || video->width > 384 || video->height > 256) {
+                        result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                            "STDF compression restoration currently requires tagged BT.709 SDR8 yuv420p input no larger than 384x256"});
+                        valid = false;
+                    } else if (std::find(compressionRestorationPack->capabilities.supportedInputProfiles.begin(),
+                        compressionRestorationPack->capabilities.supportedInputProfiles.end(),profile) == compressionRestorationPack->capabilities.supportedInputProfiles.end()) {
+                        result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                            "Selected compression restoration model does not declare support for input profile " + profile});
+                        valid = false;
+                    }
                 }
                 if (valid && restorationPack) {
                     const auto scale = restorationPack->capabilities.scaleNumerator;
