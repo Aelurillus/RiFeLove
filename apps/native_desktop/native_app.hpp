@@ -68,8 +68,8 @@ public:
     bool testSetAutomaticDenoise(bool enabled) { return setAutomaticDenoise(enabled); }
     bool testCaptureRestorationDescriptors(application::ProcessingJob& job,
         const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
-        const restoration::ModelPack* compression = nullptr, float strength = 0.0F) {
-        return captureRestorationDescriptors(job, temporal, spatial, compression, strength);
+        const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false) {
+        return captureRestorationDescriptors(job, temporal, spatial, compression, strength, tiled);
     }
     bool testCaptureSelectedRestoration(application::ProcessingJob& job) { return captureSelectedRestoration(job); }
     // Descriptor-only fixture injection. It never creates an inference session
@@ -123,6 +123,7 @@ private:
     static constexpr int kAutomaticDenoise = 1026;
     static constexpr int kCompressionRestorationCombo = 1027;
     static constexpr int kCompressionStrengthCombo = 1028;
+    static constexpr int kCompressionTilingCheck = 1029;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -224,7 +225,7 @@ private:
     void startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex);
     bool captureRestorationDescriptors(application::ProcessingJob& job,
         const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
-        const restoration::ModelPack* compression = nullptr, float strength = 0.0F);
+        const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false);
     bool captureSelectedRestoration(application::ProcessingJob& job);
     void stopQueuedProcessing();
     void toggleQueuedPause();
@@ -285,6 +286,7 @@ private:
     HWND temporalRestorationCombo_ = nullptr;
     HWND compressionRestorationCombo_ = nullptr;
     HWND compressionStrengthCombo_ = nullptr;
+    HWND compressionTilingCheck_ = nullptr;
     HWND restorationCombo_ = nullptr;
     HWND outputSizeCombo_ = nullptr;
     HWND shutterLabel_ = nullptr;

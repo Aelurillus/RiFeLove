@@ -7,6 +7,7 @@
 #include "media/media_engine.hpp"
 #include <nlohmann/json.hpp>
 #include "restoration/model_pack.hpp"
+#include "restoration/stdf_tile_policy.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -96,9 +97,19 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
             {"strength",job.compressionRestorationStrength},
             {"inputProfile",compressionInputProfile}, {"pixelFormat",compressionPixelFormat},
             {"maximumWidth",compressionMaximumWidth}, {"maximumHeight",compressionMaximumHeight},
-            {"tilePolicy",compressionTilePolicy}, {"decoderReplayPolicy",compressionDecoderReplayPolicy},
+            {"tilePolicy",job.compressionRestorationTiled ? restoration::stdf_tiles::policyId : compressionTilePolicy}, {"decoderReplayPolicy",compressionDecoderReplayPolicy},
             {"sceneReplayPolicy",compressionSceneReplayPolicy}
         };
+        if (job.compressionRestorationTiled) {
+            const auto model = restoration::loadModelPack(job.compressionRestorationModelDirectory);
+            if (inference::sha256File(model.directory / "model.json",256 * 1024) != job.expectedCompressionRestorationDescriptorSha256 ||
+                caps.runtimeBackend != "onnxruntime_cuda" ||
+                !compressionRestorationRuntimeMatchesPolicy(true,caps.runtimeSignature,model.graphSha256))
+                throw std::invalid_argument("Tiled compression restoration runtime does not prove the selected graph and tile policy");
+            auto& runtime = manifest["compressionRestorationRuntime"];
+            runtime["graphSha256"] = model.graphSha256;
+            runtime["tiledPolicy"] = Json::parse(serializeCompressionRestorationPolicy(true));
+        }
     }
     return manifest.dump();
 }
@@ -295,11 +306,21 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
             runtime.value("pixelFormat",std::string()) != compressionPixelFormat ||
             runtime.value("maximumWidth",0) != compressionMaximumWidth ||
             runtime.value("maximumHeight",0) != compressionMaximumHeight ||
-            runtime.value("tilePolicy",std::string()) != compressionTilePolicy ||
+            runtime.value("tilePolicy",std::string()) != (job.compressionRestorationTiled ? restoration::stdf_tiles::policyId : compressionTilePolicy) ||
             runtime.value("decoderReplayPolicy",std::string()) != compressionDecoderReplayPolicy ||
             runtime.value("sceneReplayPolicy",std::string()) != compressionSceneReplayPolicy ||
             runtime.value("strength",std::numeric_limits<float>::quiet_NaN()) != job.compressionRestorationStrength)
             throw std::logic_error("Compression restoration model, strength, shape or replay identity changed; restart with a new output");
+        if (job.compressionRestorationTiled) {
+            if (runtime.value("graphSha256",std::string()) != model.graphSha256 ||
+                runtime.value("backend",std::string()) != "onnxruntime_cuda" ||
+                !compressionRestorationRuntimeMatchesPolicy(true,runtime.value("signature",std::string()),model.graphSha256) ||
+                !runtime.contains("tiledPolicy") || runtime.at("tiledPolicy").dump() != serializeCompressionRestorationPolicy(true))
+                throw std::logic_error("Tiled compression restoration graph, runtime, core, halo, alignment, edge or size policy changed; restart with a new output");
+        } else if (runtime.contains("tiledPolicy") || runtime.contains("graphSha256") ||
+            !compressionRestorationRuntimeMatchesPolicy(false,runtime.value("signature",std::string()))) {
+            throw std::logic_error("A tiled compression restoration checkpoint cannot resume under the legacy full-frame policy");
+        }
         expectedManifest["compressionRestorationRuntime"] = runtime;
     }
     if (!CheckpointArtifacts::manifestMatches(manifest,expectedManifest.dump()))

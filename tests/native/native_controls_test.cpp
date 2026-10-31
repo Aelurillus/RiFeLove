@@ -589,6 +589,9 @@ void checkNarrowImportLayout(HWND window, const std::filesystem::path& screensho
     const UINT dpi = GetDpiForWindow(window);
     const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
     SetWindowPos(window, nullptr, original.left, original.top, px(850), px(600), SWP_NOZORDER | SWP_NOACTIVATE);
+    // Earlier preset controls can legitimately scroll the enlarged quality
+    // card into view. Geometry below is explicitly the top-of-page layout.
+    SendMessageW(window, WM_VSCROLL, SB_TOP, 0);
     const HWND sourceButton = GetDlgItem(window, 1002);
     const HWND sourceEdit = GetDlgItem(window, 1001);
     RECT button{}, input{};
@@ -611,6 +614,7 @@ void checkNarrowImportLayout(HWND window, const std::filesystem::path& screensho
     if (!screenshot.empty()) check(captureClient(window, screenshot), "capture narrow import layout");
     SetWindowPos(window, nullptr, original.left, original.top, original.right - original.left,
                  original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    SendMessageW(window, WM_VSCROLL, SB_TOP, 0);
 }
 
 void checkOutputFieldAlignment(HWND window) {
@@ -1469,6 +1473,8 @@ int wmain(int argc, wchar_t** argv) {
 #ifndef RIFELOVE_NATIVE_HAS_PROCESSING
             if (!processingRun && !batchRun && !switchRun) checkPathFields(app, window, argc != 3);
 #endif
+            if (argc == 3 && !processingRun && !batchRun && !switchRun)
+                SendMessageW(window, WM_VSCROLL, SB_TOP, 0);
             if (argc == 3 && !processingRun && !batchRun && !switchRun)
                 check(captureClient(window, std::filesystem::path(argv[2])), "capture complete client on isolated desktop");
             if (argc == 3 && !processingRun && !batchRun && !switchRun) {

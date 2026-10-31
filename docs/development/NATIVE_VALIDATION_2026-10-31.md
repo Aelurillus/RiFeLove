@@ -116,6 +116,61 @@ qualify full-resolution temporal restoration, real-footage perceptual quality,
 long-video reliability or a stable release. No usable new rendered screenshot
 was captured, so rendered visual acceptance is still outstanding.
 
+## Follow-up: r16 explicit bounded UHD STDF evaluation
+
+The r16 Normal and isolated Portable QA EXEs have SHA-256
+`d9f7130ceb7f5173b3688daceca511de083bee3124fde87b222879f8acb4f868`.
+They contain the same four local model families as r15. Independent verification
+matched all 112 immutable Normal-package files and 113 Portable-package files;
+the Normal package has empty package-local data and the Portable QA package now
+contains only its synthetic completed task. Model/runtime resources are verified
+NTFS hard links rather than fresh multi-GiB copies. Compression restoration and
+the separate high-resolution tiled switch both default to off.
+
+The new switch selects the fixed
+`stdf-r3-core256x128-halo64-global-edge-pad8-eval-v1` policy; it does not raise
+the existing whole-frame graph limit. Schema 11 stores an explicit boolean and
+complete tile geometry/padding/size policy. Schema 1-10 remains full-frame;
+full-frame/tiled checkpoints cannot be interchanged. The source identity
+inventory now explicitly includes both new output-affecting adapter headers.
+
+Release configure/build passed, followed by 211/211 CTest tests, 44 Python
+model-tool contracts and both the reduced/native-processing control harnesses.
+Seven serial real CUDA checker cases passed every-pixel independent readback,
+including 1080p and landscape/portrait UHD, odd dimensions, bounded graph shapes,
+center chroma ownership and exact rational metadata assertions. The detailed
+reference and memory/performance limits are in [STDF_R3_TILING.md](STDF_R3_TILING.md).
+
+The actual Portable QA EXE was driven through its HWND model, strength and tiled
+controls, starting explicitly from off and selecting STDF 50% with the tiled
+checkbox checked. It processed a 1920x1080, 30 FPS, 0.4-second FFV1/FLAC fixture
+through STDF source-rate restoration, RIFE TensorRT/CUDA and H.264 NVENC. The
+read-only queue contains a completed schema 11 task, the exact tiled policy,
+12 source frames, 11 real RIFE inference calls and 24 validated output frames.
+Application elapsed time was 50.970 seconds, including 41.747 seconds recorded
+for restoration; this is slow experimental processing, not real-time video.
+
+Independent FFprobe/FFmpeg checks confirmed 24 frames, 60 FPS, 1920x1080,
+0.4 seconds, BT.709 TV-range yuv420p, maximum timestamp error 0.334 ms, all five
+original FLAC packet hashes/timestamps and error-free full video/audio decode.
+Both source fixture hashes remain unchanged. Encoder-level color flags alone
+had omitted primaries/transfer on the first synthetic input; a separate lossless
+frame-tagged fixture was explicitly probed before the successful GUI run.
+Evidence: `work/verification/native-r16-tiled-compression-20261031/result.json`.
+
+The in-process native renderer/control harness captured the full client, narrow
+layout and 480-DIP top/bottom views. An initial geometry test used a scroll offset
+left by prior preset interactions; it now explicitly returns to the top before
+checking painted label/field coordinates. The corrected native checks pass.
+Images stay at `work/verification/native-r16-ui-20261031/client-verified*.png`.
+These are source-harness rendering evidence, not a packaged-EXE framebuffer
+capture or broad per-monitor-DPI/aesthetic acceptance.
+
+This is an opt-in local evaluation package. Real-content perceptual evaluation,
+adaptive compression/detail controls, long videos, HDR, the hardware matrix,
+installer and redistribution acceptance remain open. No model, runtime, queue,
+video, generated image or cloud credential is part of the source commit.
+
 ## Local storage cleanup evidence
 
 Obsolete generated package files were removed only after checksum checks;

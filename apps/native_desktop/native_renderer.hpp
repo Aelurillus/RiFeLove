@@ -59,7 +59,7 @@ struct NativeLayout {
     float resourceButtonsTop = 410;
     bool singleColumn = false;
     float exportOffset = 0;
-    float contentEnd = 738;
+    float contentEnd = 778;
     bool compactImport = false;
     float sourceActionsTop = 116;
     float sourceInputTop = 182;
@@ -79,8 +79,8 @@ struct NativeLayout {
         value.left = value.side + (value.singleColumn ? 16.0F : 24.0F);
         value.right = width - (value.singleColumn ? 16.0F : 24.0F);
         value.split = value.singleColumn ? value.right : value.left + (value.right - value.left - 20.0F) * 0.55F;
-        value.exportOffset = value.singleColumn ? 650.0F : 0.0F;
-        value.contentEnd = std::max(738.0F, 626.0F + value.exportOffset);
+        value.exportOffset = value.singleColumn ? 690.0F : 0.0F;
+        value.contentEnd = std::max(778.0F, 626.0F + value.exportOffset);
         // Two import actions share their own row when the source card is too
         // narrow to hold both its title and the file/folder buttons.
         value.compactImport = value.split - value.left < 440.0F;

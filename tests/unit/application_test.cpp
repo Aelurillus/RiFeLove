@@ -242,7 +242,7 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     job.settings.automaticTemporalDenoise = rifelove::restoration::AutomaticDenoiseSettings{-0.25,0.7,12.0,0.8};
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),10);
+    EXPECT_EQ(document.at("schemaVersion"),11);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),1);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("replayPolicy"),"software-source-pts-from-start-v1");
     const auto restored = parseJob(job.source,job.output,encoded);
@@ -268,21 +268,32 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     EXPECT_FALSE(fixed.settings.automaticTemporalDenoise);
     EXPECT_FLOAT_EQ(fixed.settings.temporalDenoiseSigma255,17.5F);
 }
-TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndSchemaTenDefaultsLegacyDisabled) {
+TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndLegacySchemasDefaultFullFrame) {
     auto job = configuredJob();
     job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
     job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
     job.compressionRestorationStrength = 0.75F;
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),10);
+    EXPECT_EQ(document.at("schemaVersion"),11);
     EXPECT_EQ(document.at("compressionRestorationModelDirectory"),"C:/models/stdf-r3");
     EXPECT_EQ(document.at("expectedCompressionRestorationDescriptorSha256"),std::string(64,'d'));
     EXPECT_FLOAT_EQ(document.at("compressionRestorationStrength").get<float>(),0.75F);
+    EXPECT_FALSE(document.at("compressionRestorationTiled").get<bool>());
+    EXPECT_EQ(document.at("compressionRestorationPolicy").at("mode"),"full-frame");
     const auto restored = parseJob(job.source,job.output,encoded);
     EXPECT_EQ(restored.compressionRestorationModelDirectory,job.compressionRestorationModelDirectory);
     EXPECT_EQ(restored.expectedCompressionRestorationDescriptorSha256,job.expectedCompressionRestorationDescriptorSha256);
     EXPECT_FLOAT_EQ(restored.compressionRestorationStrength,0.75F);
+    EXPECT_FALSE(restored.compressionRestorationTiled);
+
+    auto schemaTen = document;
+    schemaTen["schemaVersion"] = 10;
+    schemaTen.erase("compressionRestorationTiled");
+    schemaTen.erase("compressionRestorationPolicy");
+    const auto legacyEnabled = parseJob(job.source,job.output,schemaTen.dump());
+    EXPECT_FALSE(legacyEnabled.compressionRestorationTiled);
+    EXPECT_EQ(legacyEnabled.compressionRestorationModelDirectory,job.compressionRestorationModelDirectory);
 
     auto legacy = document;
     legacy["schemaVersion"] = 9;
@@ -293,6 +304,114 @@ TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndSchemaTenDef
     EXPECT_TRUE(disabled.compressionRestorationModelDirectory.empty());
     EXPECT_TRUE(disabled.expectedCompressionRestorationDescriptorSha256.empty());
     EXPECT_FLOAT_EQ(disabled.compressionRestorationStrength,0.0F);
+    EXPECT_FALSE(disabled.compressionRestorationTiled);
+}
+TEST(ProcessingConfiguration, SchemaElevenAlwaysRecordsAnExplicitCompressionExecutionPolicy) {
+    auto job = configuredJob();
+    const auto disabled = nlohmann::json::parse(serializeJob(job));
+    EXPECT_EQ(disabled.at("schemaVersion"),11);
+    ASSERT_TRUE(disabled.at("compressionRestorationTiled").is_boolean());
+    EXPECT_FALSE(disabled.at("compressionRestorationTiled").get<bool>());
+    EXPECT_EQ(disabled.at("compressionRestorationPolicy").dump(),serializeCompressionRestorationPolicy(false));
+
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationStrength = 0.75F;
+    job.compressionRestorationTiled = true;
+    const auto encoded = serializeJob(job);
+    const auto document = nlohmann::json::parse(encoded);
+    EXPECT_TRUE(document.at("compressionRestorationTiled").get<bool>());
+    EXPECT_EQ(document.at("compressionRestorationPolicy").dump(),serializeCompressionRestorationPolicy(true));
+    const auto& policy = document.at("compressionRestorationPolicy");
+    EXPECT_EQ(policy.at("mode"),"tiled");
+    EXPECT_EQ(policy.at("coreWidth"),256);
+    EXPECT_EQ(policy.at("coreHeight"),128);
+    EXPECT_EQ(policy.at("halo"),64);
+    EXPECT_EQ(policy.at("alignment"),8);
+    EXPECT_EQ(policy.at("maximumInputWidth"),384);
+    EXPECT_EQ(policy.at("maximumInputHeight"),256);
+    EXPECT_EQ(policy.at("edgePolicy"),"global-right-bottom-pad-to8-clip-halo-v1");
+    EXPECT_EQ(policy.at("maximumAxis"),3840);
+    EXPECT_EQ(policy.at("maximumPixels"),3840U * 2160U);
+    const auto restored = parseJob(job.source,job.output,encoded);
+    EXPECT_TRUE(restored.compressionRestorationTiled);
+    EXPECT_EQ(serializeJob(restored),encoded);
+
+    auto bad = document;
+    bad.erase("compressionRestorationTiled");
+    EXPECT_ANY_THROW((void)parseJob(job.source,job.output,bad.dump()));
+    for (const auto& flag : {nlohmann::json(1),nlohmann::json("true"),nlohmann::json(nullptr)}) {
+        bad = document; bad["compressionRestorationTiled"] = flag;
+        EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    }
+    bad = document; bad.erase("compressionRestorationPolicy");
+    EXPECT_ANY_THROW((void)parseJob(job.source,job.output,bad.dump()));
+    for (const auto& [field,value] : policy.items()) {
+        bad = document; bad["compressionRestorationPolicy"].erase(field);
+        EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument) << field;
+        bad = document; bad["compressionRestorationPolicy"][field] = "changed";
+        EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument) << field;
+    }
+    bad = document; bad["compressionRestorationPolicy"]["alignment"] = 8.0;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["compressionRestorationPolicy"]["extra"] = true;
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+    bad = document; bad["compressionRestorationPolicy"] = nlohmann::json::parse(serializeCompressionRestorationPolicy(false));
+    EXPECT_THROW((void)parseJob(job.source,job.output,bad.dump()),std::invalid_argument);
+}
+TEST(ProcessingConfiguration, TiledCompressionCannotBeEnabledWithoutTheCompleteModelBundle) {
+    auto job = configuredJob();
+    job.temporalRestorationModelDirectory.clear();
+    job.expectedTemporalRestorationDescriptorSha256.clear();
+    job.compressionRestorationTiled = true;
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    EXPECT_THROW(pinRestorationModelDescriptor(job),std::invalid_argument);
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.compressionRestorationStrength = 0.75F;
+    EXPECT_NO_THROW((void)serializeJob(job));
+    job.expectedCompressionRestorationDescriptorSha256.clear();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationModelDirectory.clear();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+}
+TEST(ProcessingConfiguration, LegacySchemasDefaultFullFrameAndRejectSmuggledTiledPolicies) {
+    const auto job = configuredJob();
+    for (int version = 1; version <= 10; ++version) {
+        auto legacy = nlohmann::json::parse(serializeJob(job));
+        legacy["schemaVersion"] = version;
+        legacy.erase("compressionRestorationTiled");
+        legacy.erase("compressionRestorationPolicy");
+        EXPECT_FALSE(parseJob(job.source,job.output,legacy.dump()).compressionRestorationTiled) << version;
+        legacy["compressionRestorationTiled"] = true;
+        EXPECT_THROW((void)parseJob(job.source,job.output,legacy.dump()),std::invalid_argument) << version;
+        legacy["compressionRestorationTiled"] = false;
+        legacy["compressionRestorationPolicy"] = nlohmann::json::parse(serializeCompressionRestorationPolicy(true));
+        EXPECT_THROW((void)parseJob(job.source,job.output,legacy.dump()),std::invalid_argument) << version;
+    }
+}
+TEST(ProcessingConfiguration, CompressionDimensionPolicyKeepsLegacyBoundsAndExplicitBounded4kTiling) {
+    EXPECT_TRUE(supportsCompressionRestorationDimensions(false,384,256));
+    EXPECT_TRUE(supportsCompressionRestorationDimensions(false,383,255));
+    EXPECT_FALSE(supportsCompressionRestorationDimensions(false,385,256));
+    EXPECT_FALSE(supportsCompressionRestorationDimensions(false,384,257));
+    EXPECT_FALSE(supportsCompressionRestorationDimensions(false,1920,1080));
+    EXPECT_TRUE(supportsCompressionRestorationDimensions(true,1920,1080));
+    EXPECT_TRUE(supportsCompressionRestorationDimensions(true,3840,2160));
+    EXPECT_TRUE(supportsCompressionRestorationDimensions(true,2160,3840));
+    EXPECT_TRUE(supportsCompressionRestorationDimensions(true,1919,1079));
+    EXPECT_FALSE(supportsCompressionRestorationDimensions(true,3840,3840));
+    EXPECT_FALSE(supportsCompressionRestorationDimensions(true,3841,2160));
+    EXPECT_FALSE(supportsCompressionRestorationDimensions(true,2160,3841));
+    for (const bool tiled : {false,true}) {
+        EXPECT_FALSE(supportsCompressionRestorationDimensions(tiled,0,1));
+        EXPECT_FALSE(supportsCompressionRestorationDimensions(tiled,1,0));
+        EXPECT_FALSE(supportsCompressionRestorationDimensions(tiled,-1,1));
+        EXPECT_FALSE(supportsCompressionRestorationDimensions(tiled,1,-1));
+        EXPECT_FALSE(supportsCompressionRestorationDimensions(tiled,std::numeric_limits<int>::max(),std::numeric_limits<int>::max()));
+    }
 }
 TEST(ProcessingConfiguration, CompressionRestorationStrengthAndBundleAreStrictlyValidated) {
     auto job = configuredJob();

@@ -21,6 +21,7 @@
 #endif
 #include "inference/ort_runtime_lease.hpp"
 #include "restoration/stdf_luma_adapter.hpp"
+#include "restoration/stdf_tile_policy.hpp"
 
 #include <filesystem>
 #include <array>
@@ -41,13 +42,17 @@ struct StdfCudaConfig {
     std::size_t maxQueuedRequests = 1;
     int deviceOrdinal = 0;
     float strength = 1.0F;
-    // The current graph has only been qualified through the adapter's
-    // 384x256 ceiling. Larger common video sizes remain deliberately blocked
-    // until a separately verified tile/full-frame path exists.
+    // Per graph input caps, including halo. Never widen the qualified input
+    // shape to accept a larger source; enableTiling selects a separate policy.
     int maximumWidth = validation::stdf::qualifiedWidth;
     int maximumHeight = validation::stdf::qualifiedHeight;
     bool requireCriticalCudaProfile = true;
+    bool enableTiling = false;
 };
+
+[[nodiscard]] inline constexpr const char* stdfTilePolicy(const StdfCudaConfig& config) noexcept {
+    return config.enableTiling ? stdf_tiles::policyId : stdf_tiles::fullFramePolicyId;
+}
 
 struct StdfCudaDiagnostics {
     std::string runtimeVersion;
@@ -64,6 +69,17 @@ struct StdfCudaDiagnostics {
     std::size_t unknownProviderKernelCount = 0;
     std::string fallbackReason;
     std::filesystem::path profilePath;
+    // Adapter payload proof, not total ORT/device/process memory. The fixed
+    // tile policy remains an evaluation identity, not full-frame equivalence.
+    bool tilingEnabled = false;
+    std::string tilePolicy = stdf_tiles::fullFramePolicyId;
+    std::size_t tilesPlanned = 0;
+    std::size_t tilesCompleted = 0;
+    std::size_t peakHostFloatBufferBytes = 0;
+    std::size_t adapterOwnedPayloadBytes = 0;
+    std::size_t retainedPlaneSpanBytes = 0;
+    int maximumTileInputWidth = 0;
+    int maximumTileInputHeight = 0;
 };
 
 // Small, injectable contracts shared by the production ORT path and its

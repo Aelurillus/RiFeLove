@@ -13,7 +13,7 @@
 - 干净包包含 RIFE、Real-ESRGAN、FastDVDnet 和 STDF-R3 各一份模型。FastDVDnet 与 STDF-R3 默认关闭。刷新已有包时，只有 `data/` 中的队列/检查点文件同时包含 `models/cache/rife-4.25-fp32-sdr8-v2`、RIFE ID/version 和匹配 SHA-256，才额外保留 `models/rife-4.25-fp32-sdr8-v2`；此目录保留原始 basename，并由 `models/legacy-models.json` 标记为隐藏，不参与默认模型选择。
 - `models/realesrgan-x2plus-sdr8-v2`，供本机超分路径使用；当前原生窗口仍以 RIFE 插帧为主要工作流。
 - `models/fastdvdnet-clipped-five-frame-sdr8-eval`，供本机 SDR8 源率五帧时序降噪路径使用；它不是压缩修复、去模糊或细节增强模型，当前仅作为本地评估包随包提供，默认关闭，必须由用户明确选择后才启用。
-- `models/stdf-r3-y7-sdr8-local-eval`，供源率插帧前的七帧亮度压缩修复评估使用。当前仅验证明确标记的 BT.709 SDR、8-bit `yuv420p`、TV range，最大 384×256；未知色彩、HDR、其他像素格式或更大尺寸不属于该模型的已验证路径。它默认关闭，不代表通用压缩修复、去模糊、细节增强或 Topaz 级质量。
+- `models/stdf-r3-y7-sdr8-local-eval`，供源率插帧前的七帧亮度压缩修复评估使用。仅接受明确标记的 BT.709 SDR、8-bit `yuv420p`、TV range。原整帧模式仍限 384×256；独立的「高清分块（实验；较慢）」开关允许每轴不超过 3840、总像素不超过 8,294,400 的输入，采用 256×128 core、64-pixel halo、全图右/下边界补齐至 8 的固定策略。横竖 UHD 及非 8 对齐合成输入已通过完整 CPU/CUDA 输出逐字节对照，证据见 [分块验证记录](../../docs/development/STDF_R3_TILING.md)。压缩修复和分块均默认关闭；分块有明显额外耗时，未知色彩、HDR、其他像素格式、真实素材主观画质与长视频仍未验收，不代表通用细节增强或 Topaz 级质量。
 - `config/defaults.json`、许可证文本、来源/验证侧车和 SHA-256 清单。普通包使用 Windows 用户数据目录；复用打包脚本可通过显式 `-PortableMode` 在全新目录中生成带永久校验标记的便携验收包，见 [隔离 GUI 验收](NATIVE_PORTABLE_QA.md)。
 
 在仓库根目录执行：

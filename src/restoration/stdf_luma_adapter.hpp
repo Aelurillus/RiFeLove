@@ -125,6 +125,85 @@ struct SceneBounds {
 // The caller supplies buffer extents from trusted decoder-owned storage. A raw
 // DecodedFrame pointer/stride alone cannot prove how many bytes are accessible.
 using BoundedPlanes = std::array<std::span<const std::uint8_t>, 3>;
+
+// Shared by full-frame and bounded-tile execution. Validation retains only
+// existing decoder owners/metadata; it never packs a full-frame float tensor.
+struct ValidatedContext {
+    std::vector<media::DecodedFrame> frames;
+    std::array<std::size_t, 7> slots{};
+    std::size_t centerIndex = 0;
+    std::size_t retainedBytes = 0;
+    std::stop_token stop;
+    [[nodiscard]] const media::DecodedFrame& center() const { return frames.at(centerIndex); }
+};
+
+inline const media::DecodedFrame& declaredCenter(const restoration::Request& request,
+                                                std::span<const BoundedPlanes> extents,
+                                                const SceneBounds& scene) {
+    stopped(request.stop);
+    auto invalid = [](const char* message) { throw Error(Failure::invalidRequest, message); };
+    if (request.task != restoration::Task::deblock || request.placement != restoration::Placement::sourceRateBeforeInterpolation ||
+        request.inputProfile != "bt709-sdr8") invalid("STDF needs source-rate deblock and explicit bt709-sdr8");
+    if (request.missingFramesBefore > 3 || request.missingFramesAfter > 3 ||
+        request.context.size() != 7 - request.missingFramesBefore - request.missingFramesAfter ||
+        request.centerIndex != 3 - request.missingFramesBefore || extents.size() != request.context.size())
+        invalid("STDF requires seven declared real/edge-padded temporal slots");
+    if (scene.lastIndex && *scene.lastIndex < scene.firstIndex) invalid("STDF scene bounds are inverted");
+    const auto& center = request.context.at(request.centerIndex);
+    if (center.width <= 0 || center.height <= 0 || center.width > std::numeric_limits<int>::max() - 7 ||
+        center.height > std::numeric_limits<int>::max() - 7)
+        throw Error(Failure::memoryBudget, "STDF source dimensions are invalid");
+    return center;
+}
+
+inline ValidatedContext validateContext(const restoration::Request& request,
+                                        std::span<const BoundedPlanes> extents,
+                                        const SceneBounds& scene, std::size_t maximumRetainedBytes) {
+    const auto& center = declaredCenter(request, extents, scene);
+    auto invalid = [](const char* message) { throw Error(Failure::invalidRequest, message); };
+    ValidatedContext result;
+    for (std::size_t index = 0; index < request.context.size(); ++index) {
+        stopped(request.stop);
+        const auto& frame = request.context[index];
+        const auto& color = frame.color;
+        if (!frame.storage || !frame.timestamp || frame.width != center.width || frame.height != center.height ||
+            color.pixelFormat != "yuv420p" || color.bitDepth != 8 || color.primaries != "bt709" ||
+            color.transfer != "bt709" || color.matrix != "bt709" || color.range != "tv" || color.hdrTransfer ||
+            color.masteringDisplay || color.contentLight)
+            invalid("STDF initial adapter requires owned planar BT.709 limited-range 8-bit SDR with exact timestamps");
+        if (frame.duration && *frame.duration <= Rational(0)) invalid("STDF frame duration must be positive when known");
+        if (frame.index < scene.firstIndex || (scene.lastIndex && frame.index > *scene.lastIndex))
+            invalid("STDF temporal context crosses the declared scene boundary");
+        if (index) {
+            const auto& previous = request.context[index - 1];
+            if (!(*previous.timestamp < *frame.timestamp) || previous.index == std::numeric_limits<std::size_t>::max() ||
+                frame.index != previous.index + 1) invalid("STDF real context must have adjacent indices and strictly increasing exact PTS");
+        }
+        const std::array<int, 3> widths{frame.width, (frame.width + 1) / 2, (frame.width + 1) / 2};
+        const std::array<int, 3> heights{frame.height, (frame.height + 1) / 2, (frame.height + 1) / 2};
+        for (std::size_t plane = 0; plane < 3; ++plane) {
+            const auto& view = frame.planes[plane];
+            if (!view.data || view.stride < widths[plane] || extents[index][plane].data() != view.data)
+                invalid("STDF needs positive valid plane strides and matching bounded decoder views");
+            const auto spanBytes = add(multiply(static_cast<std::size_t>(view.stride), heights[plane] - 1), widths[plane]);
+            if (extents[index][plane].size() < spanBytes) invalid("STDF plane buffer is shorter than its geometry");
+            result.retainedBytes = add(result.retainedBytes, spanBytes);
+        }
+    }
+    if (result.retainedBytes > maximumRetainedBytes)
+        throw Error(Failure::memoryBudget, "STDF retained decoded plane spans exceed the explicit span budget");
+    if (request.missingFramesBefore && request.context.front().index != scene.firstIndex)
+        invalid("STDF cannot invent missing history inside a scene");
+    if (request.missingFramesAfter && (!scene.lastIndex || request.context.back().index != *scene.lastIndex))
+        invalid("STDF cannot invent missing future frames before a verified scene/clip end");
+    for (int slot = 0; slot < 7; ++slot)
+        result.slots[slot] = static_cast<std::size_t>(std::clamp(slot - static_cast<int>(request.missingFramesBefore),
+                                                             0, static_cast<int>(request.context.size()) - 1));
+    result.frames = request.context; result.centerIndex = request.centerIndex; result.stop = request.stop;
+    stopped(request.stop);
+    return result;
+}
+
 class Plan final {
 public:
     [[nodiscard]] std::array<int, 4> geometry() const { return {width, height, paddedWidth, paddedHeight}; }
@@ -153,16 +232,7 @@ private:
 
 inline Plan plan(const restoration::Request& request, std::span<const BoundedPlanes> extents,
                  const SceneBounds& scene, const VerifiedWeights& model, Limits limits = {}) {
-    stopped(request.stop);
-    auto invalid = [](const char* message) { throw Error(Failure::invalidRequest, message); };
-    if (request.task != restoration::Task::deblock || request.placement != restoration::Placement::sourceRateBeforeInterpolation ||
-        request.inputProfile != "bt709-sdr8") invalid("STDF needs source-rate deblock and explicit bt709-sdr8");
-    if (request.missingFramesBefore > 3 || request.missingFramesAfter > 3 ||
-        request.context.size() != 7 - request.missingFramesBefore - request.missingFramesAfter ||
-        request.centerIndex != 3 - request.missingFramesBefore || extents.size() != request.context.size())
-        invalid("STDF requires seven declared real/edge-padded temporal slots");
-    if (scene.lastIndex && *scene.lastIndex < scene.firstIndex) invalid("STDF scene bounds are inverted");
-    const auto& center = request.context.at(request.centerIndex);
+    const auto& center = declaredCenter(request, extents, scene);
     if (center.width <= 0 || center.height <= 0 || limits.maximumWidth <= 0 || limits.maximumHeight <= 0 ||
         center.width > limits.maximumWidth || center.height > limits.maximumHeight ||
         center.width > qualifiedWidth || center.height > qualifiedHeight ||
@@ -178,43 +248,10 @@ inline Plan plan(const restoration::Request& request, std::span<const BoundedPla
                                                           multiply(center.width, center.height)));
     if (result.ownedPayloadBytes > limits.maximumOwnedPayloadBytes)
         throw Error(Failure::memoryBudget, "STDF input/output/graph payload plan exceeds the host-memory budget");
-    for (std::size_t index = 0; index < request.context.size(); ++index) {
-        const auto& frame = request.context[index];
-        const auto& color = frame.color;
-        if (!frame.storage || !frame.timestamp || frame.width != center.width || frame.height != center.height ||
-            color.pixelFormat != "yuv420p" || color.bitDepth != 8 || color.primaries != "bt709" ||
-            color.transfer != "bt709" || color.matrix != "bt709" || color.range != "tv" || color.hdrTransfer ||
-            color.masteringDisplay || color.contentLight)
-            invalid("STDF initial adapter requires owned planar BT.709 limited-range 8-bit SDR with exact timestamps");
-        if (frame.duration && *frame.duration <= Rational(0)) invalid("STDF frame duration must be positive when known");
-        if (frame.index < scene.firstIndex || (scene.lastIndex && frame.index > *scene.lastIndex))
-            invalid("STDF temporal context crosses the declared scene boundary");
-        if (index) {
-            const auto& previous = request.context[index - 1];
-            if (!(*previous.timestamp < *frame.timestamp) || previous.index == std::numeric_limits<std::size_t>::max() ||
-                frame.index != previous.index + 1) invalid("STDF real context must have adjacent indices and strictly increasing exact PTS");
-        }
-        const std::array<int, 3> widths{frame.width, (frame.width + 1) / 2, (frame.width + 1) / 2};
-        const std::array<int, 3> heights{frame.height, (frame.height + 1) / 2, (frame.height + 1) / 2};
-        for (std::size_t plane = 0; plane < 3; ++plane) {
-            const auto& view = frame.planes[plane];
-            if (!view.data || view.stride < widths[plane] || extents[index][plane].data() != view.data)
-                invalid("STDF needs positive valid plane strides and matching bounded decoder views");
-            const auto spanBytes = add(multiply(static_cast<std::size_t>(view.stride), heights[plane] - 1), widths[plane]);
-            if (extents[index][plane].size() < spanBytes) invalid("STDF plane buffer is shorter than its geometry");
-            result.retainedPlaneSpanBytes = add(result.retainedPlaneSpanBytes, spanBytes);
-        }
-    }
-    if (result.retainedPlaneSpanBytes > limits.maximumRetainedPlaneSpanBytes)
-        throw Error(Failure::memoryBudget, "STDF retained decoded plane spans exceed the explicit span budget");
-    if (request.missingFramesBefore && request.context.front().index != scene.firstIndex)
-        invalid("STDF cannot invent missing history inside a scene");
-    if (request.missingFramesAfter && (!scene.lastIndex || request.context.back().index != *scene.lastIndex))
-        invalid("STDF cannot invent missing future frames before a verified scene/clip end");
-    for (int slot = 0; slot < 7; ++slot)
-        result.contextIndices[slot] = static_cast<std::size_t>(std::clamp(slot - static_cast<int>(request.missingFramesBefore),
-                                                                       0, static_cast<int>(request.context.size()) - 1));
-    result.context = request.context; result.centerIndex = request.centerIndex; result.stop = request.stop;
+    auto validated = validateContext(request, extents, scene, limits.maximumRetainedPlaneSpanBytes);
+    result.contextIndices = validated.slots;
+    result.retainedPlaneSpanBytes = validated.retainedBytes;
+    result.context = std::move(validated.frames); result.centerIndex = validated.centerIndex; result.stop = validated.stop;
     return result;
 }
 

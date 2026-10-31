@@ -75,6 +75,8 @@ set(rifelove_processing_identity_sources
   src/restoration/stdf_cuda_backend.cpp
   src/restoration/stdf_cuda_backend.hpp
   src/restoration/stdf_luma_adapter.hpp
+  src/restoration/stdf_tile_policy.hpp
+  src/restoration/stdf_tiled_adapter.hpp
   src/restoration/temporal_window.cpp
   src/restoration/temporal_window.hpp
   src/restoration/video_restoration_backend.cpp

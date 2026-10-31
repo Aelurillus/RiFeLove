@@ -146,9 +146,11 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                     if (profile != "bt709-sdr8" || video->color.pixelFormat != "yuv420p" || video->color.bitDepth != 8 ||
                         video->color.primaries != "bt709" || video->color.transfer != "bt709" || video->color.matrix != "bt709" ||
                         video->color.range != "tv" || video->color.hdrTransfer || video->color.masteringDisplay || video->color.contentLight ||
-                        video->width <= 0 || video->height <= 0 || video->width > 384 || video->height > 256) {
+                        !supportsCompressionRestorationDimensions(settings.compressionRestorationTiled,video->width,video->height)) {
                         result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
-                            "STDF compression restoration currently requires tagged BT.709 SDR8 yuv420p input no larger than 384x256"});
+                            settings.compressionRestorationTiled
+                                ? "STDF tiled compression restoration requires tagged BT.709 SDR8 yuv420p and the bounded 4K pixel policy"
+                                : "STDF full-frame compression restoration requires tagged BT.709 SDR8 yuv420p input no larger than 384x256"});
                         valid = false;
                     } else if (std::find(compressionRestorationPack->capabilities.supportedInputProfiles.begin(),
                         compressionRestorationPack->capabilities.supportedInputProfiles.end(),profile) == compressionRestorationPack->capabilities.supportedInputProfiles.end()) {

@@ -584,7 +584,7 @@ try {
     $defaults = [ordered]@{
         schemaVersion = 1; product = "RifeLoveNative"; qt = $false; cliIncluded = $false; oss = $false
         defaultModelDirectory = "models/rife-4.25-fp32-sdr8-v3"; legacyModelDirectory = if ($includeLegacyModel) { "models/rife-4.25-fp32-sdr8-v2" } else { $null }
-        restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = "models/fastdvdnet-clipped-five-frame-sdr8-eval"; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = "experimental-optional"; compressionRestorationModelDirectory = "models/stdf-r3-y7-sdr8-local-eval"; compressionRestorationDefaultEnabled = $false; compressionRestorationStrength = 0.75; compressionRestorationMode = "experimental-local-evaluation"; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
+        restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = "models/fastdvdnet-clipped-five-frame-sdr8-eval"; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = "experimental-optional"; compressionRestorationModelDirectory = "models/stdf-r3-y7-sdr8-local-eval"; compressionRestorationDefaultEnabled = $false; compressionRestorationTiled = $false; compressionRestorationStrength = 0.75; compressionRestorationMode = "experimental-local-evaluation"; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
         ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm $ffmpegX86asmDescription"
         legacyModelIncluded = $includeLegacyModel
     }

@@ -253,7 +253,7 @@ bool freshPortableQa(const std::filesystem::path& executable) {
 }
 
 bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem::path& source,
-    const std::filesystem::path& output, bool automaticDenoise, bool compression = false) {
+    const std::filesystem::path& output, bool automaticDenoise, bool compression = false, bool compressionTiled = false) {
     // Use the Windows SQLite API read-only; no new link/runtime dependency is
     // added to the product or to this standalone User32 test driver.
     HMODULE module = LoadLibraryExW(L"winsqlite3.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -281,10 +281,10 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
     const int status = open(path.c_str(), &raw, 1 /* SQLITE_OPEN_READONLY */, nullptr);
     std::unique_ptr<void, Close> db(raw, close);
     if (status != 0) { std::cerr << "Could not open the QA queue read-only.\n"; return false; }
-    const auto sql = compression ?
+    std::string sql = compression ?
         "SELECT COUNT(*) FROM tasks t JOIN task_details d ON d.task_id=t.id "
         "WHERE t.source_path=?1 AND t.output_path=?2 AND t.state='completed' "
-        "AND json_extract(d.configuration,'$.schemaVersion')=10 "
+        "AND json_extract(d.configuration,'$.schemaVersion') IN (10,11) "
         "AND json_extract(d.configuration,'$.targetRate')='60/1' "
         "AND json_extract(d.configuration,'$.compressionRestorationModelDirectory')<>'' "
         "AND length(json_extract(d.configuration,'$.expectedCompressionRestorationDescriptorSha256'))=64 "
@@ -298,7 +298,7 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
         "AND json_extract(d.result,'$.validation.decodedFrames')=json_extract(d.result,'$.outputFrames')" : automaticDenoise ?
         "SELECT COUNT(*) FROM tasks t JOIN task_details d ON d.task_id=t.id "
         "WHERE t.source_path=?1 AND t.output_path=?2 AND t.state='completed' "
-        "AND json_extract(d.configuration,'$.schemaVersion')=10 "
+        "AND json_extract(d.configuration,'$.schemaVersion') IN (10,11) "
         "AND json_extract(d.configuration,'$.temporalRestorationModelDirectory')<>'' "
         "AND json_extract(d.configuration,'$.automaticTemporalDenoise.algorithmVersion')=1 "
         "AND json_extract(d.configuration,'$.automaticTemporalDenoise.replayPolicy')='software-source-pts-from-start-v1' "
@@ -318,17 +318,20 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
         "AND json_extract(d.result,'$.inferenceCalls')>0 AND json_extract(d.result,'$.outputFrames')>1 "
         "AND json_extract(d.result,'$.validation.decodedFrames')=json_extract(d.result,'$.outputFrames')";
     // SQLITE_STATIC bindings stay alive until statement finalization.
+    if (compression) sql += compressionTiled ?
+        " AND json_extract(d.configuration,'$.schemaVersion')=11 AND json_extract(d.configuration,'$.compressionRestorationTiled')=1" :
+        " AND COALESCE(json_extract(d.configuration,'$.compressionRestorationTiled'),0)=0";
     const auto input = utf8(source.c_str()), destination = utf8(output.c_str());
     void* statementRaw = nullptr;
-    const int prepared = prepare(raw, sql, -1, &statementRaw, nullptr);
+    const int prepared = prepare(raw, sql.c_str(), -1, &statementRaw, nullptr);
     std::unique_ptr<void, Finalize> statement(statementRaw, finalize);
     if (prepared != 0) { std::cerr << "Read-only QA query needs SQLite JSON support: " << error(raw) << '\n'; return false; }
     if (bind(statementRaw, 1, input.c_str(), -1, nullptr) != 0 || bind(statementRaw, 2, destination.c_str(), -1, nullptr) != 0 ||
         step(statementRaw) != 100 /* SQLITE_ROW */ || column(statementRaw, 0) != 1) {
         std::cerr << "Completed QA queue record did not prove the selected processing mode/result.\n"; return false;
     }
-    std::cout << (compression ? "QA queue confirms schema 10 independent STDF opt-in at 50%, pinned descriptor, software decode, real RIFE calls and matching validated completed frame counts. This is functional GPU-path evidence, not visual-quality qualification.\n" :
-        automaticDenoise ? "QA queue confirms schema 10 automatic opt-in, selected temporal model, software decode and validated completed frame counts.\n" :
+    std::cout << (compression ? "QA queue confirms independent STDF opt-in at 50%, explicit full-frame/tiled policy, pinned descriptor, software decode, real RIFE calls and matching validated completed frame counts. This is functional GPU-path evidence, not visual-quality qualification.\n" :
+        automaticDenoise ? "QA queue confirms automatic opt-in, selected temporal model, software decode and validated completed frame counts.\n" :
         "QA queue confirms this source/output completed at 60 FPS with a selected model/backend, real AI calls, H.264 NVENC and matching validated frame counts.\n");
     return true;
 }
@@ -487,16 +490,17 @@ bool checkPackagedComparison(HDESK desktop, DWORD processId, HWND owner,
 // that is never switched to, so no user input or foreground window is touched.
 int wmain(int argc, wchar_t** argv) {
     if (argc != 4 && argc != 5) {
-        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --auto-denoise, --dual, --dual-blur, --compression or --comparison; or native executable --capture-only new-client.bmp. --compression, --auto-denoise, --comparison and --capture-only require a fresh writable portable QA package. --compression requires a tagged BT.709 limited-range SDR8 yuv420p source no larger than 384x256 and a qualified local STDF pack. --comparison additionally requires qa-fixtures/synthetic-fixtures.txt declaring RifeLoveSyntheticComparison 1, synthetic-comparison-source.mp4 and new synthetic-comparison-output.mkv inside that package.\n";
+        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --auto-denoise, --dual, --dual-blur, --compression, --compression-tiled or --comparison; or native executable --capture-only new-client.bmp. --compression, --compression-tiled, --auto-denoise, --comparison and --capture-only require a fresh writable portable QA package. --compression requires a tagged BT.709 limited-range SDR8 yuv420p source no larger than 384x256 and a qualified local STDF pack. --compression-tiled explicitly enables the separate bounded UHD tile evaluation path. --comparison additionally requires qa-fixtures/synthetic-fixtures.txt declaring RifeLoveSyntheticComparison 1, synthetic-comparison-source.mp4 and new synthetic-comparison-output.mkv inside that package.\n";
         return 2;
     }
     const std::filesystem::path executable = std::filesystem::absolute(argv[1]).lexically_normal();
     const bool captureOnly = argc == 4 && std::wstring(argv[2]) == L"--capture-only";
     const std::filesystem::path source = captureOnly ? std::filesystem::path{} : std::filesystem::absolute(argv[2]).lexically_normal();
     const std::filesystem::path output = std::filesystem::absolute(argv[3]).lexically_normal();
-    const bool automaticDenoise = argc == 5 && std::wstring(argv[4]) == L"--auto-denoise";
-    const bool compression = argc == 5 && std::wstring(argv[4]) == L"--compression";
-    const bool comparison = argc == 5 && std::wstring(argv[4]) == L"--comparison";
+    const bool automaticDenoise = argc == 5 && std::wcscmp(argv[4], L"--auto-denoise") == 0;
+    const bool compressionTiled = argc == 5 && std::wcscmp(argv[4], L"--compression-tiled") == 0;
+    const bool compression = compressionTiled || (argc == 5 && std::wcscmp(argv[4], L"--compression") == 0);
+    const bool comparison = argc == 5 && std::wcscmp(argv[4], L"--comparison") == 0;
     if (!std::filesystem::is_regular_file(executable) || (!captureOnly && !std::filesystem::is_regular_file(source)) ||
         std::filesystem::exists(output)) {
         std::cerr << "Executable/fixture is missing or output already exists.\n";
@@ -631,20 +635,28 @@ int wmain(int argc, wchar_t** argv) {
                 }
                 if (compression) {
                     const HWND strength = GetDlgItem(context.result, 1028);
-                    const bool defaultOff = strength && SendMessageW(strength, CB_GETCURSEL, 0, 0) == 0;
+                    const HWND tiling = GetDlgItem(context.result, 1029);
+                    const bool defaultOff = strength && tiling && SendMessageW(strength, CB_GETCURSEL, 0, 0) == 0 &&
+                        SendMessageW(tiling, BM_GETCHECK, 0, 0) == BST_UNCHECKED;
                     // Select two independent HWND controls; denoise/SR remain
                     // off. The app owns all descriptor and source gates.
-                    if (!defaultOff || !selectComboItemByLabel(context.result, 1027, L"STDF") ||
-                        !IsWindowEnabled(strength) || !selectComboItemByLabel(context.result, 1028, L"50%") ||
-                        !IsWindowEnabled(start)) {
-                        std::cerr << "Independent STDF model/strength controls are unavailable or the source is outside the qualified CUDA SDR8 384x256 boundary.\n";
+                    bool controlsReady = defaultOff && selectComboItemByLabel(context.result, 1027, L"STDF") &&
+                        IsWindowEnabled(strength) && selectComboItemByLabel(context.result, 1028, L"50%");
+                    if (controlsReady && compressionTiled) {
+                        controlsReady = IsWindowEnabled(tiling) != FALSE;
+                        if (controlsReady) SendMessageW(tiling, BM_CLICK, 0, 0);
+                        controlsReady = controlsReady && SendMessageW(tiling, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    }
+                    if (!controlsReady || !IsWindowEnabled(start)) {
+                        std::cerr << "Independent STDF model/strength/tile controls are unavailable or source readiness failed.\n";
                         PostMessageW(context.result, WM_CLOSE, 0, 0);
                         if (WaitForSingleObject(process.hProcess, 10000) != WAIT_OBJECT_0) {
                             TerminateProcess(process.hProcess, 1); WaitForSingleObject(process.hProcess, 5000);
                         }
                         CloseHandle(process.hProcess); CloseDesktop(desktop); return 1;
                     }
-                    std::cout << "Actual EXE HWNDs expose STDF model control 1027 and independent default-off strength control 1028; selected 50% and source readiness passed.\n";
+                    std::cout << "Actual EXE HWNDs expose independent model/strength/tile controls 1027/1028/1029; selected 50%, "
+                        << (compressionTiled ? "explicit tiled mode" : "original full-frame mode") << " and source readiness passed.\n";
                 }
                 if (automaticDenoise && !confirmAutomaticDenoise(desktop, process.dwProcessId, context.result)) {
                     std::cerr << "Could not explicitly enable experimental automatic Gaussian denoise.\n";
@@ -701,7 +713,7 @@ int wmain(int argc, wchar_t** argv) {
                     std::cerr << "Could not capture the target window on the isolated desktop.\n";
                 SendMessageW(start, BM_CLICK, 0, 0);
                 if (waitUntil([&] { return std::filesystem::is_regular_file(output) && !IsWindowEnabled(cancel); },
-                              std::chrono::seconds(automaticDenoise || compression ? 300 : 120))) {
+                              std::chrono::seconds(compressionTiled ? 600 : automaticDenoise || compression ? 300 : 120))) {
                     std::cout << "Actual native EXE published the test video through its start button.\n";
                     result = comparison ? (checkPackagedComparison(desktop, process.dwProcessId, context.result, source, output) ? 0 : 1) : 0;
                 } else std::cerr << "Target did not publish a completed test video.\n";
@@ -721,7 +733,7 @@ int wmain(int argc, wchar_t** argv) {
         WaitForSingleObject(process.hProcess, 5000);
         result = 1;
     }
-    if (result == 0 && (automaticDenoise || compression || comparison) && !verifyQaQueue(executable.parent_path() / L"data" / L"queue.sqlite", source, output, automaticDenoise, compression))
+    if (result == 0 && (automaticDenoise || compression || comparison) && !verifyQaQueue(executable.parent_path() / L"data" / L"queue.sqlite", source, output, automaticDenoise, compression, compressionTiled))
         result = 1;
     CloseHandle(process.hProcess);
     CloseDesktop(desktop);

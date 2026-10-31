@@ -219,7 +219,7 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     text(state.mediaSummary.empty() ? L"MP4 / MKV / MOV  ·  精确时间轴" : state.mediaSummary,
         l.left + 20, y + l.sourceInputTop + 66, lw - 40, 18, 10, muted);
 
-    cardAt(l.left, y + 296, lw, 442);
+    cardAt(l.left, y + 296, lw, 482);
     text(L"02", l.left + 20, y + 311, 28, 22, 10, blue, true);
     text(L"画质与运动", l.left + 53, y + 309, lw - 84, 26, 14, white, true);
     // The native controls are separate so temporal denoise and spatial
@@ -232,15 +232,15 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     text(L"压缩修复 · STDF 本机评估", l.left + 20, y + 529, (lw - 48) * 0.68F, 20, 11, muted);
     text(L"强度 / 开关", l.left + 28 + (lw - 48) * 0.68F, y + 529, (lw - 48) * 0.32F, 20, 11, muted);
     text(state.compressionSummary.empty() ? L"默认关闭 · CUDA / SDR8 · 仅验证至 384 × 256" : state.compressionSummary,
-        l.left + 20, y + 594, lw - 40, 34, 10, warning, false, true);
-    line(l.left + 20, y + 632, lw - 40);
+        l.left + 20, y + 634, lw - 40, 34, 10, warning, false, true);
+    line(l.left + 20, y + 672, lw - 40);
     if (state.advancedExpanded) {
-        text(L"快门角度", l.left + 20, y + 697, 64, 20, 10, muted);
-        text(L"采样数", l.left + (lw - 40 < 280 ? 154 : 170), y + 697, lw - 40 < 280 ? 54 : 62, 20, 10, muted);
+        text(L"快门角度", l.left + 20, y + 737, 64, 20, 10, muted);
+        text(L"采样数", l.left + (lw - 40 < 280 ? 154 : 170), y + 737, lw - 40 < 280 ? 54 : 62, 20, 10, muted);
     } else {
-        text(state.motionBlurSummary, l.left + 20, y + 689, lw - 40, 38, 11, muted, false, true);
+        text(state.motionBlurSummary, l.left + 20, y + 729, lw - 40, 38, 11, muted, false, true);
     }
-    line(l.left + 20, y + 736, lw - 40);
+    line(l.left + 20, y + 776, lw - 40);
 
     cardAt(second, ey + 104, rw, 522);
     text(L"03", exportLeft, ey + 118, 28, 22, 10, accent, true);

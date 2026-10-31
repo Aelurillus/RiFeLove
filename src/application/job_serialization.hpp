@@ -17,6 +17,12 @@ struct ProcessingReportContext {
 
 [[nodiscard]] std::string serializeJob(const ProcessingJob& job);
 [[nodiscard]] ProcessingJob parseJob(const std::string& source, const std::string& output, const std::string& json);
+// Canonical immutable execution-policy contract recorded by schema 11 jobs
+// and tiled checkpoint runtimes; callers cannot silently vary tile geometry.
+[[nodiscard]] std::string serializeCompressionRestorationPolicy(bool tiled);
+[[nodiscard]] bool supportsCompressionRestorationDimensions(bool tiled, int width, int height) noexcept;
+[[nodiscard]] bool compressionRestorationRuntimeMatchesPolicy(bool tiled, std::string_view signature,
+    std::string_view graphSha256 = {}) noexcept;
 [[nodiscard]] std::string serializeIdentity(const ProcessingIdentity& identity);
 [[nodiscard]] std::string serializeProgress(const ProcessingEvent& event);
 [[nodiscard]] std::string serializeResult(const PipelineResult& result);

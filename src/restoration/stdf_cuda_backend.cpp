@@ -1,5 +1,6 @@
 #include "restoration/stdf_cuda_backend.hpp"
 #include "restoration/model_pack.hpp"
+#include "restoration/stdf_tiled_adapter.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -113,6 +114,9 @@ Capabilities stdfCapabilities(const ModelPack& model, const StdfCudaDiagnostics&
         ";ort-" + diagnostics.runtimeVersion + ";provider-onnxruntime_cuda" +
         ";max-" + std::to_string(config.maximumWidth) + "x" + std::to_string(config.maximumHeight) +
         ";strategy-center-uv-pts-v1;profile-required-before-publish-v1;serialized-worker-v1";
+    if (config.enableTiling)
+        capabilities.runtimeSignature += std::string(";tilePolicy-") + stdfTilePolicy(config) +
+            ";source-axis-3840;source-pixels-8294400;evaluation-not-full-frame-equivalence-v1";
     return capabilities;
 }
 
@@ -239,6 +243,8 @@ public:
         lease_ = inference::acquireOrtRuntimeLease(config_.runtimeDirectory);
         diagnostics_.runtimeVersion = "1.22.0";
         diagnostics_.cudaProviderAvailable = lease_.cudaProviderAvailable;
+        diagnostics_.tilingEnabled = config_.enableTiling;
+        diagnostics_.tilePolicy = stdfTilePolicy(config_);
     }
     void load(const std::filesystem::path& graphPath) {
         model_.emplace(validation::stdf::VerifiedWeights::load(graphPath));
@@ -270,6 +276,31 @@ public:
             throw StdfError("STDF CUDA session is permanently rejected after profile verification failure");
         if (!session_.value) throw StdfError("Load a verified STDF graph before inference");
         const auto layoutLimits = validation::stdf::Limits{config_.maximumWidth, config_.maximumHeight, config_.hostFloatBufferLimit, config_.hostFloatBufferLimit};
+        if (config_.enableTiling) {
+            validation::stdf::tiled::Statistics statistics;
+            auto remember = [&] {
+                diagnostics_.tilingEnabled = true;
+                diagnostics_.tilePolicy = stdfTilePolicy(config_);
+                diagnostics_.tilesPlanned = statistics.tilesPlanned;
+                diagnostics_.tilesCompleted = statistics.tilesCompleted;
+                diagnostics_.peakHostFloatBufferBytes = statistics.peakFloatBufferBytes;
+                diagnostics_.adapterOwnedPayloadBytes = statistics.ownedPayloadBytes;
+                diagnostics_.retainedPlaneSpanBytes = statistics.retainedPlaneSpanBytes;
+                diagnostics_.maximumTileInputWidth = statistics.maximumInputWidth;
+                diagnostics_.maximumTileInputHeight = statistics.maximumInputHeight;
+            };
+            try {
+                auto result = validation::stdf::tiled::run(*model_, request, extents, scene, strength,
+                    [&](std::span<const std::byte> /*graph*/, std::span<const float> input, std::array<std::int64_t,4> shape,
+                        std::span<float> output, std::stop_token stop) { runOrt(input, shape, output, stop); },
+                    layoutLimits, &statistics);
+                remember();
+                return std::move(result.centerFrame);
+            } catch (...) {
+                remember(); // Diagnostic progress is never a published partial frame.
+                throw;
+            }
+        }
         return validation::stdf::run(*model_, request, extents, scene, strength,
             [&](std::span<const std::byte> /*graph*/, std::span<const float> input, std::array<std::int64_t,4> shape,
                 std::span<float> output, std::stop_token stop) {
@@ -295,6 +326,15 @@ public:
             profile.backend = diagnostics_.backend;
             profile.cudaProviderAvailable = providerAvailable;
             profile.cudaSessionCreated = sessionCreated;
+            profile.tilingEnabled = diagnostics_.tilingEnabled;
+            profile.tilePolicy = diagnostics_.tilePolicy;
+            profile.tilesPlanned = diagnostics_.tilesPlanned;
+            profile.tilesCompleted = diagnostics_.tilesCompleted;
+            profile.peakHostFloatBufferBytes = diagnostics_.peakHostFloatBufferBytes;
+            profile.adapterOwnedPayloadBytes = diagnostics_.adapterOwnedPayloadBytes;
+            profile.retainedPlaneSpanBytes = diagnostics_.retainedPlaneSpanBytes;
+            profile.maximumTileInputWidth = diagnostics_.maximumTileInputWidth;
+            profile.maximumTileInputHeight = diagnostics_.maximumTileInputHeight;
             diagnostics_ = std::move(profile);
             std::string rejectionReason;
             if (!acceptStdfCudaProfile(profileGate_, diagnostics_, config_.requireCriticalCudaProfile, rejectionReason))
@@ -337,11 +377,19 @@ private:
         if (input.size() != count || output.size() != static_cast<std::size_t>(shape[2]) * static_cast<std::size_t>(shape[3])) throw StdfError("STDF tensor size contract mismatch");
         Handle<OrtMemoryInfo> memory(api.ReleaseMemoryInfo); check(api, api.CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory.value));
         Handle<OrtValue> inputValue(api.ReleaseValue); check(api, api.CreateTensorWithDataAsOrtValue(memory.value, const_cast<float*>(input.data()), input.size_bytes(), shape.data(), shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &inputValue.value));
-        const char* inputNames[] = {"luma_frames"}; const char* outputNames[] = {"restored_luma"}; OrtValue* rawOutput = nullptr;
+        const char* inputNames[] = {"luma_frames"}; const char* outputNames[] = {"restored_luma"};
+        Handle<OrtValue> outputValue(api.ReleaseValue);
+        if (config_.enableTiling) {
+            // The tiled adapter proves its sole prediction-buffer budget
+            // before allocation. Bind that exact host buffer to ORT rather
+            // than retaining a second ORT-allocated host prediction copy.
+            const std::array<std::int64_t, 4> outputShape{1, 1, shape[2], shape[3]};
+            check(api, api.CreateTensorWithDataAsOrtValue(memory.value, output.data(), output.size_bytes(),
+                outputShape.data(), outputShape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &outputValue.value));
+        }
         Handle<OrtRunOptions> runOptions(api.ReleaseRunOptions); check(api, api.CreateRunOptions(&runOptions.value));
         std::stop_callback terminate(stop, [&] { if (auto* status = api.RunOptionsSetTerminate(runOptions.value)) api.ReleaseStatus(status); });
-        check(api, api.Run(session_.value, runOptions.value, inputNames, &inputValue.value, 1, outputNames, 1, &rawOutput), stop);
-        Handle<OrtValue> outputValue(api.ReleaseValue); outputValue.value = rawOutput;
+        check(api, api.Run(session_.value, runOptions.value, inputNames, &inputValue.value, 1, outputNames, 1, &outputValue.value), stop);
         if (stop.stop_requested()) throw StdfError("STDF CUDA inference cancelled; result discarded");
         if (!outputValue.value) throw StdfError("STDF CUDA graph returned no output value");
         enum ONNXType valueType{}; check(api, api.GetValueType(outputValue.value, &valueType));
@@ -364,7 +412,9 @@ private:
             shape[2], shape[3], output.size());
         float* data = nullptr; check(api, api.GetTensorMutableData(outputValue.value, reinterpret_cast<void**>(&data)));
         if (!data) throw StdfError("STDF CUDA graph returned no output data");
-        std::copy_n(data, output.size(), output.data());
+        if (config_.enableTiling && data != output.data())
+            throw StdfError("STDF CUDA tiled output did not retain its pre-budgeted host prediction buffer");
+        if (data != output.data()) std::copy_n(data, output.size(), output.data());
         if (profiling_ && !profileChecked_) {
             finishProfile();
         }

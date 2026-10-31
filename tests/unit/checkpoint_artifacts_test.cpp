@@ -5,6 +5,7 @@
 #include "media/video_writer.hpp"
 #include "media/ffmpeg_helpers.hpp"
 #include "restoration/model_pack.hpp"
+#include "restoration/stdf_tile_policy.hpp"
 extern "C" {
 #include <libswscale/swscale.h>
 }
@@ -98,6 +99,36 @@ std::optional<std::filesystem::path> findLocalStdfPack() {
         }
     }
     return std::nullopt;
+}
+
+nlohmann::json compressionManifest(bool tiled) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    ProcessingJob job;
+    job.source = "C:/source.mkv"; job.output = "C:/output.mkv";
+    job.modelDirectory = "C:/model"; job.runtimeDirectory = "C:/runtime";
+    job.compressionRestorationModelDirectory = "C:/models/stdf-r3";
+    job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
+    job.compressionRestorationStrength = 0.75F;
+    job.compressionRestorationTiled = tiled;
+    Json manifest{{"schemaVersion",2},{"job",Json::parse(serializeJob(job))},{"identity",Json::object()},
+        {"compressionRestorationRuntime",{
+            {"modelId","stdf-r3-y7-sdr8"},{"adapterId","stdf-r3-y7-luma-v1"},{"adapterVersion",1},
+            {"backend","onnxruntime_cuda"},{"signature","stdf-r3-y7-luma-v1;graph-test;ort-1.22.0"},
+            {"descriptorSha256",job.expectedCompressionRestorationDescriptorSha256},{"strength",job.compressionRestorationStrength},
+            {"inputProfile","bt709-sdr8"},{"pixelFormat","yuv420p"},{"maximumWidth",384},{"maximumHeight",256},
+            {"tilePolicy",tiled ? restoration::stdf_tiles::policyId : "full-frame-bounded-384x256-v1"},
+            {"decoderReplayPolicy","software-source-pts-from-start-v1"},
+            {"sceneReplayPolicy","scene-bounds-serial-v1"}}}};
+    if (tiled) {
+        auto& runtime = manifest["compressionRestorationRuntime"];
+        runtime["graphSha256"] = std::string(64,'a');
+        runtime["signature"] = "stdf-r3-y7-luma-v1;graph-" + std::string(64,'a') +
+            ";ort-1.22.0;tilePolicy-" + restoration::stdf_tiles::policyId;
+        runtime["tiledPolicy"] = Json::parse(serializeCompressionRestorationPolicy(true));
+    }
+    return manifest;
 }
 }
 
@@ -466,6 +497,124 @@ TEST(CheckpointArtifacts, CompressionRestorationIdentityRejectsChangedModelStren
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(legacy.dump(),enabled.dump()));
 }
 
+TEST(CheckpointArtifacts, SchemaElevenPreservesLegacyFullFrameRuntimeButNeverMigratesItToTiling) {
+    using namespace rifelove::application;
+    const auto current = compressionManifest(false);
+    auto legacy = current;
+    legacy["job"]["schemaVersion"] = 10;
+    legacy["job"].erase("compressionRestorationTiled");
+    legacy["job"].erase("compressionRestorationPolicy");
+    const auto savedRuntime = legacy.at("compressionRestorationRuntime").dump();
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(legacy.dump(),current.dump()));
+    EXPECT_EQ(current.at("compressionRestorationRuntime").dump(),savedRuntime);
+    EXPECT_EQ(current.at("compressionRestorationRuntime").at("tilePolicy"),"full-frame-bounded-384x256-v1");
+    EXPECT_FALSE(current.at("compressionRestorationRuntime").contains("graphSha256"));
+    EXPECT_FALSE(current.at("compressionRestorationRuntime").contains("tiledPolicy"));
+
+    const auto tiled = compressionManifest(true);
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(tiled.dump(),tiled.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(legacy.dump(),tiled.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(current.dump(),tiled.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(tiled.dump(),current.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(tiled.dump(),legacy.dump()));
+
+    auto disguised = tiled;
+    disguised["job"]["schemaVersion"] = 10;
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(disguised.dump(),disguised.dump()));
+    disguised["job"].erase("compressionRestorationTiled");
+    disguised["job"].erase("compressionRestorationPolicy");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(disguised.dump(),disguised.dump()));
+}
+
+TEST(CheckpointArtifacts, TiledCompressionRejectsIncompleteAndChangedExecutionContractsEvenWhenSelfMatched) {
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    const auto original = compressionManifest(true);
+    const auto rejected = [&](const Json& changed) {
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(original.dump(),changed.dump()));
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    };
+    for (const auto* field : {"compressionRestorationTiled","compressionRestorationPolicy"}) {
+        auto changed = original; changed["job"].erase(field); rejected(changed);
+    }
+    auto changed = original; changed["job"]["compressionRestorationTiled"] = 1; rejected(changed);
+    changed = original; changed.erase("compressionRestorationRuntime"); rejected(changed);
+    changed = original; changed["job"]["compressionRestorationModelDirectory"] = ""; rejected(changed);
+    changed = original; changed["job"]["expectedCompressionRestorationDescriptorSha256"] = ""; rejected(changed);
+    changed = original; changed["job"]["compressionRestorationStrength"] = 0.0; rejected(changed);
+    for (const auto& [field,value] : original.at("job").at("compressionRestorationPolicy").items()) {
+        SCOPED_TRACE(field);
+        changed = original; changed["job"]["compressionRestorationPolicy"].erase(field); rejected(changed);
+        changed = original; changed["job"]["compressionRestorationPolicy"][field] = "changed"; rejected(changed);
+        changed = original; changed["compressionRestorationRuntime"]["tiledPolicy"].erase(field); rejected(changed);
+        changed = original; changed["compressionRestorationRuntime"]["tiledPolicy"][field] = "changed"; rejected(changed);
+    }
+    changed = original; changed["job"]["compressionRestorationPolicy"]["extra"] = true; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["tiledPolicy"]["extra"] = true; rejected(changed);
+    for (const auto* field : {"graphSha256","tiledPolicy","signature","backend","tilePolicy",
+                              "descriptorSha256","strength","inputProfile","pixelFormat","maximumWidth","maximumHeight",
+                              "decoderReplayPolicy","sceneReplayPolicy"}) {
+        SCOPED_TRACE(field);
+        changed = original; changed["compressionRestorationRuntime"].erase(field); rejected(changed);
+    }
+    for (const auto* field : {"tilePolicy","inputProfile","pixelFormat","decoderReplayPolicy","sceneReplayPolicy"}) {
+        SCOPED_TRACE(field);
+        changed = original; changed["compressionRestorationRuntime"][field] = "changed"; rejected(changed);
+    }
+    changed = original; changed["compressionRestorationRuntime"]["graphSha256"] = std::string(64,'b'); rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["signature"] = "legacy-full-frame-runtime"; rejected(changed);
+    const auto signature = original.at("compressionRestorationRuntime").at("signature").get<std::string>();
+    changed = original; changed["compressionRestorationRuntime"]["signature"] = signature + "-unknown-policy-suffix"; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["signature"] = signature + ";graph-" + std::string(64,'a'); rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["signature"] = signature + ";tilePolicy-" +
+        rifelove::restoration::stdf_tiles::policyId; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["signature"] = "graph-" + std::string(65,'a') +
+        ";tilePolicy-" + rifelove::restoration::stdf_tiles::policyId; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["backend"] = "CPUExecutionProvider"; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["descriptorSha256"] = std::string(64,'b'); rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["strength"] = 0.5; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["maximumWidth"] = 512; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["maximumHeight"] = 384; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["maximumWidth"] = 384.0; rejected(changed);
+    changed = original; changed["compressionRestorationRuntime"]["maximumHeight"] = 256.0; rejected(changed);
+}
+
+TEST(CheckpointArtifacts, TiledCompressionBindsValidGraphRuntimeModelAndAdapterIdentities) {
+    using namespace rifelove::application;
+    const auto original = compressionManifest(true);
+    for (const auto* field : {"modelId","adapterId","adapterVersion","signature"}) {
+        auto changed = original;
+        if (std::string(field) == "adapterVersion") changed["compressionRestorationRuntime"][field] = 2;
+        else changed["compressionRestorationRuntime"][field] =
+            changed["compressionRestorationRuntime"][field].get<std::string>() + ";other-runtime";
+        // A different otherwise valid runtime is its own identity and cannot
+        // inherit segments from this one. The actual loaded backend signature
+        // is checked again by TaskQueue before it reuses any frames.
+        EXPECT_TRUE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump())) << field;
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(original.dump(),changed.dump())) << field;
+    }
+    auto changedGraph = original;
+    const std::string graph(64,'b');
+    changedGraph["compressionRestorationRuntime"]["graphSha256"] = graph;
+    changedGraph["compressionRestorationRuntime"]["signature"] = "graph-" + graph + ";tilePolicy-" +
+        rifelove::restoration::stdf_tiles::policyId;
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(changedGraph.dump(),changedGraph.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(original.dump(),changedGraph.dump()));
+
+    auto fullFrame = compressionManifest(false);
+    fullFrame["compressionRestorationRuntime"]["tiledPolicy"] = original.at("compressionRestorationRuntime").at("tiledPolicy");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(fullFrame.dump(),fullFrame.dump()));
+    fullFrame = compressionManifest(false);
+    fullFrame["compressionRestorationRuntime"]["graphSha256"] = graph;
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(fullFrame.dump(),fullFrame.dump()));
+    fullFrame = compressionManifest(false);
+    fullFrame["compressionRestorationRuntime"]["signature"] = original.at("compressionRestorationRuntime").at("signature");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(fullFrame.dump(),fullFrame.dump()));
+    fullFrame = compressionManifest(false);
+    fullFrame["compressionRestorationRuntime"]["signature"] = "full-frame-runtime;tilePolicy-unrecognized-tiled-policy";
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(fullFrame.dump(),fullFrame.dump()));
+}
+
 TEST(CheckpointArtifacts, TaskQueueResumesEnabledCompressionCheckpointAfterLoadingSavedRuntimeIdentity) {
     using namespace rifelove;
     using namespace rifelove::application;
@@ -475,53 +624,72 @@ TEST(CheckpointArtifacts, TaskQueueResumesEnabledCompressionCheckpointAfterLoadi
     const auto model = restoration::loadModelPack(*packPath);
     ASSERT_TRUE(restoration::supportsStdfCudaModel(model));
 
-    CheckpointFixture fixture;
-    const auto database = fixture.directory / "queue.sqlite", output = fixture.directory / "result.mkv";
-    ProcessingJob job;
-    job.source = fixture.source.string(); job.output = output.string();
-    job.modelDirectory = fixture.directory / "missing-rife-model";
-    job.runtimeDirectory = fixture.directory / "missing-rife-runtime";
-    job.compressionRestorationModelDirectory = *packPath;
-    job.expectedCompressionRestorationDescriptorSha256 = inference::sha256File(*packPath / "model.json",256 * 1024);
-    job.compressionRestorationStrength = 0.75F;
-    job.settings.targetRate = Rational(50);
-    ProcessingIdentity identity{};
-    { SourceLease lease(fixture.source); identity.source = lease.fingerprint({}); }
-    identity.modelId = "rife-fixture"; identity.modelVersion = "1"; identity.modelSha256 = std::string(64,'a');
-    identity.backend = "onnxruntime_cuda"; identity.device.name = "CPU-only compression resume fixture";
-    applyStoredIdentity(job,serializeIdentity(identity));
-    const auto configuration = serializeJob(job);
-    const auto identityText = serializeIdentity(identity);
-    const Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},{"job",Json::parse(configuration)},
-        {"identity",Json::parse(identityText)},{"mediaRuntime",media::MediaEngine::runtimeVersion()},
-        {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())},{"framesPerSegment",256},
-        {"compressionRestorationRuntime",{
-            {"modelId",model.id},{"adapterId",model.capabilities.adapterId},{"adapterVersion",model.capabilities.adapterVersion},
-            {"backend","onnxruntime_cuda"},{"signature","stdf-r3-y7-luma-v1;resume-fixture-runtime"},
-            {"descriptorSha256",job.expectedCompressionRestorationDescriptorSha256},{"strength",job.compressionRestorationStrength},
-            {"inputProfile","bt709-sdr8"},{"pixelFormat","yuv420p"},{"maximumWidth",384},{"maximumHeight",256},
-            {"tilePolicy","full-frame-bounded-384x256-v1"},
-            {"decoderReplayPolicy","software-source-pts-from-start-v1"},
-            {"sceneReplayPolicy","scene-bounds-serial-v1"}}}};
-    std::string taskId;
-    {
-        TaskStore seed(database.string());
-        taskId = seed.createConfigured({{job.source,job.output,configuration}}).front();
-        seed.transition(taskId,TaskState::running); seed.saveIdentity(taskId,identityText);
-        CheckpointArtifacts artifacts(seed,taskId,output); artifacts.setManifest(manifest.dump());
-        const auto segment = createSegment(fixture,artifacts);
-        (void)artifacts.commit(0,0,2,segment);
-        ASSERT_EQ(seed.recoverConfigured(),1U);
-    }
+    // Preflight needs the pack's immutable descriptor/graph, but no inference
+    // session or private models are required on CI (this test skips there).
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        SCOPED_TRACE(scenario == 0 ? "schema11 full-frame" : scenario == 1 ? "schema10 full-frame" : "schema11 tiled");
+        CheckpointFixture fixture;
+        const auto database = fixture.directory / "queue.sqlite", output = fixture.directory / "result.mkv";
+        ProcessingJob job;
+        job.source = fixture.source.string(); job.output = output.string();
+        job.modelDirectory = fixture.directory / "missing-rife-model";
+        job.runtimeDirectory = fixture.directory / "missing-rife-runtime";
+        job.compressionRestorationModelDirectory = *packPath;
+        job.expectedCompressionRestorationDescriptorSha256 = inference::sha256File(*packPath / "model.json",256 * 1024);
+        job.compressionRestorationStrength = 0.75F;
+        job.compressionRestorationTiled = scenario == 2;
+        job.settings.targetRate = Rational(50);
+        ProcessingIdentity identity{};
+        { SourceLease lease(fixture.source); identity.source = lease.fingerprint({}); }
+        identity.modelId = "rife-fixture"; identity.modelVersion = "1"; identity.modelSha256 = std::string(64,'a');
+        identity.backend = "onnxruntime_cuda"; identity.device.name = "CPU-only compression resume fixture";
+        applyStoredIdentity(job,serializeIdentity(identity));
+        auto configurationJson = Json::parse(serializeJob(job));
+        if (scenario == 1) {
+            configurationJson["schemaVersion"] = 10;
+            configurationJson.erase("compressionRestorationTiled");
+            configurationJson.erase("compressionRestorationPolicy");
+        }
+        const auto configuration = configurationJson.dump();
+        const auto identityText = serializeIdentity(identity);
+        Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},{"job",configurationJson},
+            {"identity",Json::parse(identityText)},{"mediaRuntime",media::MediaEngine::runtimeVersion()},
+            {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())},{"framesPerSegment",256},
+            {"compressionRestorationRuntime",{
+                {"modelId",model.id},{"adapterId",model.capabilities.adapterId},{"adapterVersion",model.capabilities.adapterVersion},
+                {"backend","onnxruntime_cuda"},{"signature","stdf-r3-y7-luma-v1;resume-fixture-runtime"},
+                {"descriptorSha256",job.expectedCompressionRestorationDescriptorSha256},{"strength",job.compressionRestorationStrength},
+                {"inputProfile","bt709-sdr8"},{"pixelFormat","yuv420p"},{"maximumWidth",384},{"maximumHeight",256},
+                {"tilePolicy",job.compressionRestorationTiled ? restoration::stdf_tiles::policyId : "full-frame-bounded-384x256-v1"},
+                {"decoderReplayPolicy","software-source-pts-from-start-v1"},
+                {"sceneReplayPolicy","scene-bounds-serial-v1"}}}};
+        if (job.compressionRestorationTiled) {
+            auto& runtime = manifest["compressionRestorationRuntime"];
+            runtime["graphSha256"] = model.graphSha256;
+            runtime["signature"] = "stdf-r3-y7-luma-v1;graph-" + model.graphSha256 +
+                ";resume-fixture-runtime;tilePolicy-" + restoration::stdf_tiles::policyId;
+            runtime["tiledPolicy"] = Json::parse(serializeCompressionRestorationPolicy(true));
+        }
+        std::string taskId;
+        {
+            TaskStore seed(database.string());
+            taskId = seed.createConfigured({{job.source,job.output,configuration}}).front();
+            seed.transition(taskId,TaskState::running); seed.saveIdentity(taskId,identityText);
+            CheckpointArtifacts artifacts(seed,taskId,output); artifacts.setManifest(manifest.dump());
+            const auto segment = createSegment(fixture,artifacts);
+            (void)artifacts.commit(0,0,2,segment);
+            ASSERT_EQ(seed.recoverConfigured(),1U);
+        }
 
-    TaskQueue queue(database);
-    EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
-    const auto rows = queue.list();
-    ASSERT_EQ(rows.size(),1U);
-    EXPECT_EQ(rows.front().task.state,TaskState::queued);
-    EXPECT_EQ(rows.front().configuration,configuration);
-    EXPECT_EQ(rows.front().identity,identityText);
-    EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),manifest.dump());
+        TaskQueue queue(database);
+        EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
+        const auto rows = queue.list();
+        ASSERT_EQ(rows.size(),1U);
+        EXPECT_EQ(rows.front().task.state,TaskState::queued);
+        EXPECT_EQ(rows.front().configuration,configuration);
+        EXPECT_EQ(rows.front().identity,identityText);
+        EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),manifest.dump());
+    }
 }
 
 TEST(CheckpointArtifacts, LegacyManifestUpgradeBindsOnlyTheBuiltinAdapter) {

@@ -164,6 +164,7 @@ function Set-NativeRestorationDefaults(
     $Defaults["temporalRestorationMode"] = "experimental-optional"
     $Defaults["compressionRestorationModelDirectory"] = if ($CompressionModelIncluded) { "models/stdf-r3-y7-sdr8-local-eval" } else { $null }
     $Defaults["compressionRestorationDefaultEnabled"] = $false
+    $Defaults["compressionRestorationTiled"] = $false
     $Defaults["compressionRestorationStrength"] = 0.75
     $Defaults["compressionRestorationMode"] = "experimental-local-evaluation"
 }

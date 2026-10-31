@@ -41,6 +41,9 @@ struct ProcessingJob {
     // Zero disables the compression-restoration stage. A non-zero value must
     // be paired with a pinned local model directory and descriptor hash.
     float compressionRestorationStrength = 0.0F;
+    // Explicit opt-in to the separately identified bounded STDF tile policy.
+    // Historical configurations and the default production path stay full-frame.
+    bool compressionRestorationTiled = false;
 };
 struct ProcessingIdentity {
     FileIdentity source;

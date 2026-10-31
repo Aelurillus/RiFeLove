@@ -1,6 +1,7 @@
 #include "application/job_serialization.hpp"
 #include "inference/model_pack.hpp"
 #include "restoration/model_pack.hpp"
+#include "restoration/stdf_tile_policy.hpp"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -134,6 +135,8 @@ void validate(const ProcessingJob& job) {
         !job.expectedCompressionRestorationDescriptorSha256.empty() && job.compressionRestorationStrength > 0.0F;
     if (!compressionDisabled && !compressionEnabled)
         throw std::invalid_argument("Compression restoration directory, descriptor hash and strength must be enabled together");
+    if (job.compressionRestorationTiled && !compressionEnabled)
+        throw std::invalid_argument("Tiled compression restoration requires an enabled, pinned STDF model and positive strength");
     temporalDenoiseSigma(job.settings.temporalDenoiseSigma255);
     if (job.settings.automaticTemporalDenoise)
         (void)restoration::AutomaticDenoiseController(*job.settings.automaticTemporalDenoise);
@@ -161,10 +164,51 @@ void validate(const ProcessingJob& job) {
         throw std::invalid_argument("Unsupported inference backend preference");
 }
 }
+std::string serializeCompressionRestorationPolicy(bool tiled) {
+    Json policy{{"mode",tiled ? "tiled" : "full-frame"},
+        {"tilePolicy",tiled ? restoration::stdf_tiles::policyId : "full-frame-bounded-384x256-v1"},
+        {"maximumInputWidth",384},{"maximumInputHeight",256}};
+    if (tiled) {
+        policy["maximumInputWidth"] = restoration::stdf_tiles::maximumInputWidth;
+        policy["maximumInputHeight"] = restoration::stdf_tiles::maximumInputHeight;
+        policy["coreWidth"] = restoration::stdf_tiles::coreWidth;
+        policy["coreHeight"] = restoration::stdf_tiles::coreHeight;
+        policy["halo"] = restoration::stdf_tiles::halo;
+        policy["alignment"] = restoration::stdf_tiles::alignment;
+        policy["edgePolicy"] = "global-right-bottom-pad-to8-clip-halo-v1";
+        policy["maximumAxis"] = restoration::stdf_tiles::maximumAxis;
+        policy["maximumPixels"] = restoration::stdf_tiles::maximumPixels;
+    }
+    return policy.dump();
+}
+bool supportsCompressionRestorationDimensions(bool tiled, int width, int height) noexcept {
+    return tiled ? restoration::stdf_tiles::supportsDimensions(width,height)
+        : width > 0 && height > 0 && width <= 384 && height <= 256;
+}
+bool compressionRestorationRuntimeMatchesPolicy(bool tiled, std::string_view signature, std::string_view graphSha256) noexcept {
+    if (signature.empty()) return false;
+    if (!tiled) return signature.find("tilePolicy-") == std::string_view::npos;
+    if (graphSha256.size() != 64) return false;
+    bool graphFound = false, policyFound = false;
+    while (!signature.empty()) {
+        const auto separator = signature.find(';');
+        const auto token = signature.substr(0,separator);
+        if (token.starts_with("graph-")) {
+            if (graphFound || token.substr(6) != graphSha256) return false;
+            graphFound = true;
+        } else if (token.starts_with("tilePolicy-")) {
+            if (policyFound || token.substr(11) != restoration::stdf_tiles::policyId) return false;
+            policyFound = true;
+        }
+        if (separator == std::string_view::npos) break;
+        signature.remove_prefix(separator + 1);
+    }
+    return graphFound && policyFound;
+}
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",10},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",11},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
         {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
         {"temporalRestorationModelDirectory",utf8(job.temporalRestorationModelDirectory)},
@@ -172,6 +216,8 @@ std::string serializeJob(const ProcessingJob& job) {
         {"compressionRestorationModelDirectory",utf8(job.compressionRestorationModelDirectory)},
         {"expectedCompressionRestorationDescriptorSha256",job.expectedCompressionRestorationDescriptorSha256},
         {"compressionRestorationStrength",job.compressionRestorationStrength},
+        {"compressionRestorationTiled",job.compressionRestorationTiled},
+        {"compressionRestorationPolicy",Json::parse(serializeCompressionRestorationPolicy(job.compressionRestorationTiled))},
         {"runtimeDirectory",utf8(job.runtimeDirectory)},{"deviceOrdinal",job.deviceOrdinal},{"hostFloatBufferLimit",job.settings.hostFloatBufferLimit},
         {"inferenceBackend",job.settings.inferenceBackend},
         {"expectedSourceSha256",job.expectedSourceSha256},{"expectedModelSha256",job.expectedModelSha256},{"expectedModelId",job.expectedModelId},{"expectedModelVersion",job.expectedModelVersion},
@@ -199,7 +245,7 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion < 1 || schemaVersion > 10) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion < 1 || schemaVersion > 11) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -216,6 +262,22 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
         job.compressionRestorationModelDirectory = path(json.at("compressionRestorationModelDirectory").get<std::string>());
         job.expectedCompressionRestorationDescriptorSha256 = json.at("expectedCompressionRestorationDescriptorSha256").get<std::string>();
         job.compressionRestorationStrength = json.at("compressionRestorationStrength").get<float>();
+    }
+    if (schemaVersion >= 11) {
+        if (!json.at("compressionRestorationTiled").is_boolean())
+            throw std::invalid_argument("Compression restoration tiling must be an explicit boolean");
+        job.compressionRestorationTiled = json.at("compressionRestorationTiled").get<bool>();
+        if (json.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(job.compressionRestorationTiled))
+            throw std::invalid_argument("Unsupported compression restoration execution policy");
+    } else {
+        // Some callers lower a newly written configuration's schema to form a
+        // historical disabled fixture. Only the exact full-frame defaults may
+        // be ignored; a tiled flag/policy cannot be smuggled into schema 10.
+        if ((json.contains("compressionRestorationTiled") &&
+            (!json.at("compressionRestorationTiled").is_boolean() || json.at("compressionRestorationTiled").get<bool>())) ||
+            (json.contains("compressionRestorationPolicy") &&
+            json.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(false)))
+            throw std::invalid_argument("Legacy task schemas cannot enable tiled compression restoration");
     }
     job.deviceOrdinal = integer<int>(json.at("deviceOrdinal")); job.settings.hostFloatBufferLimit = integer<std::size_t>(json.at("hostFloatBufferLimit"));
     if (schemaVersion >= 3) job.settings.inferenceBackend = json.at("inferenceBackend").get<std::string>();
@@ -313,7 +375,7 @@ void pinRestorationModelDescriptor(ProcessingJob& job) {
         job.compressionRestorationStrength > 1.0F)
         throw std::invalid_argument("Compression restoration strength must be a finite value from zero to one");
     if (job.compressionRestorationModelDirectory.empty()) {
-        if (!job.expectedCompressionRestorationDescriptorSha256.empty() || job.compressionRestorationStrength != 0.0F)
+        if (!job.expectedCompressionRestorationDescriptorSha256.empty() || job.compressionRestorationStrength != 0.0F || job.compressionRestorationTiled)
             throw std::invalid_argument("A compression restoration model, descriptor hash and strength must be supplied together");
         return;
     }

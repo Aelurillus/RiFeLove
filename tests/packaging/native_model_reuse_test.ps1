@@ -107,6 +107,7 @@ Assert-Equal 2 @($fromSource | Where-Object { $_.inSource }).Count 'Four-model s
 $defaults = @{ compressionRestorationDefaultEnabled = $true; temporalRestorationDefaultEnabled = $true; targetRate = '144/1' }
 Set-NativeRestorationDefaults $defaults
 Assert-Equal $false $defaults.compressionRestorationDefaultEnabled 'Existing enabled STDF setting is reset to safe default'
+Assert-Equal $false $defaults.compressionRestorationTiled 'Packaging cannot silently opt a user into tiled restoration'
 Assert-Equal $false $defaults.temporalRestorationDefaultEnabled 'Existing enabled FastDVDnet setting is reset to safe default'
 Assert-Equal "models/$compressionId" $defaults.compressionRestorationModelDirectory 'STDF defaults reference the packaged model'
 Assert-Equal 0.75 $defaults.compressionRestorationStrength 'STDF selectable strength is retained'

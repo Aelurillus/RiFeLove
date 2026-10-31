@@ -196,7 +196,7 @@ TEST(ProcessingConfiguration, PinsLocalSuperResolutionDescriptorForQueuedTasks) 
 
     const auto encoded = application::serializeJob(job);
     const auto json = Json::parse(encoded);
-    EXPECT_EQ(json.at("schemaVersion"),10);
+    EXPECT_EQ(json.at("schemaVersion"),11);
     EXPECT_FALSE(json.at("restorationModelDirectory").get<std::string>().empty());
     auto restored = application::parseJob(job.source,job.output,encoded);
     EXPECT_EQ(restored.restorationModelDirectory,job.restorationModelDirectory);

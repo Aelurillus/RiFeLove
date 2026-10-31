@@ -1,12 +1,12 @@
 # STDF-R3 high-resolution tiling qualification
 
-Date: 2026-10-31. Status: **CPU consistency qualification only**.
+Date: 2026-10-31. Status: **opt-in native CUDA tiled evaluation; generated-input parity recorded**.
 
-This document records the first high-resolution study for the reviewed STDF-R3
-ONNX graph. It answers whether overlapped tiles can reproduce the graph's
-whole-frame result closely enough to justify a future native 1080p/4K path. It
-does not add tiling to the product pipeline, claim arbitrary-video quality, or
-qualify a CUDA memory budget.
+This document retains the original CPU research below and records the later
+native implementation and complete-output CUDA checks at the end. The desktop
+now has a separate, default-off tiled evaluation switch. Generated-input parity
+does not establish arbitrary-video recovery quality, whole-frame UHD network
+equivalence or an exact per-process CUDA allocation bound.
 
 The graph is the local developer artifact
 `work/verification/stdf-r3-portable-cpu-20261031-v3/stdf-r3-y7-fp32.onnx` with
@@ -214,3 +214,219 @@ The larger-frame bounded evidence is in
 `work/verification/stdf-bounded-cpu-20261031-4k`. The streaming regression
 checks are `work/verification/stdf-bounded-streaming-r14-20261031` and
 `work/verification/stdf-streaming-4k-check-r14-20261031`.
+
+## Independent fixed-policy fixture and geometry checks (2026-10-31)
+
+`tools/validation/stdf_tiling_reference.py` is a separate CPU developer oracle
+for the proposed/native fixed **256x128 core, halo64** policy. It does not call
+the product CUDA backend, modify application settings, download a graph, or
+qualify a release. The earlier research scripts and tables above keep their
+original tile sizes and eight-aligned input restrictions.
+
+The new oracle independently partitions the **visible** frame, clamps source
+extents to real pixels, and repeats the final visible row/column only for the
+single global right/bottom ceil8 padding. It never inserts a synthetic halo
+beyond the top/left boundary or an internal tile edge. Non-eight-aligned source
+frames are explicit tests, not silently resized inputs. Model input dimensions
+remain at most 384x256 for halo64. Each axis is limited to 3840 and visible area
+to 8,294,400 pixels, so both 3840x2160 and 2160x3840 fit; a 3840-square frame does
+not.
+
+The new 31-test CPU suite covers complete geometry and native pure-policy
+agreement, not just sampled coordinates. It constructs a per-pixel coverage map
+and checks every core for the complete landscape UHD grid (**255 tiles**) and
+portrait UHD grid (**270 tiles**), 1080p, 854x480, 1918x1078, an odd 519x263 frame with seven-pixel
+tail cores, and a 1x1 source. A small standalone C++20 test driver compiles only
+`src/restoration/stdf_tile_policy.hpp` and compares all emitted native tiles
+against the independent Python plan. It does not build or change the application,
+CMake, inference backend, UI, or packaging. That cross-language test is skipped
+when the optional local g++ compiler/header is unavailable; in the recorded
+local run it ran and passed.
+
+### Raw fixture/checker contract
+
+`fixture` writes a fresh directory containing `fixture.json`, seven real frames
+with three raw strided `yuv420p` plane files each, and compact visible center
+Y/U/V files. Y, U and V strides deliberately exceed visible width by 5, 3 and 7
+bytes, respectively; padding bytes are 250. Odd chroma dimensions use ceil
+division. The integer-only patterns cover global-coordinate texture, moving
+texture, hard edges and a moving fine checkerboard, including distinct real
+frame boundaries. Per-plane byte counts and SHA-256 hashes are recorded.
+
+Frame indices are 100 through 106; center slot is 3. PTS is the exact rational
+`(index*3003 + (index%3)*77)/90000`, with duration equal to the next exact PTS
+difference and alternating `timestampRecovered` flags. No float timestamps or
+generated CFR replacement is used. A round trip must retain these exact center
+values, color tags and every visible U/V byte.
+
+The separate strided-plane interchange is protocol
+`rifelove-stdf-tiled-fixture-v1`: the native side reads the fixture manifest and
+writes compact `output-y.u8`, `output-u.u8`, `output-v.u8` plus `output.json`
+containing `width`, `height`, `center_index`, integer-rational `center_pts` and
+`center_duration`, `timestamp_recovered`, and the unchanged `color` object.
+`compare` checks **every** visible sample and exact metadata; its regression test
+deliberately corrupts the last pixel to ensure a sparse check cannot pass. An
+optional `--expected-y` supplies real CPU expected restored bytes instead of the
+center identity output. This interchange is prepared and unit tested; **an
+end-to-end native strided-plane round trip has not yet been recorded in this
+section**. Native runtime inference, cancellation and buffer-lifetime evidence
+must be added separately after checker integration.
+
+The actual CUDA checker now uses the luma bridge described in
+`tools/validation/STDF_TILED_RAW_PROTOCOL.md`, rather than `fixture.json`:
+`native-fixture` writes `manifest.json`, all seven compact visible planes in
+`input-y7.u8`, and a complete `reference-y.u8`. The CPU session is constructed
+from SHA-256-verified graph bytes and permits only `CPUExecutionProvider`.
+The manifest is published only after every reference pixel is written, and
+records the graph path/hash, generator hash, input/reference hashes, strength
+and the explicit oracle kind. Whole-frame references are bounded to small
+shapes; large references independently execute **every** halo64 tile. Large
+tiled references establish native/policy consistency, not equivalence to a
+hypothetical whole-frame UHD neural result. Partial/failed generation retains
+its raw files and `cpu-reference-report.json`, without a consumable manifest.
+
+`native-compare` independently reads **every** `native-y.u8` byte, verifies
+fixture hashes/counts and cross-checks the native report's identity, all-tile
+count and error summaries. The byte gate is maximum difference <=1, allowing
+CPU/CUDA quantization boundaries. This luma bridge does not externally round
+trip chroma, PTS or duration; those remain internal native checker assertions.
+The strided-plane protocol above is retained as a separate stronger data
+contract, rather than claiming its metadata assertions ran through this bridge.
+Unit tests exercise successful generation, a last-pixel corruption, a dishonest
+native summary and preserved failure evidence with a fake center session;
+those unit tests are not real model or GPU evidence.
+
+### New real CPU inference evidence
+
+The graph hash is the same reviewed `dcd09f...aad0721` identity above. Small
+whole-frame CPU reference and the independent halo64 tiled result were compared
+at every one of **77,809 visible pixels per case**, including non-eight-aligned
+right/bottom padding:
+
+| Shape | Case | Cores | Maximum FP32 error | Maximum rounded byte difference |
+| --- | --- | ---: | ---: | ---: |
+| 391x199 | moving texture | 4 | 9.239e-6 | 1 |
+| 391x199 | fine checkerboard | 4 | 1.079e-5 | 1 |
+| 391x199 | hard edge | 4 | 9.239e-6 | 1 |
+| 391x199 | coordinate texture | 4 | 7.451e-6 | 1 |
+
+All four passed the explicit CPU consistency gate of maximum FP32 error <=3e-5
+and maximum rounded byte difference <=1. Raw whole-frame/tiled FP32 arrays and
+the expected quantized Y remain in the evidence directory. This is numerical
+consistency on generated inputs, not proof of visual recovery quality.
+
+A separate large-coordinate study compares **halo64 with halo96**. Halo96 is
+only a CPU research comparator: it can use a 448x320 input and is outside the
+384x256 production tile envelope. These are **sampled tile-policy comparisons,
+not complete 4K frame inference and not a full-frame oracle**:
+
+| Shape | Case | Evaluated / all tiles | Compared core pixels | Max FP32 error | Max byte difference |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 3840x2160 | fine checkerboard | 6 / 255 | 192,512 | 1.617e-5 | 1 |
+| 2160x3840 | moving texture | 6 / 270 | 104,448 | 3.040e-6 | 0 |
+
+Reports explicitly contain `all_tiles_evaluated: false`,
+`full_frame_oracle: false`, `gpu_used: false`, selected tile indices, total tile
+count and the number of compared pixels. Passing these samples does not establish
+complete landscape/portrait UHD numerical correctness, CUDA memory use, throughput
+or arbitrary-content halo safety. Real all-tile native execution and GPU memory/
+stability qualification remain outstanding.
+
+Reproduction (fresh output paths required):
+
+```powershell
+& work/model-tools/Scripts/python.exe -m pytest `
+  tests/model_validation/test_stdf_tiling_reference.py -q
+
+& work/model-tools/Scripts/python.exe tools/validation/stdf_tiling_reference.py fixture `
+  --output work/verification/stdf-raw-fixture-new --width 519 --height 263 --case moving_texture
+
+& work/model-tools/Scripts/python.exe tools/validation/stdf_tiling_reference.py oracle `
+  --graph work/verification/stdf-r3-portable-cpu-20261031-v3/stdf-r3-y7-fp32.onnx `
+  --output work/verification/stdf-small-oracle-new --width 391 --height 199 `
+  --case checkerboard --threads 2
+
+& work/model-tools/Scripts/python.exe tools/validation/stdf_tiling_reference.py large `
+  --graph work/verification/stdf-r3-portable-cpu-20261031-v3/stdf-r3-y7-fp32.onnx `
+  --output work/verification/stdf-sampled-uhd-new --width 3840 --height 2160 `
+  --case checkerboard --sample-tiles 6 --threads 2
+
+# Complete native checker luma fixture, with a small whole-frame CPU oracle:
+& work/model-tools/Scripts/python.exe tools/validation/stdf_tiling_reference.py native-fixture `
+  --graph work/verification/stdf-r3-portable-cpu-20261031-v3/stdf-r3-y7-fp32.onnx `
+  --output work/verification/stdf-native-small-new --width 391 --height 199 `
+  --case checkerboard --oracle whole --threads 2
+
+# Every UHD visible output pixel is generated by the independent CPU tile policy:
+& work/model-tools/Scripts/python.exe tools/validation/stdf_tiling_reference.py native-fixture `
+  --graph work/verification/stdf-r3-portable-cpu-20261031-v3/stdf-r3-y7-fp32.onnx `
+  --output work/verification/stdf-native-uhd-new --width 3840 --height 2160 `
+  --case checkerboard --oracle tiled --threads 2
+
+# After the separate serial native CUDA run has produced its evidence directory:
+& work/model-tools/Scripts/python.exe tools/validation/stdf_tiling_reference.py native-compare `
+  --fixture work/verification/stdf-native-uhd-new --actual $NativeEvidenceDirectory
+```
+
+Evidence is under `work/verification/stdf-tiled-reference-python-20261031/`.
+The raw odd/tail fixture is `fixture-519x263-motion/`; the four `oracle-*` folders
+contain complete small-frame comparisons and the `sampled-uhd-*` folders contain
+the explicitly partial large-coordinate study. Pytest XML/logs include the native
+pure-policy geometry check. The runners retain numerical failure arrays and error
+reports in their fresh evidence directories instead of deleting failed results.
+
+## Native CUDA all-tile evaluation
+
+The later native implementation uses the fixed identity
+`stdf-r3-core256x128-halo64-global-edge-pad8-eval-v1`. It is explicitly selected;
+the original bounded whole-frame path and its runtime signature remain separate.
+Every graph input stays at or below 384x256. Visible sources must have each axis
+at most 3840 and area at most 8,294,400 pixels. The adapter reuses one seven-plane
+FP32 tile input and one FP32 prediction, then commits the completed visible Y8
+frame. The original center U/V owners, exact PTS, duration and recovery metadata
+are retained. Cancellation, incomplete/nonfinite output or a failed later tile
+discards the entire unfinished frame. These failure contracts use injected
+inference tests; they are not a claim of prompt preemption of a running GPU kernel.
+
+Serial native CUDA runs on the local GTX 1660 SUPER, ORT 1.22.0, FP32 graph above
+completed the following **entire output frames**, followed by an independent
+Python read of every native output byte and fixture hash:
+
+| Source | Generated case | Cores | CPU oracle | Maximum Y8 difference | Seam maximum | Native restore seconds |
+| --- | --- | ---: | --- | ---: | ---: | ---: |
+| 391x199 | checkerboard | 4 | complete whole-frame | 1 | 1 | 0.406 |
+| 519x263 | moving texture | 9 | complete whole-frame | 1 | 0 | 0.389 |
+| 854x480 | hard edge | 16 | complete independent tiled | 0 | 0 | 0.808 |
+| 1918x1078 | coordinate texture | 72 | complete independent tiled | 1 | 1 | 3.574 |
+| 1920x1080 | moving texture | 72 | complete independent tiled | 1 | 0 | 3.579 |
+| 3840x2160 | checkerboard | 255 | complete independent tiled | 1 | 0 | 14.261 |
+| 2160x3840 | moving texture | 270 | complete independent tiled | 1 | 0 | 14.956 |
+
+All cases passed the maximum one-level Y8 difference gate. The native checker
+also asserts padded source strides, nonuniform rational timestamps, unchanged
+center chroma pointer/stride/extents and lifetime after the request is destroyed.
+Its provider gate recorded the required 20 CUDA Conv and 9 CUDA GridSample
+kernels and no CPU image fallback. Those metadata/lifetime checks are internal
+native assertions; the luma interchange independently verifies pixels only.
+No CUDA FP32 tensor-error measurement is claimed by this byte-output checker.
+
+The landscape UHD adapter reported 3,145,728 bytes of reusable FP32 buffers,
+13,004,456 bytes of owned graph/tensor/Y8 payload and 87,204,516 bytes of retained
+decoded plane spans. These values exclude ORT arena/activations and allocator
+overhead. Separate process/device sampling observed 660,828,160 bytes peak host
+working set and 1,911,554,048 bytes total device use for that run. The device
+number includes the desktop and any other processes; sampling can miss a peak
+and is not an exact per-process VRAM bound. Native restore timings exclude
+session construction, media decode, RIFE, encode and final validation.
+
+Evidence is local at `work/verification/stdf-tiled-native-20261031/`: `matrix.json`,
+per-case `report.json`, native raw outputs, ORT profiles, independent readback
+reports and sampled process/device counters. Raw media and profiles are not
+source-control artifacts. The complete Release suite passed 211/211 tests;
+the model-tool CI command passed 44 tests locally. The new Python contracts are
+included in the existing CPU-only GitHub workflow, without models or GPU downloads.
+
+These generated-input results qualify an opt-in evaluation implementation.
+They do not establish an unbounded halo guarantee, whole-frame UHD network
+equivalence, restoration superiority, representative real-footage quality,
+long-video reliability, HDR support or a general GPU compatibility matrix.

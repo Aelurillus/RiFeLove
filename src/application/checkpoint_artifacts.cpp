@@ -1,6 +1,8 @@
 #include "application/checkpoint_artifacts.hpp"
+#include "application/job_serialization.hpp"
 #include "inference/model_pack.hpp"
 #include "processing_pipeline_identity.hpp"
+#include "restoration/stdf_tile_policy.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -139,10 +141,42 @@ bool sha256Text(const std::string& value) {
 }
 
 bool validCompressionRuntime(const Json& manifest) {
+    bool tiled = false;
+    const Json* configuredJob = nullptr;
+    bool compressionEnabled = false;
+    if (manifest.contains("job") && manifest.at("job").is_object()) {
+        const auto& job = manifest.at("job");
+        const auto schema = job.value("schemaVersion",0);
+        if (schema >= 10) {
+            configuredJob = &job;
+            if (!job.contains("compressionRestorationModelDirectory") || !job.at("compressionRestorationModelDirectory").is_string() ||
+                !job.contains("expectedCompressionRestorationDescriptorSha256") || !job.at("expectedCompressionRestorationDescriptorSha256").is_string() ||
+                !job.contains("compressionRestorationStrength") || !job.at("compressionRestorationStrength").is_number()) return false;
+            const auto directory = job.at("compressionRestorationModelDirectory").get<std::string>();
+            const auto descriptor = job.at("expectedCompressionRestorationDescriptorSha256").get<std::string>();
+            const auto strength = job.at("compressionRestorationStrength").get<double>();
+            compressionEnabled = !directory.empty() && sha256Text(descriptor) && std::isfinite(strength) && strength > 0.0 && strength <= 1.0;
+            if (!compressionEnabled && (!directory.empty() || !descriptor.empty() || strength != 0.0)) return false;
+        }
+        if (schema >= 11) {
+            if (schema != 11 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
+            tiled = job.at("compressionRestorationTiled").get<bool>();
+            if (!job.contains("compressionRestorationPolicy") ||
+                job.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(tiled)) return false;
+            if (tiled && !compressionEnabled) return false;
+        } else if ((job.contains("compressionRestorationTiled") &&
+            (!job.at("compressionRestorationTiled").is_boolean() || job.at("compressionRestorationTiled").get<bool>())) ||
+            (job.contains("compressionRestorationPolicy") && job.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(false))) {
+            return false;
+        }
+    }
     const auto found = manifest.find("compressionRestorationRuntime");
-    if (found == manifest.end()) return true;
-    if (!found->is_object()) return false;
+    if (found == manifest.end()) return !tiled;
+    if (!configuredJob || !found->is_object()) return false;
     const auto& runtime = *found;
+    if (configuredJob && (!compressionEnabled ||
+        runtime.value("descriptorSha256",std::string()) != configuredJob->at("expectedCompressionRestorationDescriptorSha256").get<std::string>() ||
+        runtime.value("strength",-1.0) != configuredJob->at("compressionRestorationStrength").get<double>())) return false;
     if (!runtime.contains("modelId") || !runtime.at("modelId").is_string() || runtime.at("modelId").get<std::string>().empty() ||
         !runtime.contains("adapterId") || !runtime.at("adapterId").is_string() || runtime.at("adapterId").get<std::string>().empty() ||
         !runtime.contains("adapterVersion") || !runtime.at("adapterVersion").is_number_integer() || runtime.at("adapterVersion").get<int>() <= 0 ||
@@ -153,10 +187,21 @@ bool validCompressionRuntime(const Json& manifest) {
         !runtime.contains("strength") || !runtime.at("strength").is_number() || !std::isfinite(runtime.at("strength").get<double>()) ||
         runtime.at("strength").get<double>() <= 0.0 || runtime.at("strength").get<double>() > 1.0 ||
         runtime.value("inputProfile",std::string()) != "bt709-sdr8" || runtime.value("pixelFormat",std::string()) != "yuv420p" ||
-        runtime.value("maximumWidth",0) != 384 || runtime.value("maximumHeight",0) != 256 ||
-        runtime.value("tilePolicy",std::string()) != "full-frame-bounded-384x256-v1" ||
+        !runtime.contains("maximumWidth") || !runtime.at("maximumWidth").is_number_integer() || runtime.at("maximumWidth").get<int>() != 384 ||
+        !runtime.contains("maximumHeight") || !runtime.at("maximumHeight").is_number_integer() || runtime.at("maximumHeight").get<int>() != 256 ||
+        runtime.value("tilePolicy",std::string()) != (tiled ? restoration::stdf_tiles::policyId : "full-frame-bounded-384x256-v1") ||
         runtime.value("decoderReplayPolicy",std::string()) != "software-source-pts-from-start-v1" ||
         runtime.value("sceneReplayPolicy",std::string()) != "scene-bounds-serial-v1") return false;
+    if (tiled) {
+        if (!runtime.contains("graphSha256") || !runtime.at("graphSha256").is_string() ||
+            !sha256Text(runtime.at("graphSha256").get<std::string>()) ||
+            runtime.at("backend").get<std::string>() != "onnxruntime_cuda" ||
+            !compressionRestorationRuntimeMatchesPolicy(true,runtime.at("signature").get<std::string>(),runtime.at("graphSha256").get<std::string>()) ||
+            !runtime.contains("tiledPolicy") || runtime.at("tiledPolicy").dump() != serializeCompressionRestorationPolicy(true)) return false;
+    } else if (runtime.contains("tiledPolicy") || runtime.contains("graphSha256") ||
+        !compressionRestorationRuntimeMatchesPolicy(false,runtime.at("signature").get<std::string>())) {
+        return false;
+    }
     return true;
 }
 
@@ -359,6 +404,23 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
             requireMediaPipelineIdentity(saved,expected);
         if (!validCompressionRuntime(actual) || !validCompressionRuntime(wanted)) return false;
         if (actual == wanted) return true;
+        // Schema 11 makes the algorithm choice explicit. A historical task can
+        // migrate only to the exact legacy full-frame policy, preserving its
+        // old runtime signature and all existing model/strength/replay checks.
+        // Tiled work always needs a new identity and cannot adopt old segments.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 11 && actual.at("job").value("schemaVersion",0) < 11) {
+            if (wanted.at("job").at("compressionRestorationTiled").get<bool>()) return false;
+            auto previous = wanted;
+            previous["job"].erase("compressionRestorationTiled");
+            previous["job"].erase("compressionRestorationPolicy");
+            previous["job"]["schemaVersion"] = 10;
+            auto priorSaved = actual;
+            priorSaved["job"].erase("compressionRestorationTiled");
+            priorSaved["job"].erase("compressionRestorationPolicy");
+            return manifestMatches(priorSaved.dump(),previous.dump());
+        }
         // Schema 10 introduces the independent STDF compression-restoration
         // model, strength and descriptor pin. Historical checkpoints may be
         // upgraded only when the new stage is completely disabled; an old

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/media_engine.hpp"
+#include "restoration/stdf_tile_policy.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -19,9 +20,11 @@ inline float nativeCompressionStrength(int selection) {
 
 // Match the strict service/import contract before enqueueing a single input.
 // Batch import still checks every file independently through ImportService.
-inline std::wstring nativeCompressionSourceIssue(int width, int height, const media::ColorInfo& color) {
-    if (width <= 0 || height <= 0 || width > 384 || height > 256)
-        return L"STDF 本机评估仅验证至 384 × 256；大尺寸分块尚未验收";
+inline std::wstring nativeCompressionSourceIssue(int width, int height, const media::ColorInfo& color, bool tiled = false) {
+    if (tiled ? !restoration::validStdfTiledDimensions(width, height) :
+        (width <= 0 || height <= 0 || width > 384 || height > 256))
+        return tiled ? L"STDF 分块评估需要合格尺寸；最长边 ≤3840、总像素 ≤3840×2160" :
+            L"STDF 整帧评估限 384 × 256；高清素材需显式开启分块评估";
     if (color.pixelFormat != "yuv420p" || color.bitDepth != 8)
         return L"STDF 压缩修复需要 8-bit yuv420p 输入";
     if (color.primaries != "bt709" || color.transfer != "bt709" || color.matrix != "bt709" ||
