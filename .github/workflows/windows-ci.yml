@@ -55,6 +55,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install CPU-only test dependencies
-        run: python -m pip install --only-binary=:all: numpy==2.2.6 onnxruntime==1.22.0 pytest==8.4.2
+        run: >-
+          python -m pip install --only-binary=:all: numpy==2.2.6 onnxruntime==1.22.0 pytest==8.4.2
       - name: Test model-tool contracts without weights
         run: python -m pytest tests/model_validation/test_stdf_tiling.py tests/model_validation/test_stdf_local_pack.py -q
