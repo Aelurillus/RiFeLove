@@ -300,6 +300,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
         auto lastSaved = started;
         ProcessingEvent lastProgress;
         ProcessingEvent terminal;
+        bool outputPublished = false;
         try {
             auto job = parseJob(current->task.sourcePath,current->task.outputPath,current->configuration);
             applyStoredIdentity(job,current->identity);
@@ -364,6 +365,10 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 settings.checkpoint = std::move(checkpoint);
             };
             auto result = executeProcessingJob(job,[&](ProcessingEvent event) {
+                // This stage is emitted only after validated, no-replace
+                // publication. Even a failed final progress write must retain
+                // the publication proof instead of labelling the media bad.
+                if (event.stage == "completed") outputPublished = true;
                 const auto now = std::chrono::steady_clock::now();
                 if (event.stage == "paused" || event.stage == "resumed") {
                     store_.transition(current->task.id,event.stage == "paused" ? TaskState::paused : TaskState::running);
@@ -379,18 +384,48 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
             },cancellation.get_token(),pause_,configurePipeline);
             result.elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             result.processingFps = processingFrameRate(result.processedFrames,result.elapsedSeconds);
-            store_.finish(current->task.id,TaskState::completed,serializeResult(result));
-            logging::write(logging::Level::info,"queue","task.completed","Queued output passed media and timeline validation",
-                {{"task_id",current->task.id},{"encoder",result.video.encoder},
-                    {"output_frames",static_cast<std::uint64_t>(result.video.framesSubmitted)}});
             terminal.kind = ProcessingEvent::Kind::completed; terminal.result = std::move(result);
         } catch (const std::exception& error) {
+            if (outputPublished)
+                throw std::runtime_error("Output was validated and published, but its final progress could not be saved or delivered; "
+                    "the existing output was preserved: " + std::string(error.what()));
+            // Publication precedes the final completed progress callback. If
+            // an exception lands in that gap, the durable proof and an
+            // existing destination make the outcome uncertain, not a media
+            // failure. Do not adopt the file here: it could also be somebody
+            // else's conflicting output. Recovery must verify the full hash.
+            bool requiresPublicationRecovery = false;
+            try {
+                requiresPublicationRecovery = store_.outputPublicationIntent(current->task.id).has_value() &&
+                    pathEntryExists(path(current->task.outputPath));
+            } catch (const std::exception& inspection) {
+                throw std::runtime_error("Task processing ended and its output publication status could not be inspected; "
+                    "existing files were left untouched: " + std::string(error.what()) + "; publication inspection failed: " + inspection.what());
+            }
+            if (requiresPublicationRecovery)
+                throw std::runtime_error("A validated output publication proof and an existing destination require recovery verification; "
+                    "the existing output was preserved: " + std::string(error.what()));
             const bool cancelled = cancellation.stop_requested();
             logging::write(cancelled ? logging::Level::warning : logging::Level::error,"queue",
                 cancelled ? "task.cancelled" : "task.failed",error.what(),{{"task_id",current->task.id}});
             terminal.kind = cancelled ? ProcessingEvent::Kind::cancelled : ProcessingEvent::Kind::failed;
             terminal.detail = error.what();
             store_.finish(current->task.id,cancelled ? TaskState::cancelled : TaskState::failed,{},terminal.detail);
+        }
+        if (terminal.kind == ProcessingEvent::Kind::completed) {
+            // The engine has already validated and atomically published this
+            // output. A database failure must not turn that success into a
+            // media failure/cancellation or discard its publication proof.
+            // Let the worker boundary retain an interrupted task for verified
+            // adoption, rather than attempting a second terminal write here.
+            try { store_.finish(current->task.id,TaskState::completed,serializeResult(*terminal.result)); }
+            catch (const std::exception& error) {
+                throw std::runtime_error("Output was validated and published, but its completed task state could not be saved; "
+                    "the existing output was preserved: " + std::string(error.what()));
+            }
+            logging::write(logging::Level::info,"queue","task.completed","Queued output passed media and timeline validation",
+                {{"task_id",current->task.id},{"encoder",terminal.result->video.encoder},
+                    {"output_frames",static_cast<std::uint64_t>(terminal.result->video.framesSubmitted)}});
         }
         { std::lock_guard lock(activity_); activeId_.clear(); }
         callback({current->task.id,std::move(terminal),false,{}});

@@ -99,8 +99,17 @@ OutputTimingValidation detail::validatePipelineOutput(const std::string& path, i
         ++result.decodedFrames;
         lastEnd = frame.duration ? std::optional<Rational>(*frame.timestamp + *frame.duration) : std::nullopt;
         lastDuration = frame.duration;
-        if (progress && result.decodedFrames % 120 == 0)
-            progress({"validating",result.decodedFrames,0,0,0,frame.timestamp,0,{}, {},{}});
+        if (progress && result.decodedFrames % 120 == 0) {
+            // outputFrames always names the complete generated timeline. The
+            // caller attaches its finished processed/reused counters below;
+            // replacing the timeline with this partial scan count would make
+            // those counters invalid on every output longer than 120 frames.
+            // Report scan progress separately so the UI can still show work
+            // advancing while completed output remains at its true frame count.
+            const auto detail = "Verified " + std::to_string(result.decodedFrames) + " / " +
+                std::to_string(expectedCount) + " output frames";
+            progress({"validating",expectedCount,0,0,0,frame.timestamp,0,detail, {},{}});
+        }
     },selected,stop);
     if (scan.missingTimestamps || scan.nonIncreasingTimestamps || result.decodedFrames != expectedCount || !lastEnd || !lastDuration || *lastDuration <= Rational(0))
         throw std::runtime_error("Output frame count, ordering or final-frame duration could not be verified");

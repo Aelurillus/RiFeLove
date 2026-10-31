@@ -1,5 +1,6 @@
 #include "core/pipeline/output_validation.hpp"
 #include "media/video_writer.hpp"
+#include "application/job_serialization.hpp"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -72,6 +73,61 @@ TEST_F(OutputValidationFixture, H264AndAacTailPreserveIndependentTrackEndsAcross
         ASSERT_TRUE(result.declaredEndError);
         EXPECT_EQ(*result.declaredEndError,Rational(0));
         EXPECT_LE(result.auxiliaryMaximumEndError,result.timeBase);
+    }
+}
+
+TEST_F(OutputValidationFixture, VfrSourceLongOutputKeepsValidationTimelineForFreshAndCheckpointedRuns) {
+    // Earlier fixtures contained only three frames, so none reached the
+    // validator's 120-frame progress boundary. A real desktop/queue observer
+    // serializes these callbacks after generation has already finished.
+    const auto vfrSource = directory / "vfr-source.mkv";
+    const auto output = directory / "long-output.mkv";
+    const auto sourceCommand = "ffmpeg.exe -v error -nostdin -f lavfi -i \"color=black:size=192x128:rate=60:duration=4\" "
+        "-vf \"select='not(eq(mod(n,5),1))',setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=limited\" "
+        "-fps_mode vfr -c:v libopenh264 -pix_fmt yuv420p \"" + vfrSource.string() + "\"";
+    ASSERT_EQ(std::system(sourceCommand.c_str()),0);
+    const auto outputCommand = "ffmpeg.exe -v error -nostdin -i \"" + vfrSource.string() + "\" "
+        "-vf fps=60 -c:v libopenh264 -pix_fmt yuv420p \"" + output.string() + "\"";
+    ASSERT_EQ(std::system(outputCommand.c_str()),0);
+    const auto reference = media::MediaEngine::probe(vfrSource.string());
+    std::optional<Rational> previous, previousInterval;
+    bool varyingIntervals = false;
+    const auto sourceScan = media::MediaEngine::decodeVideo(vfrSource.string(),[&](const media::DecodedFrame& frame) {
+        ASSERT_TRUE(frame.timestamp);
+        if (previous) {
+            const auto interval = *frame.timestamp - *previous;
+            if (previousInterval && interval != *previousInterval) varyingIntervals = true;
+            previousInterval = interval;
+        }
+        previous = frame.timestamp;
+    });
+    ASSERT_TRUE(varyingIntervals);
+    ASSERT_LT(sourceScan.frameCount,240U);
+    for (const auto reused : {std::size_t{0},std::size_t{180},std::size_t{240}}) {
+        SCOPED_TRACE("reused=" + std::to_string(reused));
+        std::size_t events = 0;
+        const auto validation = detail::validatePipelineOutput(output.string(),0,192,128,Rational(0),Rational(4),
+            Rational(60),240,reference,[&](const PipelineProgress& value) {
+                ++events;
+                EXPECT_EQ(value.stage,"validating");
+                EXPECT_EQ(value.outputFrames,240U);
+                EXPECT_EQ(value.detail,"Verified " + std::to_string(events * 120) + " / 240 output frames");
+                // Mirror the production pipeline/service handoff: processing
+                // counters cover the complete output, not the partial scan.
+                application::ProcessingEvent event;
+                event.stage = value.stage;
+                event.outputFrames = value.outputFrames;
+                event.processedFrames = 240 - reused;
+                event.reusedFrames = reused;
+                event.timestamp = value.timestamp;
+                event.detail = value.detail;
+                EXPECT_NO_THROW((void)application::serializeProgress(event));
+            });
+        EXPECT_EQ(events,2U);
+        EXPECT_EQ(validation.decodedFrames,240U);
+        EXPECT_GE(validation.durationError,Rational(0) - validation.timeBase);
+        EXPECT_LE(validation.durationError,validation.timeBase);
+        EXPECT_LE(validation.maximumTimestampError,validation.timeBase / Rational(2));
     }
 }
 

@@ -268,7 +268,8 @@ void TaskStore::saveProgress(const std::string& id, const std::string& json) {
     std::lock_guard lock(mutex_); requireWritable(); boundedPayload(json,true);
     Statement update(db_, "UPDATE task_details SET progress=? WHERE task_id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=task_id AND state IN ('running','paused'))");
     bindText(db_,update.get(),1,json); bindText(db_,update.get(),2,id);
-    if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1) throw std::logic_error("Progress requires an active configured task");
+    if (sqlite3_step(update.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    if (sqlite3_changes(db_) != 1) throw std::logic_error("Progress requires an active configured task");
 }
 void TaskStore::finish(const std::string& id, TaskState state, const std::string& result, const std::string& error) {
     std::lock_guard lock(mutex_); requireWritable(); boundedPayload(result);
@@ -327,7 +328,8 @@ void TaskStore::completePublishedOutput(const std::string& id) {
     if (result.empty()) throw std::runtime_error("published-output validation result is empty");
     Statement update(db_,"UPDATE tasks SET state='completed',error='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='interrupted'");
     bindText(db_,update.get(),1,id);
-    if (sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(db_) != 1)
+    if (sqlite3_step(update.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db_));
+    if (sqlite3_changes(db_) != 1)
         throw std::runtime_error("published-output task state transition failed");
     Statement detail(db_,"UPDATE task_details SET result=? WHERE task_id=?");
     bindText(db_,detail.get(),1,result); bindText(db_,detail.get(),2,id);

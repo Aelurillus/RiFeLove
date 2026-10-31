@@ -417,6 +417,14 @@ if(RIFELOVE_BUILD_TESTS)
     target_sources(rifelove-tests PRIVATE tests/unit/application_test.cpp tests/unit/checkpoint_artifacts_test.cpp)
     target_include_directories(rifelove-tests SYSTEM PRIVATE "${RIFELOVE_JSON_INCLUDE}")
     target_link_libraries(rifelove-tests PRIVATE rifelove_application)
+    # Link a CPU-only engine fixture in a separate executable. It drives the
+    # real queue, checkpoint journal, validation/publication and SQLite failure
+    # recovery without loading a model or needing a CUDA device.
+    add_executable(rifelove-queue-finalization-tests tests/integration/queue_finalization_test.cpp)
+    target_link_libraries(rifelove-queue-finalization-tests PRIVATE rifelove_application GTest::gtest_main)
+    if(MINGW)
+      target_sources(rifelove-queue-finalization-tests PRIVATE tests/support/mingw_exit.cpp)
+    endif()
   endif()
   if(MINGW)
     target_sources(rifelove-tests PRIVATE tests/support/mingw_exit.cpp)
@@ -516,6 +524,10 @@ if(RIFELOVE_BUILD_TESTS)
     list(APPEND rifelove_test_runtime_environment "PATH=path_list_prepend:${runtime_dir}")
   endforeach()
   gtest_add_tests(TARGET rifelove-tests TEST_LIST rifelove_unit_tests)
+  if(TARGET rifelove-queue-finalization-tests)
+    gtest_add_tests(TARGET rifelove-queue-finalization-tests TEST_LIST rifelove_queue_finalization_tests)
+    list(APPEND rifelove_unit_tests ${rifelove_queue_finalization_tests})
+  endif()
   set_tests_properties(${rifelove_unit_tests} PROPERTIES
     TIMEOUT 60
     ENVIRONMENT_MODIFICATION "${rifelove_test_runtime_environment}")

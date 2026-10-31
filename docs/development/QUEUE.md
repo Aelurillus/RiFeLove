@@ -178,8 +178,28 @@ was unchanged. Core DLL digests were checked against the selected x86asm SDK,
 and the compiled writer digest matched its source. Evidence is retained under
 `work/verification/automatic-denoise-checkpoint-media-identity-x86asm-20261031/`.
 This proves that earlier small same-identity GPU recovery path, not the newer
-source-proof schema, cross-build reuse or multi-hour qualification. The new
-schema requires rebuilt binaries and its own validation before making that claim.
+source-proof schema, cross-build reuse or multi-hour qualification. The later
+schema-2 run below uses separately rebuilt binaries.
+
+On 2026-10-31 a rebuilt source-proof-schema-2 driver repeated the same small
+synthetic RIFE plus FastDVDnet CUDA interruption test. It reused four frames in
+two committed segments; the 24 decoded output frames, their PTS and PCM audio
+matched uninterrupted processing, and the source hash was unchanged. Evidence
+is retained locally in
+`work/verification/automatic-denoise-checkpoint-r13-20261031/summary.json`.
+This is same-build, same-runtime, short-clip evidence, not cross-build or
+multi-hour qualification.
+
+Completion persistence also has seven SQLite fault-injection cases in
+`tests/integration/queue_finalization_test.cpp`. A CPU fixture drives the real
+checkpoint journal, validation, publication proof and no-replace output. If
+the completion/result write or the final progress callback fails after
+publication, the worker leaves the task interrupted and retains the proof and
+file; recovery verifies their size, hash and result before adoption. Failures
+between publication and its final event are treated as uncertain when a proof
+and destination both exist. A competing or modified file is never adopted
+without matching proof. These tests replace GPU inference and do not cover all
+filesystem, process-crash or database failure timings.
 
 Committed segments and uncommitted `.partial` files are left untouched when the process first reopens the database. On an explicit checkpoint-resume request, RifeLove first verifies the immutable task manifest and every committed segment, then removes only unjournaled `segment-*.mkv` files and matching `.partial` writers at or beyond the committed segment prefix inside that task's checkpoint directory. It preserves unrelated files and never scans or deletes partial outputs beside the requested final output. Recovery never treats a partial file as a complete checkpoint. A previously validated final output is adopted automatically after restart only when its saved byte count, SHA-256 and validation-result structure all match. A modified output or damaged proof stays interrupted and is never overwritten. Cooperative cancellation removes its own live partial output; process termination does not.
 

@@ -37,3 +37,43 @@ default. These short synthetic tests do not establish perceptual quality on
 real footage, long-video stability, HDR correctness, multi-monitor DPI
 behavior, compatibility with other GPUs, or redistribution rights. Local
 models and runtimes were not uploaded to the repository.
+
+## Follow-up: output validation and publication recovery
+
+A later four-second synthetic VFR fixture exposed a defect in the preceding
+preview: while validating a result of at least 120 frames, the progress callback
+could report the partial verification count together with the full processed
+count. Depending on callback timing, the queue rejected the inconsistent
+counters and reported failure before publishing. The validator now keeps the
+complete output count and reports checked frames separately, without weakening
+timestamp or media validation.
+
+The subsequent local EXE SHA-256 was
+`116a0014f4c3f2b0597442ae9bd0dae2a6a910a7e6e8439d749eb48b3f5fee87`.
+Its Release build passed 179 non-GPU tests and eight serial CUDA/TensorRT
+tests. A separate portable QA package ran the actual desktop workflow on the
+VFR fixture: 144 irregularly timed source frames became 240 frames at 60 FPS,
+using TensorRT CUDA and H.264 NVENC with 95 RIFE inference calls. Independent
+decoding succeeded; maximum output PTS error against the 60 FPS clock was
+0.334 ms, both audio streams and the subtitle retained their packet hashes and
+timestamps, the two chapters were unchanged, and the source hash was unchanged.
+The resulting local evidence and reusable developer-only driver are
+`work/verification/native-r13-vfr-multitrack-final-20261031/result.json` and
+`tests/integration/native_vfr_package_test.py` respectively.
+
+In a separate fresh portable QA package, the same EXE generated a two-second
+192×128, 30-to-60 FPS synthetic comparison clip and opened its comparison
+window. A cross-process control test checked playback advancement, a 300 ms
+pause, forward/backward stepping, exact half-second seek and playback resume.
+The output's independently probed frame list confirmed that the observed
+133 ms and 150 ms steps were adjacent actual presentation timestamps. This
+checks the muted transport and its reported timestamps, not framebuffer
+appearance, audio playback or high-resolution/long-video preview performance.
+
+Separate real SQLite fault-injection tests exercise a verified, published
+file when completion or final-progress persistence fails, including recovery,
+conflicting output and external modification. They substitute a small CPU
+engine fixture; they are not long-video or real-GPU failure qualification.
+The prior preview should not be used for formal processing where this
+validation-progress error may occur. These checks remain synthetic, local,
+and do not establish stable-release acceptance.
