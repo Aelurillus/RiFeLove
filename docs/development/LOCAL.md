@@ -1,6 +1,6 @@
 # Local native development
 
-The current product is the Windows x64 native desktop application, `RifeLoveNative.exe`, using Win32, Direct2D and DirectWrite. Processing, model files, settings, task databases, logs and test evidence stay local. Reviewed source changes can be committed and pushed to the project's Git repository; hosted CI and formal release publishing remain deferred. The CI file in `templates/` is reference material only.
+The current product is the Windows x64 native desktop application, `RifeLoveNative.exe`, using Win32, Direct2D and DirectWrite. Processing, model files, settings, task databases, logs and test evidence stay local. Reviewed source changes can be committed and pushed to the project's Git repository. The active Windows workflow covers the CPU/native shell and model-tool contracts without uploading models or build artifacts; local NVIDIA, FFmpeg, TensorRT and package checks remain authoritative. The older files under `docs/development/templates/` are historical reference material.
 
 ## Complete native release build
 

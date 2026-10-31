@@ -27,7 +27,12 @@ if ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::R
 }
 
 function Test-ContainedPath([string]$Parent, [string]$Candidate) {
-    $relative = [IO.Path]::GetRelativePath($Parent, $Candidate)
+    # Windows PowerShell 5.1 does not expose .NET Core's Path.GetRelativePath.
+    # Use Uri.MakeRelativeUri so the safety guard works on the supported native
+    # development shells as well as PowerShell 7.
+    $parentUri = [Uri]::new(([IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'))
+    $candidateUri = [Uri]::new([IO.Path]::GetFullPath($Candidate))
+    $relative = [Uri]::UnescapeDataString($parentUri.MakeRelativeUri($candidateUri).ToString()).Replace('/', '\')
     return -not [IO.Path]::IsPathRooted($relative) -and $relative -ne "." -and
         -not $relative.Equals("..", [StringComparison]::Ordinal) -and
         -not $relative.StartsWith(".." + [IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal)
@@ -112,7 +117,7 @@ foreach ($process in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinu
     if ([string]::IsNullOrWhiteSpace($process.ExecutablePath)) { continue }
     $exe = [IO.Path]::GetFullPath([string]$process.ExecutablePath)
     if (-not (Test-ContainedPath $root $exe)) { continue }
-    $relative = [IO.Path]::GetRelativePath($root, $exe)
+    $relative = [Uri]::UnescapeDataString(([Uri]::new(([IO.Path]::GetFullPath($root).TrimEnd('\') + '\'))).MakeRelativeUri([Uri]::new([IO.Path]::GetFullPath($exe))).ToString()).Replace('/', '\')
     $packageName = $relative.Split([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)[0]
     if ($packageName) { [void]$activePackageRoots.Add((Join-Path $root $packageName)) }
     [void]$activePackageRoots.Add((Split-Path -Parent $exe))
