@@ -48,7 +48,10 @@ DynamicValues DynamicController::update(const DynamicObservation& observation) {
     DynamicValues result;
     for (std::size_t index = 0; index < next.automatic.size(); ++index) {
         const auto& observed = observation.effects[index];
-        if (observed.confidence >= settings_.minimumConfidence) {
+        // Zero is the sentinel for missing evidence, even when the caller
+        // explicitly chooses a minimum threshold of zero. In particular,
+        // bypassed frames must not silently update the smoothing state.
+        if (observed.confidence > 0.0 && observed.confidence >= settings_.minimumConfidence) {
             if (!next.hasEstimate[index]) next.automatic[index] = observed.automatic;
             else {
                 const double change = alpha * (observed.automatic - next.automatic[index]);
@@ -59,8 +62,9 @@ DynamicValues DynamicController::update(const DynamicObservation& observation) {
         }
         result.automatic[index] = next.automatic[index];
         result.hasEstimate[index] = next.hasEstimate[index];
-        // No confidence means no automatic effect. A relative control does not
-        // fabricate a missing estimate or turn an unsupported model task on.
+        // Relative controls cannot fabricate an estimate. Adapters must still
+        // bypass their current frame when its current evidence is uncertain;
+        // hasEstimate records smoothing history, not current confidence.
         result.strength[index] = settings_.effects[index].enabled && next.hasEstimate[index]
             ? relativeStrength(next.automatic[index],settings_.effects[index].relative) : 0.0;
     }

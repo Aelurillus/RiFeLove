@@ -47,6 +47,9 @@ second. Scene cuts clear the prior estimate. Relative adjustment is limited to
 the supported denoise effect. Below five levels the backend receives zero;
 uncertain or out-of-domain observations receive zero immediately. Zero means
 an actual bypass, not an inference call at an unqualified conditioning level.
+Zero-confidence observations never update the smoothing state, including when
+the configured minimum-confidence threshold is explicitly zero. A later trusted
+observation therefore cannot inherit a fabricated zero estimate from the gap.
 That confidence protection may cause a visible strength transition and is not
 a claim that flicker has been eliminated.
 

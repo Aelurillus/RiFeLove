@@ -28,10 +28,11 @@ compatibility matrix.
 Model, strength and tiling remain explicit choices; strength defaults Off and
 tiling defaults off. Batch import validates each input independently. Supported
 composition follows the existing backend chain: STDF, optional source-rate
-FastDVDnet, RIFE, optional output-rate super-resolution. The current working
-tree additionally contains schema-12 automatic-compression work; it is not the
-committed r17 format and must not be presented as an accepted release feature
-before its regression suite and a fresh EXE are verified.
+FastDVDnet, RIFE, optional output-rate super-resolution. Schema 12 adds an
+experimental automatic-compression mode; the r19 isolated local QA exercised
+it on a short generated block-pattern video, not general real-media quality.
+Frames without positive confidence bypass the model and never update smoothing
+state, even when the configured minimum-confidence threshold is zero.
 
 ## Verification
 

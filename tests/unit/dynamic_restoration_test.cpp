@@ -75,6 +75,20 @@ TEST(DynamicRestoration, PtsBasedSmoothingAndSlewLimitPreventFrameToFrameJumps) 
     EXPECT_DOUBLE_EQ(next.automatic[0],held.automatic[0]);
 }
 
+TEST(DynamicRestoration, ZeroConfidenceNeverChangesStateAtZeroThreshold) {
+    DynamicSettings settings; settings.minimumConfidence = 0;
+    DynamicController controller(settings,"zero-threshold");
+    const auto absent = controller.update(observation(0,.9,0));
+    EXPECT_FALSE(absent.hasEstimate[0]);
+    EXPECT_DOUBLE_EQ(absent.strength[0],0);
+    const auto trusted = controller.update(observation(1,.8,1));
+    ASSERT_DOUBLE_EQ(trusted.automatic[0],.8);
+    const auto ambiguous = controller.update(observation(11,0,0));
+    EXPECT_DOUBLE_EQ(ambiguous.automatic[0],.8);
+    const auto trustedAgain = controller.update(observation(Rational(331,30),.8,1));
+    EXPECT_DOUBLE_EQ(trustedAgain.automatic[0],.8);
+}
+
 TEST(DynamicRestoration, SceneCutsResetEveryEffectWithoutLeakingPreviousScene) {
     DynamicController controller({},"identity");
     (void)controller.update(observation(0,.9));
@@ -304,6 +318,18 @@ TEST(AutomaticGaussianDenoise, RelativeControlsAreLimitedToTheActualModelDomain)
     EXPECT_THROW((void)AutomaticDenoiseController(settings),std::invalid_argument);
 }
 
+TEST(AutomaticGaussianDenoise, MissingEvidenceDoesNotPoisonZeroThresholdSmoothing) {
+    AutomaticDenoiseSettings settings; settings.minimumConfidence = 0;
+    AutomaticDenoiseController controller(settings);
+    EXPECT_FLOAT_EQ(controller.update(0,{25.0,1.0,1000}).sigma255,25.0F);
+    const auto absent = controller.update(10,{0.0,0.0,0});
+    EXPECT_FALSE(absent.confident);
+    EXPECT_FLOAT_EQ(absent.sigma255,0.0F);
+    const auto next = controller.update(Rational(301,30),{25.0,1.0,1000});
+    EXPECT_TRUE(next.confident);
+    EXPECT_FLOAT_EQ(next.sigma255,25.0F);
+}
+
 namespace {
 template<class Pixel> media::DecodedFrame compressionFrame(int width, int height, Pixel pixel) {
     media::DecodedFrame image{};
@@ -470,6 +496,18 @@ TEST(AutomaticCompressionRestoration, RelativeControlsCannotManufactureMissingEv
     EXPECT_THROW((void)AutomaticCompressionController(settings),std::invalid_argument);
     settings.relativeAdjustment = 0; settings.smoothingSeconds = 0;
     EXPECT_THROW((void)AutomaticCompressionController(settings),std::invalid_argument);
+}
+
+TEST(AutomaticCompressionRestoration, MissingEvidenceDoesNotPoisonZeroThresholdSmoothing) {
+    AutomaticCompressionSettings settings; settings.minimumConfidence = 0;
+    AutomaticCompressionController controller(settings);
+    EXPECT_FLOAT_EQ(controller.update(0,{.8,1.0,1000}).strength,.8F);
+    const auto absent = controller.update(10,{0.0,0.0,0});
+    EXPECT_FALSE(absent.confident);
+    EXPECT_FLOAT_EQ(absent.strength,0.0F);
+    const auto next = controller.update(Rational(301,30),{.8,1.0,1000});
+    EXPECT_TRUE(next.confident);
+    EXPECT_FLOAT_EQ(next.strength,.8F);
 }
 
 TEST(AutomaticCompressionRestoration, FullSourceReplayReproducesVfrSceneAndAmbiguityHistory) {

@@ -20,6 +20,7 @@ struct DynamicSettings {
     double maximumChangePerSecond = 0.5;
     double minimumConfidence = 0.5;
 };
+// Zero confidence denotes missing evidence even with minimumConfidence == 0.
 struct DynamicEstimate { double automatic = 0.0; double confidence = 0.0; };
 struct DynamicObservation {
     Rational timestamp;
