@@ -44,3 +44,24 @@ Further work needs representative clips, real and controlled degradations,
 motion-aware temporal assessment, visual review, and performance measurements
 in the actual pipeline before selecting default behavior. Image deblurring alone
 does not establish general temporal detail restoration.
+
+## Experimental automatic soft-edge estimate
+
+The independent `sdr8-directional-soft-edge-v1` prototype detects the synthetic
+directional checkerboard in its unit test while bypassing clean and isotropically
+blurred checkerboards. That test does not establish real-world reliability.
+On the three decoded proxy frames above and the same frames with nine-pixel
+horizontal blur, the prototype returned zero strength and zero confidence on all
+six inputs (25,993 sample positions per frame). It therefore failed to detect
+this artificially blurred recorded material. An intentional soft edge can also
+look like a blurred edge; the confidence is a heuristic, not a probability that
+the material should be restored. The estimator remains experimental and is not
+connected to desktop processing or enabled by default.
+
+To reproduce the estimate, first generate the proxy files using the earlier
+command, build the developer-only `rifelove-validate-detail-estimate` target,
+then run it for each `clean-*-input.rgb` and `blurred-*-input.rgb` file with
+width `384` and height `288`. The tool reads local RGB24 and reports the raw
+estimate; it does not execute a neural model or upload material. Representative
+real footage, deliberately soft material, motion direction and temporal behavior
+must be evaluated before designing any user-facing automatic control.

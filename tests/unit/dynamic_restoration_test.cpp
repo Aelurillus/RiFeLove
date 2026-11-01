@@ -2,6 +2,7 @@
 #include "restoration/temporal_window.hpp"
 #include "restoration/noise_estimate.hpp"
 #include "restoration/compression_estimate.hpp"
+#include "restoration/detail_estimate.hpp"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -130,6 +131,83 @@ TEST(DynamicRestoration, RejectsWrongIdentityInvalidStateAndUnorderedPtsWithoutM
     EXPECT_THROW(controller.restore(wrong),std::invalid_argument);
     EXPECT_EQ(controller.checkpoint().automatic,original.automatic);
     EXPECT_EQ(controller.checkpoint().lastTimestamp,original.lastTimestamp);
+}
+
+namespace {
+media::RifeSdrFrame softEdgeFrame(bool horizontal, bool vertical) {
+    constexpr int width = 384, height = 256;
+    constexpr auto plane = static_cast<std::size_t>(width * height);
+    media::RifeSdrFrame image{width,height,width,height,{},std::vector<float>(plane * 3,0.0F)};
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+        const float pixel = ((x / 32 + y / 32) & 1) ? 0.75F : 0.25F;
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            image.pixels[channel * plane + static_cast<std::size_t>(y * width + x)] = pixel;
+    }
+    constexpr std::array<int,7> kernel{1,2,3,4,3,2,1};
+    const auto blur = [&](bool alongX) {
+        auto source = image.pixels;
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+                float sum = 0.0F;
+                for (int offset = -3; offset <= 3; ++offset) {
+                    const int xx = alongX ? std::clamp(x + offset,0,width - 1) : x;
+                    const int yy = alongX ? y : std::clamp(y + offset,0,height - 1);
+                    sum += source[channel * plane + static_cast<std::size_t>(yy * width + xx)] *
+                        static_cast<float>(kernel[static_cast<std::size_t>(offset + 3)]);
+                }
+                image.pixels[channel * plane + static_cast<std::size_t>(y * width + x)] = sum / 16.0F;
+            }
+    };
+    if (horizontal) blur(true);
+    if (vertical) blur(false);
+    return image;
+}
+}
+
+TEST(DirectionalDetailAnalysis, DetectsDistributedOneAxisSoftEdgesButBypassesClearAndIsotropicImages) {
+    const auto clear = estimateDirectionalSoftEdges(softEdgeFrame(false,false));
+    const auto directional = estimateDirectionalSoftEdges(softEdgeFrame(true,false));
+    const auto isotropic = estimateDirectionalSoftEdges(softEdgeFrame(true,true));
+    EXPECT_DOUBLE_EQ(clear.confidence,0.0);
+    EXPECT_DOUBLE_EQ(clear.strength,0.0);
+    EXPECT_GT(directional.confidence,0.6);
+    EXPECT_GT(directional.strength,0.0);
+    EXPECT_LE(directional.strength,1.0);
+    EXPECT_DOUBLE_EQ(isotropic.confidence,0.0);
+    EXPECT_EQ(clear.sampledPositions,directional.sampledPositions);
+    EXPECT_LE(directional.sampledPositions,65536U);
+}
+
+TEST(DirectionalDetailAnalysis, SmoothContentAndCancellationDoNotProduceDetailStrength) {
+    auto image = softEdgeFrame(false,false);
+    std::fill(image.pixels.begin(),image.pixels.end(),0.5F);
+    const auto smooth = estimateDirectionalSoftEdges(image);
+    EXPECT_DOUBLE_EQ(smooth.strength,0.0);
+    EXPECT_DOUBLE_EQ(smooth.confidence,0.0);
+    std::stop_source cancellation; cancellation.request_stop();
+    EXPECT_THROW((void)estimateDirectionalSoftEdges(image,cancellation.get_token()),std::runtime_error);
+    image.pixels.clear();
+    EXPECT_THROW((void)estimateDirectionalSoftEdges(image),std::invalid_argument);
+}
+
+TEST(AutomaticDetailControl, BoundsBlendAndBypassesUncertainFramesAfterSceneChange) {
+    AutomaticDetailController controller({0.0,0.35,0.5,0.6});
+    const auto first = controller.update(Rational(0),{0.8,0.9,128});
+    EXPECT_TRUE(first.confident);
+    EXPECT_GT(first.deblurStrength,0.0F);
+    EXPECT_LE(first.deblurStrength,maximumAutomaticDeblurBlend);
+    const auto uncertain = controller.update(Rational(1,30),{1.0,0.2,128});
+    EXPECT_FALSE(uncertain.confident);
+    EXPECT_FLOAT_EQ(uncertain.deblurStrength,0.0F);
+    const auto cut = controller.update(Rational(2,30),{0.0,0.9,128},true);
+    EXPECT_TRUE(cut.confident);
+    EXPECT_FLOAT_EQ(cut.deblurStrength,0.0F);
+    EXPECT_THROW((void)controller.update(Rational(2,30),{0.8,0.9,128}),std::invalid_argument);
+    AutomaticDetailController disabled({-1.0,0.35,0.5,0.6});
+    EXPECT_FLOAT_EQ(disabled.update(Rational(0),{0.8,0.9,128}).deblurStrength,0.0F);
+    AutomaticDetailController maximum({1.0,0.35,0.5,0.6});
+    EXPECT_FLOAT_EQ(maximum.update(Rational(0),{0.8,0.9,128}).deblurStrength,maximumAutomaticDeblurBlend);
+    EXPECT_THROW((void)AutomaticDetailController({0.0,0.35,0.5,1.1}),std::invalid_argument);
 }
 
 TEST(TemporalRestorationWindow, DeliversEveryRealVfrFrameInOrderWithBoundedMemory) {
