@@ -77,6 +77,8 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
         throw std::invalid_argument("Selected model differs from the verified local model pack");
     std::optional<restoration::ModelPack> restorationPack;
     if (!settings.restorationModelDirectory.empty()) restorationPack = restoration::loadModelPack(settings.restorationModelDirectory);
+    std::optional<restoration::ModelPack> deblurPack;
+    if (!settings.deblurModelDirectory.empty()) deblurPack = restoration::loadModelPack(settings.deblurModelDirectory);
     if (request.outputTargetSelection != 0 && (!restorationPack ||
         restoration::outputRateImageTask(restorationPack->capabilities) != restoration::Task::superResolution ||
         restorationPack->capabilities.scaleNumerator != 2 || restorationPack->capabilities.scaleDenominator != 1))
@@ -146,6 +148,12 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                     restorationPack->capabilities.supportedInputProfiles.end(),profile) == restorationPack->capabilities.supportedInputProfiles.end()) {
                     result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
                         "Selected restoration model does not declare support for input profile " + profile});
+                    valid = false;
+                }
+                if (valid && deblurPack && std::find(deblurPack->capabilities.supportedInputProfiles.begin(),
+                    deblurPack->capabilities.supportedInputProfiles.end(),profile) == deblurPack->capabilities.supportedInputProfiles.end()) {
+                    result.rejected.push_back({source,ImportRejection::unsupportedRestorationModelProfile,
+                        "Selected independent deblur model does not declare support for input profile " + profile});
                     valid = false;
                 }
                 if (valid && temporalRestorationPack && std::find(temporalRestorationPack->capabilities.supportedInputProfiles.begin(),

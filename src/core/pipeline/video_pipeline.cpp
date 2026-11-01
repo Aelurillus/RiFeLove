@@ -205,9 +205,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     std::shared_ptr<restoration::IVideoRestorationBackend> temporalBackend = settings.temporalRestorationBackend;
     std::shared_ptr<restoration::IVideoRestorationBackend> compressionBackend = settings.compressionRestorationBackend;
     std::shared_ptr<restoration::IVideoRestorationBackend> outputBackend;
+    auto deblurBackend = settings.deblurRestorationBackend;
     std::optional<restoration::Capabilities> temporalCapabilities;
     std::optional<restoration::Capabilities> compressionCapabilities;
     std::optional<restoration::Capabilities> outputRateCapabilities;
+    std::optional<restoration::Capabilities> deblurCapabilities;
     const auto requireRestorationProfile = [&](const restoration::Capabilities& caps) {
         const auto profile = media::rifeSdrInputProfile(video->color);
         if (std::find(caps.supportedInputProfiles.begin(),caps.supportedInputProfiles.end(),profile) == caps.supportedInputProfiles.end())
@@ -277,16 +279,26 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             throw std::invalid_argument("The selected restoration scale exceeds the supported output dimensions");
         requireRestorationProfile(*outputRateCapabilities);
     }
+    if (deblurBackend) {
+        deblurCapabilities = deblurBackend->capabilities();
+        restoration::validateCapabilities(*deblurCapabilities);
+        if (restoration::outputRateImageTask(*deblurCapabilities) != restoration::Task::deblur ||
+            deblurCapabilities->scaleNumerator != 1 || deblurCapabilities->scaleDenominator != 1)
+            throw std::invalid_argument("The independent deblur slot requires a same-resolution output-rate deblur model");
+        if (outputRateCapabilities && restoration::outputRateImageTask(*outputRateCapabilities) != restoration::Task::superResolution)
+            throw std::invalid_argument("The second output-rate model must be super-resolution when independent deblur is enabled");
+        requireRestorationProfile(*deblurCapabilities);
+    }
     std::optional<restoration::AutomaticDetailController> automaticDetail;
     if (settings.automaticDetailRestoration) {
-        if (!outputBackend || !outputRateCapabilities ||
-            restoration::outputRateImageTask(*outputRateCapabilities) != restoration::Task::deblur)
+        if (!deblurBackend && (!outputBackend || !outputRateCapabilities ||
+            restoration::outputRateImageTask(*outputRateCapabilities) != restoration::Task::deblur))
             throw std::invalid_argument("Automatic detail restoration requires a separately selected same-resolution deblur model");
         if (settings.motionBlur.enabled && settings.motionBlur.shutterAngleDegrees > 0 && settings.motionBlur.sampleCount > 1)
             throw std::invalid_argument("Experimental automatic detail restoration does not support exposure-synthesis motion blur");
         automaticDetail.emplace(*settings.automaticDetailRestoration);
     }
-    if ((compressionBackend || temporalBackend || outputBackend) && settings.checkpoint && !settings.checkpoint->restorationIdentityVerified)
+    if ((compressionBackend || temporalBackend || outputBackend || deblurBackend) && settings.checkpoint && !settings.checkpoint->restorationIdentityVerified)
         throw std::invalid_argument("Checkpoint resume requires verified restoration model and runtime identities");
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
     encoding.frameRate = settings.targetRate;
@@ -416,6 +428,12 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             result.restorationFallbackReason = actual.fallbackReason;
             result.restorationScaleNumerator = actual.scaleNumerator;
             result.restorationScaleDenominator = actual.scaleDenominator;
+        }
+        if (deblurBackend) {
+            const auto actual = deblurBackend->capabilities();
+            result.deblurRestorationModelId = actual.modelId;
+            result.deblurRestorationBackend = actual.runtimeBackend;
+            result.deblurRestorationFallbackReason = actual.fallbackReason;
         }
         if (temporalBackend) {
             const auto actual = temporalBackend->capabilities();
@@ -554,26 +572,32 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     };
     const auto emit = [&](media::DecodedFrame frame, float detailStrength = 0.0F) {
         const auto time = clock->timestamp();
-        if (outputBackend) {
+        const auto restoreImage = [&](restoration::IVideoRestorationBackend& imageBackend,
+                                      const restoration::Capabilities& imageCapabilities, bool applyDetail) {
             frame.index = clock->index();
             frame.timestamp = time;
             frame.duration = Rational(1) / settings.targetRate;
             restoration::Request request;
-            request.task = *restoration::outputRateImageTask(*outputRateCapabilities);
+            request.task = *restoration::outputRateImageTask(imageCapabilities);
             request.placement = restoration::Placement::outputRateAfterInterpolation;
             request.context.push_back(frame);
             request.centerIndex = 0;
             request.inputProfile = media::rifeSdrInputProfile(frame.color);
             request.stop = stop;
-            if (automaticDetail) {
+            if (automaticDetail && applyDetail) {
                 request.deblurStrength = detailStrength;
                 if (detailStrength > 0.0F) ++result.automaticDetailAppliedFrames;
             }
-            notify("restoration",time,outputRateCapabilities->modelId);
+            restoration::validateRequest(imageCapabilities,request);
+            notify("restoration",time,imageCapabilities.modelId);
             frame = measure(result.timings.restorationSeconds,[&] {
-                return outputBackend->restore(std::move(request)).get().centerFrame;
+                auto restored = imageBackend.restore(request).get();
+                restoration::validateResult(imageCapabilities,request,restored);
+                return std::move(restored.centerFrame);
             });
-        }
+        };
+        if (deblurBackend) restoreImage(*deblurBackend,*deblurCapabilities,true);
+        if (outputBackend) restoreImage(*outputBackend,*outputRateCapabilities,!deblurBackend);
         if (pending) measure(result.timings.frameEncodeSeconds,[&] { writePending(*pending,*pendingTime,time - *pendingTime); });
         pending = std::move(frame); pendingTime = time;
         clock->advance();

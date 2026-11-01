@@ -144,8 +144,12 @@ bool validAutomaticDetailRuntime(const Json& manifest) {
     if (!manifest.contains("job") || !manifest.at("job").is_object()) return true;
     const auto& job = manifest.at("job");
     const auto schema = job.value("schemaVersion",0);
-    const auto runtime = manifest.find("restorationRuntime");
+    const bool independentDeblur = schema >= 14 && job.contains("deblurModelDirectory") &&
+        job.at("deblurModelDirectory").is_string() && !job.at("deblurModelDirectory").get<std::string>().empty();
+    const auto runtime = manifest.find(independentDeblur ? "deblurRuntime" : "restorationRuntime");
     const bool hasControl = runtime != manifest.end() && runtime->is_object() && runtime->contains("automaticControl");
+    const auto otherRuntime = manifest.find(independentDeblur ? "restorationRuntime" : "deblurRuntime");
+    if (otherRuntime != manifest.end() && otherRuntime->is_object() && otherRuntime->contains("automaticControl")) return false;
     if (schema < 13)
         return (!job.contains("automaticDetailRestoration") || job.at("automaticDetailRestoration").is_null()) && !hasControl;
     if (!job.contains("automaticDetailRestoration")) return false;
@@ -155,11 +159,12 @@ bool validAutomaticDetailRuntime(const Json& manifest) {
         automatic.at("algorithmVersion") != restoration::automaticDetailAlgorithmVersion ||
         automatic.at("analyzer") != restoration::automaticDetailAnalyzerId ||
         automatic.at("replayPolicy") != "software-source-pts-from-start-v1" ||
-        !job.contains("restorationModelDirectory") || !job.at("restorationModelDirectory").is_string() ||
-        job.at("restorationModelDirectory").get<std::string>().empty() ||
-        !job.contains("expectedRestorationDescriptorSha256") ||
-        !job.at("expectedRestorationDescriptorSha256").is_string() ||
-        !sha256Text(job.at("expectedRestorationDescriptorSha256").get<std::string>()) ||
+        !job.contains(independentDeblur ? "deblurModelDirectory" : "restorationModelDirectory") ||
+        !job.at(independentDeblur ? "deblurModelDirectory" : "restorationModelDirectory").is_string() ||
+        job.at(independentDeblur ? "deblurModelDirectory" : "restorationModelDirectory").get<std::string>().empty() ||
+        !job.contains(independentDeblur ? "expectedDeblurDescriptorSha256" : "expectedRestorationDescriptorSha256") ||
+        !job.at(independentDeblur ? "expectedDeblurDescriptorSha256" : "expectedRestorationDescriptorSha256").is_string() ||
+        !sha256Text(job.at(independentDeblur ? "expectedDeblurDescriptorSha256" : "expectedRestorationDescriptorSha256").get<std::string>()) ||
         runtime == manifest.end() || !runtime->is_object() || !hasControl ||
         runtime->at("automaticControl") != automatic ||
         runtime->value("modelId",std::string()).empty() ||
@@ -172,6 +177,37 @@ bool validAutomaticDetailRuntime(const Json& manifest) {
         automatic.at("maximumStrengthChangePerSecond").get<double>(),
         automatic.at("minimumConfidence").get<double>()});
     return true;
+}
+bool validDeblurRuntime(const Json& manifest) {
+    if (!manifest.contains("job") || !manifest.at("job").is_object()) return true;
+    const auto& job = manifest.at("job");
+    const auto schema = job.value("schemaVersion",0);
+    const auto runtime = manifest.find("deblurRuntime");
+    if (schema < 14) {
+        return runtime == manifest.end() && !manifest.contains("outputImageOrder") &&
+            (!job.contains("deblurModelDirectory") || job.at("deblurModelDirectory") == "") &&
+            (!job.contains("expectedDeblurDescriptorSha256") || job.at("expectedDeblurDescriptorSha256") == "") &&
+            (!job.contains("outputImageOrder") || job.at("outputImageOrder") == "legacy-output-only-v1");
+    }
+    if (!job.contains("deblurModelDirectory") || !job.at("deblurModelDirectory").is_string() ||
+        !job.contains("expectedDeblurDescriptorSha256") || !job.at("expectedDeblurDescriptorSha256").is_string() ||
+        !job.contains("outputImageOrder") || !job.at("outputImageOrder").is_string()) return false;
+    const auto directory = job.at("deblurModelDirectory").get<std::string>();
+    const auto descriptor = job.at("expectedDeblurDescriptorSha256").get<std::string>();
+    if (directory.empty()) return descriptor.empty() && job.at("outputImageOrder") == "legacy-output-only-v1" &&
+        runtime == manifest.end() && !manifest.contains("outputImageOrder");
+    if (!sha256Text(descriptor) || job.at("outputImageOrder") != "deblur-before-super-resolution-v1" ||
+        manifest.value("outputImageOrder",std::string()) != "deblur-before-super-resolution-v1" ||
+        runtime == manifest.end() || !runtime->is_object()) return false;
+    return runtime->value("descriptorSha256",std::string()) == descriptor &&
+        runtime->value("task",std::string()) == "deblur" &&
+        !runtime->value("modelId",std::string()).empty() &&
+        !runtime->value("adapterId",std::string()).empty() &&
+        runtime->value("adapterVersion",0) > 0 &&
+        !runtime->value("signature",std::string()).empty() &&
+        !runtime->value("backend",std::string()).empty() &&
+        runtime->value("backend",std::string()) != "unavailable" &&
+        runtime->value("scaleNumerator",0) == 1 && runtime->value("scaleDenominator",0) == 1;
 }
 bool validCompressionRuntime(const Json& manifest) {
     bool tiled = false;
@@ -192,7 +228,7 @@ bool validCompressionRuntime(const Json& manifest) {
             if (!compressionEnabled && (!directory.empty() || !descriptor.empty() || strength != 0.0)) return false;
         }
         if (schema >= 11) {
-            if (schema > 13 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
+            if (schema > 14 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
             tiled = job.at("compressionRestorationTiled").get<bool>();
             if (!job.contains("compressionRestorationPolicy") ||
                 job.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(tiled)) return false;
@@ -452,8 +488,31 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         if (actual.contains("mediaPipelineIdentity") || wanted.contains("mediaPipelineIdentity"))
             requireMediaPipelineIdentity(saved,expected);
         if (!validCompressionRuntime(actual) || !validCompressionRuntime(wanted) ||
+            !validDeblurRuntime(actual) || !validDeblurRuntime(wanted) ||
             !validAutomaticDetailRuntime(actual) || !validAutomaticDetailRuntime(wanted)) return false;
         if (actual == wanted) return true;
+        // Schema 14 adds a second image model and fixes the only supported
+        // order as deblur then super-resolution. Historical output is reusable
+        // only when the independent slot is completely disabled.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 14 && actual.at("job").value("schemaVersion",0) < 14) {
+            if (wanted.at("job").at("deblurModelDirectory") != "" ||
+                wanted.at("job").at("expectedDeblurDescriptorSha256") != "" ||
+                wanted.at("job").at("outputImageOrder") != "legacy-output-only-v1" ||
+                actual.contains("deblurRuntime") || actual.contains("outputImageOrder") ||
+                wanted.contains("deblurRuntime") || wanted.contains("outputImageOrder")) return false;
+            auto previous = wanted;
+            previous["job"].erase("deblurModelDirectory");
+            previous["job"].erase("expectedDeblurDescriptorSha256");
+            previous["job"].erase("outputImageOrder");
+            previous["job"]["schemaVersion"] = 13;
+            auto priorSaved = actual;
+            priorSaved["job"].erase("deblurModelDirectory");
+            priorSaved["job"].erase("expectedDeblurDescriptorSha256");
+            priorSaved["job"].erase("outputImageOrder");
+            return manifestMatches(priorSaved.dump(),previous.dump());
+        }
         // Schema 13 adds experimental detail control. Historical segments are
         // reusable only when the stage is explicitly disabled.
         if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&

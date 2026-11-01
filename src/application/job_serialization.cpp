@@ -114,16 +114,20 @@ std::pair<std::size_t,std::size_t> processingCounters(const ProcessingEvent& eve
 void validate(const ProcessingJob& job) {
     text(job.source,32768); text(job.output,32768); text(utf8(job.modelDirectory),32768); text(utf8(job.runtimeDirectory),32768);
     text(utf8(job.restorationModelDirectory),32768,false);
+    text(utf8(job.deblurModelDirectory),32768,false);
     text(utf8(job.temporalRestorationModelDirectory),32768,false);
     text(utf8(job.compressionRestorationModelDirectory),32768,false);
     if (job.deviceOrdinal < 0 || job.settings.targetRate <= Rational(0) || !job.settings.hostFloatBufferLimit) throw std::invalid_argument("Invalid target/device/buffer configuration");
     if (job.sourceDurationEstimate && *job.sourceDurationEstimate <= Rational(0)) throw std::invalid_argument("Invalid source duration estimate");
     hash(job.expectedSourceSha256); hash(job.expectedModelSha256);
     hash(job.expectedRestorationDescriptorSha256);
+    hash(job.expectedDeblurDescriptorSha256);
     hash(job.expectedTemporalRestorationDescriptorSha256);
     hash(job.expectedCompressionRestorationDescriptorSha256);
     if (job.restorationModelDirectory.empty() != job.expectedRestorationDescriptorSha256.empty())
         throw std::invalid_argument("A local restoration model path and pinned descriptor hash must be supplied together");
+    if (job.deblurModelDirectory.empty() != job.expectedDeblurDescriptorSha256.empty())
+        throw std::invalid_argument("An independent deblur model path and pinned descriptor hash must be supplied together");
     if (job.temporalRestorationModelDirectory.empty() != job.expectedTemporalRestorationDescriptorSha256.empty())
         throw std::invalid_argument("A temporal restoration model path and pinned descriptor hash must be supplied together");
     if (!std::isfinite(job.compressionRestorationStrength) || job.compressionRestorationStrength < 0.0F ||
@@ -147,7 +151,7 @@ void validate(const ProcessingJob& job) {
         (void)restoration::AutomaticDenoiseController(*job.settings.automaticTemporalDenoise);
     }
     if (job.settings.automaticDetailRestoration) {
-        if (job.restorationModelDirectory.empty())
+        if (job.restorationModelDirectory.empty() && job.deblurModelDirectory.empty())
             throw std::invalid_argument("Automatic detail restoration requires a selected local deblur model");
         if (job.settings.motionBlur.enabled && job.settings.motionBlur.shutterAngleDegrees > 0 &&
             job.settings.motionBlur.sampleCount > 1)
@@ -222,9 +226,12 @@ bool compressionRestorationRuntimeMatchesPolicy(bool tiled, std::string_view sig
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",13},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",14},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
         {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
+        {"deblurModelDirectory",utf8(job.deblurModelDirectory)},
+        {"expectedDeblurDescriptorSha256",job.expectedDeblurDescriptorSha256},
+        {"outputImageOrder",job.deblurModelDirectory.empty() ? "legacy-output-only-v1" : "deblur-before-super-resolution-v1"},
         {"temporalRestorationModelDirectory",utf8(job.temporalRestorationModelDirectory)},
         {"expectedTemporalRestorationDescriptorSha256",job.expectedTemporalRestorationDescriptorSha256},
         {"compressionRestorationModelDirectory",utf8(job.compressionRestorationModelDirectory)},
@@ -275,7 +282,7 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion < 1 || schemaVersion > 13) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion < 1 || schemaVersion > 14) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -283,6 +290,17 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
     if (schemaVersion >= 4) {
         job.restorationModelDirectory = path(json.at("restorationModelDirectory").get<std::string>());
         job.expectedRestorationDescriptorSha256 = json.at("expectedRestorationDescriptorSha256").get<std::string>();
+    }
+    if (schemaVersion >= 14) {
+        job.deblurModelDirectory = path(json.at("deblurModelDirectory").get<std::string>());
+        job.expectedDeblurDescriptorSha256 = json.at("expectedDeblurDescriptorSha256").get<std::string>();
+        const auto order = json.at("outputImageOrder").get<std::string>();
+        if (order != (job.deblurModelDirectory.empty() ? "legacy-output-only-v1" : "deblur-before-super-resolution-v1"))
+            throw std::invalid_argument("Unsupported output image restoration order");
+    } else if ((json.contains("deblurModelDirectory") && json.at("deblurModelDirectory") != "") ||
+        (json.contains("expectedDeblurDescriptorSha256") && json.at("expectedDeblurDescriptorSha256") != "") ||
+        (json.contains("outputImageOrder") && json.at("outputImageOrder") != "legacy-output-only-v1")) {
+        throw std::invalid_argument("Historical task schema cannot enable independent deblur restoration");
     }
     if (schemaVersion >= 8) {
         job.temporalRestorationModelDirectory = path(json.at("temporalRestorationModelDirectory").get<std::string>());
@@ -425,14 +443,29 @@ void pinRestorationModelDescriptor(ProcessingJob& job) {
     auto imageHash = job.expectedRestorationDescriptorSha256;
     auto temporalDirectory = job.temporalRestorationModelDirectory;
     auto temporalHash = job.expectedTemporalRestorationDescriptorSha256;
-    pin(imageDirectory,imageHash,false,!temporalDirectory.empty());
+    auto deblurDirectory = job.deblurModelDirectory;
+    auto deblurHash = job.expectedDeblurDescriptorSha256;
+    pin(imageDirectory,imageHash,false,!temporalDirectory.empty() || !deblurDirectory.empty());
+    pin(deblurDirectory,deblurHash,false,true);
+    if (!deblurDirectory.empty()) {
+        const auto deblurModel = restoration::loadModelPack(deblurDirectory);
+        const auto& caps = deblurModel.capabilities;
+        if (restoration::outputRateImageTask(caps) != restoration::Task::deblur ||
+            caps.scaleNumerator != 1 || caps.scaleDenominator != 1)
+            throw std::invalid_argument("The independent deblur slot requires a same-resolution deblur model");
+        if (!imageDirectory.empty() && restoration::outputRateImageTask(
+            restoration::loadModelPack(imageDirectory).capabilities) != restoration::Task::superResolution)
+            throw std::invalid_argument("Independent deblur can only precede a super-resolution output model");
+    }
     if (job.settings.automaticDetailRestoration &&
-        (imageDirectory.empty() || restoration::outputRateImageTask(
+        deblurDirectory.empty() && (imageDirectory.empty() || restoration::outputRateImageTask(
             restoration::loadModelPack(imageDirectory).capabilities) != restoration::Task::deblur))
         throw std::invalid_argument("Automatic detail restoration requires a pinned same-resolution deblur model");
     pin(temporalDirectory,temporalHash,true,false);
     job.restorationModelDirectory = std::move(imageDirectory);
     job.expectedRestorationDescriptorSha256 = std::move(imageHash);
+    job.deblurModelDirectory = std::move(deblurDirectory);
+    job.expectedDeblurDescriptorSha256 = std::move(deblurHash);
     job.temporalRestorationModelDirectory = std::move(temporalDirectory);
     job.expectedTemporalRestorationDescriptorSha256 = std::move(temporalHash);
 
@@ -495,6 +528,8 @@ std::string serializeResult(const PipelineResult& r) {
         {"restorationModelId",r.restorationModelId},{"restorationBackend",r.restorationBackend},
         {"restorationFallbackReason",r.restorationFallbackReason},
         {"restorationScale",{{"numerator",r.restorationScaleNumerator},{"denominator",r.restorationScaleDenominator}}},
+        {"deblurRestorationModelId",r.deblurRestorationModelId},{"deblurRestorationBackend",r.deblurRestorationBackend},
+        {"deblurRestorationFallbackReason",r.deblurRestorationFallbackReason},
         {"temporalRestorationModelId",r.temporalRestorationModelId},{"temporalRestorationBackend",r.temporalRestorationBackend},
         {"temporalRestorationFallbackReason",r.temporalRestorationFallbackReason},
         {"temporalRestorationScale",{{"numerator",r.temporalRestorationScaleNumerator},{"denominator",r.temporalRestorationScaleDenominator}}},
@@ -562,6 +597,9 @@ std::string serializeProcessingReport(const ProcessingReportContext& context, co
             {"scale",{{"numerator",result.restorationScaleNumerator},{"denominator",result.restorationScaleDenominator}}},
             {"backend",result.restorationBackend.empty() ? "unknown" : result.restorationBackend},
             {"fallbackReason",result.restorationFallbackReason}}},
+        {"deblurRestoration",result.deblurRestorationModelId.empty() ? Json(nullptr) : Json{{"id",result.deblurRestorationModelId},
+            {"backend",result.deblurRestorationBackend.empty() ? "unknown" : result.deblurRestorationBackend},
+            {"fallbackReason",result.deblurRestorationFallbackReason}}},
         {"temporalRestoration",result.temporalRestorationModelId.empty() ? Json(nullptr) : Json{{"id",result.temporalRestorationModelId},
             {"scale",{{"numerator",result.temporalRestorationScaleNumerator},{"denominator",result.temporalRestorationScaleDenominator}}},
             {"backend",result.temporalRestorationBackend.empty() ? "unknown" : result.temporalRestorationBackend},

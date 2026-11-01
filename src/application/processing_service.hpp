@@ -14,6 +14,9 @@ struct ProcessingJob {
     std::filesystem::path modelDirectory;
     std::filesystem::path runtimeDirectory;
     std::filesystem::path restorationModelDirectory;
+    // Optional independent 1x deblur model. The legacy restoration field
+    // retains its schema-13 single-model interpretation.
+    std::filesystem::path deblurModelDirectory;
     // Optional source-rate denoiser alongside the existing output-rate model.
     // The legacy restorationModelDirectory still accepts a temporal-only job.
     std::filesystem::path temporalRestorationModelDirectory;
@@ -36,6 +39,7 @@ struct ProcessingJob {
     // The local restoration descriptor hash pins its graph and all verified
     // sidecar metadata for persistent queue and checkpoint identity.
     std::string expectedRestorationDescriptorSha256;
+    std::string expectedDeblurDescriptorSha256;
     std::string expectedTemporalRestorationDescriptorSha256;
     std::string expectedCompressionRestorationDescriptorSha256;
     // Zero disables the compression-restoration stage. A non-zero value must

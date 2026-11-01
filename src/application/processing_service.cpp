@@ -103,6 +103,7 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     send(std::move(prepared));
     auto pipelineSettings = job.settings;
     std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> restorationBackend;
+    std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> deblurRestorationBackend;
     std::shared_ptr<restoration::OnnxCudaVideoRestorationBackend> temporalRestorationBackend;
     std::shared_ptr<restoration::StdfCudaVideoRestorationBackend> compressionRestorationBackend;
     const auto loadRestoration = [&](const std::filesystem::path& directory, const std::string& expectedHash,
@@ -128,8 +129,19 @@ PipelineResult executeProcessingJob(const ProcessingJob& job, const std::functio
     };
     if (!job.restorationModelDirectory.empty()) {
         restorationBackend = loadRestoration(job.restorationModelDirectory,job.expectedRestorationDescriptorSha256,
-            false,!job.temporalRestorationModelDirectory.empty());
+            false,!job.temporalRestorationModelDirectory.empty() || !job.deblurModelDirectory.empty());
+        if (!job.deblurModelDirectory.empty() &&
+            restoration::outputRateImageTask(restorationBackend->capabilities()) != restoration::Task::superResolution)
+            throw std::invalid_argument("Independent deblur can only precede a super-resolution output model");
         pipelineSettings.restorationBackend = restorationBackend;
+    }
+    if (!job.deblurModelDirectory.empty()) {
+        deblurRestorationBackend = loadRestoration(job.deblurModelDirectory,job.expectedDeblurDescriptorSha256,false,true);
+        const auto caps = deblurRestorationBackend->capabilities();
+        if (restoration::outputRateImageTask(caps) != restoration::Task::deblur ||
+            caps.scaleNumerator != 1 || caps.scaleDenominator != 1)
+            throw std::invalid_argument("Independent deblur requires a same-resolution output-rate model");
+        pipelineSettings.deblurRestorationBackend = deblurRestorationBackend;
     }
     if (!job.temporalRestorationModelDirectory.empty()) {
         temporalRestorationBackend = loadRestoration(job.temporalRestorationModelDirectory,

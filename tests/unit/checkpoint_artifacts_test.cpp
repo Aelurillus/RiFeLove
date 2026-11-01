@@ -326,6 +326,67 @@ TEST(MediaPipelineIdentity, QueueResumesOnlyMatchingProofAndPreservesRejectedSeg
     }
 }
 
+TEST(CheckpointArtifacts, QueueResumesSchemaThirteenAutomaticDetailWithCommittedSegment) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    CheckpointFixture fixture;
+    const auto database = fixture.directory / "legacy-detail-queue.sqlite";
+    const auto output = fixture.directory / "legacy-detail-output.mkv";
+    ProcessingJob job;
+    job.source = fixture.source.string(); job.output = output.string();
+    job.modelDirectory = fixture.directory / "missing-rife-model";
+    job.runtimeDirectory = fixture.directory / "missing-rife-runtime";
+    job.restorationModelDirectory = fixture.directory / "missing-deblur-model";
+    job.expectedRestorationDescriptorSha256 = std::string(64,'d');
+    job.settings.targetRate = Rational(50);
+    job.settings.automaticDetailRestoration.emplace();
+    ProcessingIdentity identity{};
+    { SourceLease lease(fixture.source); identity.source = lease.fingerprint({}); }
+    identity.modelId = "rife-fixture"; identity.modelVersion = "1";
+    identity.modelSha256 = std::string(64,'a');
+    identity.backend = "onnxruntime_cuda"; identity.device.name = "CPU-only detail resume fixture";
+    const auto identityText = serializeIdentity(identity);
+    applyStoredIdentity(job,identityText);
+    auto legacyJob = Json::parse(serializeJob(job));
+    legacyJob["schemaVersion"] = 13;
+    legacyJob.erase("deblurModelDirectory");
+    legacyJob.erase("expectedDeblurDescriptorSha256");
+    legacyJob.erase("outputImageOrder");
+    const auto configuration = legacyJob.dump();
+    Json manifest{{"schemaVersion",2},{"source",job.source},{"output",job.output},{"job",legacyJob},
+        {"identity",Json::parse(identityText)},{"mediaRuntime",media::MediaEngine::runtimeVersion()},
+        {"mediaPipelineIdentity",Json::parse(CheckpointArtifacts::mediaPipelineIdentity())},
+        {"framesPerSegment",256},
+        {"restorationRuntime",{{"modelId","nafnet-fixture"},{"adapterId","nafnet-deblur-v1"},
+            {"adapterVersion",1},{"backend","onnxruntime_cuda"},{"signature","graph-fixture;ort-1.22.0"},
+            {"scaleNumerator",1},{"scaleDenominator",1}}}};
+    manifest["restorationRuntime"]["automaticControl"] = legacyJob.at("automaticDetailRestoration");
+    std::string taskId, segmentHash;
+    std::filesystem::path segmentPath;
+    {
+        TaskStore seed(database.string());
+        taskId = seed.createConfigured({{job.source,job.output,configuration}}).front();
+        seed.transition(taskId,TaskState::running);
+        seed.saveIdentity(taskId,identityText);
+        CheckpointArtifacts artifacts(seed,taskId,output);
+        artifacts.setManifest(manifest.dump());
+        const auto segment = createSegment(fixture,artifacts);
+        segmentPath = segment.path;
+        segmentHash = artifacts.commit(0,0,2,segment).sha256;
+        ASSERT_EQ(seed.recoverConfigured(),1U);
+    }
+    TaskQueue queue(database);
+    EXPECT_NO_THROW(queue.resumeCheckpoint(taskId));
+    const auto rows = queue.list();
+    ASSERT_EQ(rows.size(),1U);
+    EXPECT_EQ(rows.front().task.state,TaskState::queued);
+    EXPECT_EQ(rows.front().configuration,configuration);
+    EXPECT_EQ(TaskStore(database.string()).checkpointManifest(taskId),manifest.dump());
+    EXPECT_EQ(inference::sha256File(segmentPath,16 * 1024 * 1024),segmentHash);
+    EXPECT_FALSE(std::filesystem::exists(output));
+}
+
 TEST(MediaPipelineIdentity, ProcessingSourceHeaderAlgorithmAndBuildChangesFailClosed) {
     using namespace rifelove::application;
     using Json = nlohmann::json;
@@ -485,6 +546,54 @@ TEST(CheckpointArtifacts, AutomaticDetailPinsModelAnalyzerSettingsAndSourceRepla
     EXPECT_TRUE(CheckpointArtifacts::manifestMatches(prior.dump(),disabled.dump()));
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(prior.dump(),enabled.dump()));
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),disabled.dump()));
+}
+TEST(CheckpointArtifacts, IndependentDeblurBindsDescriptorRuntimeOrderAndLegacyMigration) {
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    ProcessingJob job;
+    job.source = "C:/source.mkv"; job.output = "C:/output.mkv";
+    job.modelDirectory = "C:/rife"; job.runtimeDirectory = "C:/runtime";
+    job.restorationModelDirectory = "C:/sr";
+    job.expectedRestorationDescriptorSha256 = std::string(64,'a');
+    job.deblurModelDirectory = "C:/deblur";
+    job.expectedDeblurDescriptorSha256 = std::string(64,'b');
+    job.settings.automaticDetailRestoration.emplace();
+    Json dual{{"schemaVersion",2},{"job",Json::parse(serializeJob(job))},{"identity",Json::object()},
+        {"outputImageOrder","deblur-before-super-resolution-v1"},
+        {"restorationRuntime",{{"modelId","test-sr"},{"adapterId","test-sr-v1"},
+            {"adapterVersion",1},{"backend","onnxruntime_cuda"},{"signature","sr-runtime"},
+            {"scaleNumerator",2},{"scaleDenominator",1}}},
+        {"deblurRuntime",{{"modelId","test-deblur"},{"adapterId","test-deblur-v1"},
+            {"adapterVersion",1},{"backend","onnxruntime_cuda"},{"signature","deblur-runtime"},
+            {"scaleNumerator",1},{"scaleDenominator",1},{"task","deblur"},
+            {"descriptorSha256",std::string(64,'b')}}}};
+    dual["deblurRuntime"]["automaticControl"] = dual.at("job").at("automaticDetailRestoration");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(dual.dump(),dual.dump()));
+    auto changed = dual; changed["deblurRuntime"]["signature"] = "different";
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(dual.dump(),changed.dump()));
+    changed = dual; changed["deblurRuntime"]["descriptorSha256"] = std::string(64,'c');
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    changed = dual; changed["outputImageOrder"] = "super-resolution-before-deblur-v1";
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    changed = dual; changed.erase("deblurRuntime");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    changed = dual; changed["restorationRuntime"]["automaticControl"] = changed["deblurRuntime"].at("automaticControl");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+
+    auto disabledJob = job;
+    disabledJob.deblurModelDirectory.clear();
+    disabledJob.expectedDeblurDescriptorSha256.clear();
+    disabledJob.settings.automaticDetailRestoration.reset();
+    auto current = dual;
+    current["job"] = Json::parse(serializeJob(disabledJob));
+    current.erase("deblurRuntime"); current.erase("outputImageOrder");
+    auto schemaThirteen = current;
+    schemaThirteen["job"]["schemaVersion"] = 13;
+    schemaThirteen["job"].erase("deblurModelDirectory");
+    schemaThirteen["job"].erase("expectedDeblurDescriptorSha256");
+    schemaThirteen["job"].erase("outputImageOrder");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(schemaThirteen.dump(),current.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(schemaThirteen.dump(),dual.dump()));
 }
 
 TEST(CheckpointArtifacts, CompressionRestorationIdentityRejectsChangedModelStrengthRuntimeShapeAndReplayPolicy) {

@@ -34,6 +34,7 @@ TEST_F(AutomaticDenoisePipeline, RejectsUnboundCheckpointAndAbsentModelBeforePub
 TEST_F(AutomaticDenoisePipeline, CancelsWithoutPublishingPartialOutput) { verifyAutomaticCancellation(); }
 TEST_F(AutomaticDenoisePipeline, ReplaysSourcePtsAndConditioningExactlyAcrossCheckpointInterruptions) { verifyCheckpointReplay(); }
 TEST_F(AutomaticDetailPipeline, SourcePtsSceneBypassAndReplayPreserveOutput) { verifySourcePtsSceneBypassAndCheckpointReplay(); }
+TEST_F(AutomaticDetailPipeline, IndependentDeblurPrecedesSuperResolutionAndPreservesDimensions) { verifyIndependentDeblurThenSuperResolution(); }
 TEST_F(RestorationDiagnosticsPipeline, RefreshesQualifiedCompressionDiagnosticsAfterEofDrainAndBeforePublication) { verifyCompressionDiagnostics(false); }
 TEST_F(RestorationDiagnosticsPipeline, AutomaticZeroBypassKeepsCompressionProfileVerificationPending) { verifyCompressionDiagnostics(true); }
 

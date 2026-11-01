@@ -55,7 +55,8 @@ bool ownsOutput(TaskState state) { return state == TaskState::queued || state ==
 std::string checkpointManifest(const ProcessingJob& source, const std::string& identityText, std::size_t framesPerSegment,
     const std::optional<restoration::Capabilities>& restorationRuntime = std::nullopt,
     const std::optional<restoration::Capabilities>& temporalRestorationRuntime = std::nullopt,
-    const std::optional<restoration::Capabilities>& compressionRestorationRuntime = std::nullopt, std::stop_token stop = {}) {
+    const std::optional<restoration::Capabilities>& compressionRestorationRuntime = std::nullopt,
+    const std::optional<restoration::Capabilities>& deblurRuntime = std::nullopt, std::stop_token stop = {}) {
     auto identity = Json::parse(identityText);
     if (identity.value("schemaVersion",0) != 1 && identity.value("schemaVersion",0) != 2)
         throw std::invalid_argument("Unsupported task identity version for checkpoint resume");
@@ -81,10 +82,24 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
             {"scaleNumerator",caps.scaleNumerator},{"scaleDenominator",caps.scaleDenominator}};
     };
     recordRuntime("restorationRuntime",restorationRuntime,job.restorationModelDirectory);
+    recordRuntime("deblurRuntime",deblurRuntime,job.deblurModelDirectory);
+    if (!job.deblurModelDirectory.empty()) {
+        manifest["outputImageOrder"] = "deblur-before-super-resolution-v1";
+        if (deblurRuntime) {
+            if (restoration::outputRateImageTask(*deblurRuntime) != restoration::Task::deblur ||
+                deblurRuntime->scaleNumerator != 1 || deblurRuntime->scaleDenominator != 1)
+                throw std::invalid_argument("Independent deblur checkpoint runtime is incompatible");
+            manifest["deblurRuntime"]["descriptorSha256"] = job.expectedDeblurDescriptorSha256;
+            manifest["deblurRuntime"]["task"] = "deblur";
+        }
+    }
     if (job.settings.automaticDetailRestoration) {
-        if (!manifest.contains("restorationRuntime"))
-            throw std::invalid_argument("Automatic detail checkpoint needs a verified deblur runtime");
-        manifest["restorationRuntime"]["automaticControl"] = manifest["job"].at("automaticDetailRestoration");
+        const auto* selected = job.deblurModelDirectory.empty() ? "restorationRuntime" : "deblurRuntime";
+        // resumeCheckpoint builds a provisional expected manifest before the
+        // worker loads a model. It binds the saved runtime below, then compares
+        // the complete manifest before re-queueing any committed segment.
+        if (manifest.contains(selected))
+            manifest[selected]["automaticControl"] = manifest["job"].at("automaticDetailRestoration");
     }
     recordRuntime("temporalRestorationRuntime",temporalRestorationRuntime,job.temporalRestorationModelDirectory);
     if (compressionRestorationRuntime) {
@@ -279,16 +294,19 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     applyStoredIdentity(job,task.identity);
     auto expectedManifest = Json::parse(checkpointManifest(job,task.identity,checkpointFramesPerSegment_));
     CheckpointArtifacts::requireMediaPipelineIdentity(manifest,expectedManifest.dump());
-    if (!job.restorationModelDirectory.empty() || !job.temporalRestorationModelDirectory.empty()) {
+    if (!job.restorationModelDirectory.empty() || !job.temporalRestorationModelDirectory.empty() || !job.deblurModelDirectory.empty()) {
         const auto saved = Json::parse(manifest);
+        if (!job.deblurModelDirectory.empty() && saved.value("outputImageOrder",std::string()) != "deblur-before-super-resolution-v1")
+            throw std::logic_error("Checkpoint output image restoration order changed; restart with a new output");
+        const auto* detailRuntimeName = job.deblurModelDirectory.empty() ? "restorationRuntime" : "deblurRuntime";
         const auto& automaticDetail = expectedManifest.at("job").at("automaticDetailRestoration");
         if (job.settings.automaticDetailRestoration) {
-            if (!saved.contains("restorationRuntime") || !saved.at("restorationRuntime").is_object() ||
-                !saved.at("restorationRuntime").contains("automaticControl") ||
-                saved.at("restorationRuntime").at("automaticControl") != automaticDetail)
+            if (!saved.contains(detailRuntimeName) || !saved.at(detailRuntimeName).is_object() ||
+                !saved.at(detailRuntimeName).contains("automaticControl") ||
+                saved.at(detailRuntimeName).at("automaticControl") != automaticDetail)
                 throw std::logic_error("Automatic detail analyzer, settings or replay identity changed; restart with a new output");
-        } else if (saved.contains("restorationRuntime") && saved.at("restorationRuntime").is_object() &&
-            saved.at("restorationRuntime").contains("automaticControl")) {
+        } else if (saved.contains(detailRuntimeName) && saved.at(detailRuntimeName).is_object() &&
+            saved.at(detailRuntimeName).contains("automaticControl")) {
             throw std::logic_error("Checkpoint used automatic detail restoration; restart with a new output");
         }
         const auto restoreRuntime = [&](const char* name, const std::filesystem::path& modelDirectory) {
@@ -303,6 +321,7 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
             expectedManifest[name] = saved.at(name);
         };
         restoreRuntime("restorationRuntime",job.restorationModelDirectory);
+        restoreRuntime("deblurRuntime",job.deblurModelDirectory);
         restoreRuntime("temporalRestorationRuntime",job.temporalRestorationModelDirectory);
     }
     if (!job.compressionRestorationModelDirectory.empty()) {
@@ -410,8 +429,13 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (settings.restorationBackend) restorationRuntime = settings.restorationBackend->capabilities();
                 if (job.restorationModelDirectory.empty() == restorationRuntime.has_value())
                     throw std::logic_error("Restoration model and runtime identity do not match");
+                std::optional<restoration::Capabilities> deblurRuntime;
+                if (settings.deblurRestorationBackend) deblurRuntime = settings.deblurRestorationBackend->capabilities();
+                if (job.deblurModelDirectory.empty() == deblurRuntime.has_value())
+                    throw std::logic_error("Independent deblur model and runtime identity do not match");
                 if (job.settings.automaticDetailRestoration && (!restorationRuntime ||
-                    restoration::outputRateImageTask(*restorationRuntime) != restoration::Task::deblur))
+                    restoration::outputRateImageTask(*restorationRuntime) != restoration::Task::deblur) &&
+                    (!deblurRuntime || restoration::outputRateImageTask(*deblurRuntime) != restoration::Task::deblur))
                     throw std::logic_error("Automatic detail restoration requires a verified deblur runtime");
                 std::optional<restoration::Capabilities> temporalRestorationRuntime;
                 if (settings.temporalRestorationBackend) temporalRestorationRuntime = settings.temporalRestorationBackend->capabilities();
@@ -422,7 +446,7 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (job.compressionRestorationModelDirectory.empty() == compressionRestorationRuntime.has_value())
                     throw std::logic_error("Compression restoration model and runtime identity do not match");
                 const auto manifest = checkpointManifest(job,identityJson,checkpointFramesPerSegment_,restorationRuntime,
-                    temporalRestorationRuntime,compressionRestorationRuntime,cancellation.get_token());
+                    temporalRestorationRuntime,compressionRestorationRuntime,deblurRuntime,cancellation.get_token());
                 const auto previousManifest = artifacts.manifest();
                 if (!previousManifest.empty()) CheckpointArtifacts::requireMediaPipelineIdentity(previousManifest,manifest);
                 if (!previousManifest.empty() && !CheckpointArtifacts::manifestMatches(previousManifest,manifest))
@@ -431,7 +455,8 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (previousManifest.empty()) artifacts.setManifest(manifest);
                 PipelineCheckpoint checkpoint;
                 checkpoint.framesPerSegment = checkpointFramesPerSegment_;
-                checkpoint.restorationIdentityVerified = restorationRuntime.has_value() || temporalRestorationRuntime.has_value() || compressionRestorationRuntime.has_value();
+                checkpoint.restorationIdentityVerified = restorationRuntime.has_value() || temporalRestorationRuntime.has_value() ||
+                    compressionRestorationRuntime.has_value() || deblurRuntime.has_value();
                 checkpoint.completedSegments = artifacts.verifyCommitted(cancellation.get_token());
                 checkpoint.segmentPath = [&artifacts](std::uint64_t index) { return utf8(artifacts.segmentPath(index)); };
                 checkpoint.commitSegment = [&artifacts,token = cancellation.get_token()](std::uint64_t index,std::uint64_t first,

@@ -52,6 +52,9 @@ struct PipelineSettings {
     // temporalRestorationBackend is empty, a temporal-only legacy backend is
     // inferred from this field for backward compatibility.
     std::shared_ptr<restoration::IVideoRestorationBackend> restorationBackend;
+    // Independently selected 1x output-rate deblur. When both image slots are
+    // present, deblur runs before the legacy slot's super-resolution stage.
+    std::shared_ptr<restoration::IVideoRestorationBackend> deblurRestorationBackend;
     // Optional source-rate temporal restoration. This is runtime-only and is
     // supplied by the application after validating the temporal model pack.
     // The pipeline deliberately keeps this separate from restorationBackend so
@@ -165,6 +168,9 @@ struct PipelineResult {
     std::string restorationFallbackReason;
     int restorationScaleNumerator = 1;
     int restorationScaleDenominator = 1;
+    std::string deblurRestorationModelId;
+    std::string deblurRestorationBackend;
+    std::string deblurRestorationFallbackReason;
     std::string temporalRestorationModelId;
     std::string temporalRestorationBackend;
     std::string temporalRestorationFallbackReason;

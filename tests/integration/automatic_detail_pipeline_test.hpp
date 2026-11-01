@@ -9,6 +9,7 @@
 namespace {
 class RecordingDetailBackend final : public rifelove::restoration::IVideoRestorationBackend {
 public:
+    explicit RecordingDetailBackend(std::vector<std::string>* order = nullptr) : order_(order) {}
     rifelove::restoration::Capabilities capabilities() const override {
         using namespace rifelove::restoration;
         return {"test-detail","test-deblur-v1",1,{Task::deblur},
@@ -16,6 +17,7 @@ public:
     }
     std::future<rifelove::restoration::Result> restore(rifelove::restoration::Request request) override {
         rifelove::restoration::validateRequest(capabilities(),request);
+        if (order_) order_->push_back("deblur");
         const auto& center = request.context[request.centerIndex];
         const float strength = request.deblurStrength.value_or(-1.0F);
         strengths.push_back(strength);
@@ -34,10 +36,94 @@ public:
     }
     std::vector<float> strengths;
     std::vector<Rational> timestamps;
+private:
+    std::vector<std::string>* order_ = nullptr;
+};
+
+class RecordingSuperResolutionBackend final : public rifelove::restoration::IVideoRestorationBackend {
+public:
+    explicit RecordingSuperResolutionBackend(std::vector<std::string>& order) : order_(order) {}
+    rifelove::restoration::Capabilities capabilities() const override {
+        using namespace rifelove::restoration;
+        return {"test-sr","test-sr-v1",1,{Task::superResolution},
+            {Placement::outputRateAfterInterpolation},{"bt709-sdr8"},0,0,2,1,false};
+    }
+    std::future<rifelove::restoration::Result> restore(rifelove::restoration::Request request) override {
+        rifelove::restoration::validateRequest(capabilities(),request);
+        order_.push_back("sr");
+        const auto& center = request.context.at(request.centerIndex);
+        auto input = rifelove::media::prepareRifeSdr(center);
+        const int width = input.width * 2, height = input.height * 2;
+        const int paddedWidth = ((width + 63) / 64) * 64, paddedHeight = ((height + 63) / 64) * 64;
+        const auto sourcePlane = static_cast<std::size_t>(input.paddedWidth) * input.paddedHeight;
+        const auto outputPlane = static_cast<std::size_t>(paddedWidth) * paddedHeight;
+        rifelove::media::RifeSdrFrame enlarged{width,height,paddedWidth,paddedHeight,input.sourceColor,
+            std::vector<float>(outputPlane * 3)};
+        for (int y = 0; y < paddedHeight; ++y) for (int x = 0; x < paddedWidth; ++x)
+            for (std::size_t channel = 0; channel < 3; ++channel)
+                enlarged.pixels[channel * outputPlane + static_cast<std::size_t>(y) * paddedWidth + x] =
+                    input.pixels[channel * sourcePlane + static_cast<std::size_t>(std::min(y / 2,input.height - 1)) * input.paddedWidth +
+                        std::min(x / 2,input.width - 1)];
+        auto output = rifelove::media::restoreRifeSdr(enlarged);
+        output.index = center.index; output.timestamp = center.timestamp; output.duration = center.duration;
+        output.timestampRecovered = center.timestampRecovered;
+        rifelove::restoration::Result result{std::move(output),0.0};
+        rifelove::restoration::validateResult(capabilities(),request,result);
+        std::promise<rifelove::restoration::Result> promise;
+        promise.set_value(std::move(result));
+        return promise.get_future();
+    }
+private:
+    std::vector<std::string>& order_;
 };
 
 class AutomaticDetailPipeline : public MotionBlurPipeline {
 protected:
+    void verifyIndependentDeblurThenSuperResolution() {
+        const auto source = directory / "dual-image-source.mkv";
+        writeExposureSource(source,30,3);
+        ExposureLinearBackend inference(*device);
+        std::vector<std::string> order;
+        auto deblur = std::make_shared<RecordingDetailBackend>(&order);
+        auto sr = std::make_shared<RecordingSuperResolutionBackend>(order);
+        auto config = settings();
+        config.motionBlur.enabled = false;
+        config.automaticDetailRestoration.emplace();
+        config.deblurRestorationBackend = deblur;
+        config.restorationBackend = sr;
+        const auto output = directory / "dual-image-output.mkv";
+        const auto result = rifelove::interpolateVideo(source.string(),output.string(),config,*device,inference);
+        EXPECT_EQ(result.deblurRestorationModelId,"test-detail");
+        EXPECT_EQ(result.restorationModelId,"test-sr");
+        EXPECT_EQ(result.validation.width,128);
+        EXPECT_EQ(result.validation.height,128);
+        ASSERT_EQ(order.size(),result.video.framesSubmitted * 2);
+        ASSERT_EQ(deblur->strengths.size(),result.video.framesSubmitted);
+        for (std::size_t index = 0; index < order.size(); index += 2) {
+            EXPECT_EQ(order[index],"deblur");
+            EXPECT_EQ(order[index + 1],"sr");
+        }
+
+        config.restorationBackend.reset();
+        config.automaticDetailRestoration.reset();
+        const auto deblurOnly = rifelove::interpolateVideo(source.string(),
+            (directory / "deblur-only.mkv").string(),config,*device,inference);
+        EXPECT_EQ(deblurOnly.validation.width,64);
+        EXPECT_EQ(deblurOnly.validation.height,64);
+        EXPECT_EQ(deblurOnly.deblurRestorationModelId,"test-detail");
+
+        config.deblurRestorationBackend.reset();
+        config.restorationBackend = sr;
+        const auto srOnly = rifelove::interpolateVideo(source.string(),
+            (directory / "sr-only.mkv").string(),config,*device,inference);
+        EXPECT_EQ(srOnly.validation.width,128);
+        EXPECT_EQ(srOnly.validation.height,128);
+        EXPECT_TRUE(srOnly.deblurRestorationModelId.empty());
+
+        config.deblurRestorationBackend = sr;
+        EXPECT_THROW((void)rifelove::interpolateVideo(source.string(),
+            (directory / "wrong-deblur-slot.mkv").string(),config,*device,inference),std::invalid_argument);
+    }
     void verifySourcePtsSceneBypassAndCheckpointReplay() {
         const auto source = directory / "detail-source.mkv";
         writeExposureSource(source,30,8,4,[](int index,int x,int y,int) {
