@@ -1320,6 +1320,22 @@ void checkDropDuringActiveQueue(NativeApp& app, HWND window) {
     app.testSetQueueControlsBusy(false);
 }
 
+void checkMissingSourceReadiness(NativeApp& app, HWND window) {
+    const HWND source = GetDlgItem(window, 1001);
+    const int oldLength = GetWindowTextLengthW(source);
+    std::wstring oldValue(static_cast<std::size_t>(oldLength) + 1, L'\0');
+    GetWindowTextW(source, oldValue.data(), oldLength + 1);
+    oldValue.resize(static_cast<std::size_t>(oldLength));
+    const auto missing = std::filesystem::temp_directory_path() /
+        (L"rifelove-missing-source-" + std::to_wstring(GetCurrentProcessId()) + L".mkv");
+    if (std::filesystem::exists(missing)) { check(false, "missing source test path must not exist"); return; }
+    SetWindowTextW(source, missing.c_str());
+    check(app.testViewState().status.find(L"源文件不存在或无法读取") != std::wstring::npos,
+          "a missing source reports a concrete error instead of checking forever");
+    check(!IsWindowEnabled(GetDlgItem(window, 1009)), "a missing source cannot start processing");
+    SetWindowTextW(source, oldValue.c_str());
+}
+
 void checkBatchProcessing(NativeApp& app, HWND window, const std::filesystem::path& directory, bool expectRejection, bool cancelBatch, bool allRejected, bool youtube) {
     const auto first = directory / (youtube ? L"first_RifeLove.mp4" : L"first_RifeLove.mkv");
     const auto second = directory / (youtube ? L"second_RifeLove.mp4" : L"second_RifeLove.mkv");
@@ -1472,6 +1488,7 @@ int wmain(int argc, wchar_t** argv) {
             checkResponsiveInteraction(app, window, argc == 3 && argv[1][0] != L'-' ? std::filesystem::path(argv[2]) : std::filesystem::path{});
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             checkDropDuringActiveQueue(app, window);
+            checkMissingSourceReadiness(app, window);
             const bool denoiseRun = (argc == 4 || argc == 5) &&
                 (std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" ||
                  std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");

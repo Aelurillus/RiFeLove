@@ -604,7 +604,10 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
     }
     const bool batch = hasBatchSelection();
     if (!batch && !sourceInspected_) {
-        result.status = L"正在检查视频和本机条件…";
+        std::error_code sourceError;
+        result.status = std::filesystem::is_regular_file(source, sourceError)
+            ? L"正在检查视频和本机条件…"
+            : L"源文件不存在或无法读取，请重新选择";
         return result;
     }
     if (!batch && !sourceColorSupported_) add(L"色彩配置");
@@ -3295,6 +3298,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
                 output.replace_extension(platformIndex > 0 ? L".mp4" : L".mkv");
                 setOutputPath(output);
             }
+            refreshReadinessStatus();
             inspectSource();
 #endif
             updateView();
