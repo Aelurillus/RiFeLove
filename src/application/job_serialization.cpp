@@ -146,6 +146,14 @@ void validate(const ProcessingJob& job) {
     if (job.settings.automaticTemporalDenoise) {
         (void)restoration::AutomaticDenoiseController(*job.settings.automaticTemporalDenoise);
     }
+    if (job.settings.automaticDetailRestoration) {
+        if (job.restorationModelDirectory.empty())
+            throw std::invalid_argument("Automatic detail restoration requires a selected local deblur model");
+        if (job.settings.motionBlur.enabled && job.settings.motionBlur.shutterAngleDegrees > 0 &&
+            job.settings.motionBlur.sampleCount > 1)
+            throw std::invalid_argument("Experimental automatic detail restoration does not support exposure-synthesis motion blur");
+        (void)restoration::AutomaticDetailController(*job.settings.automaticDetailRestoration);
+    }
     if (job.settings.motionBlur.shutterAngleDegrees < 0 || job.settings.motionBlur.shutterAngleDegrees > 360 ||
         job.settings.motionBlur.sampleCount < 1 || job.settings.motionBlur.sampleCount > 16)
         throw std::invalid_argument("Motion blur shutter angle must be 0..360 degrees and sample count must be 1..16");
@@ -214,7 +222,7 @@ bool compressionRestorationRuntimeMatchesPolicy(bool tiled, std::string_view sig
 std::string serializeJob(const ProcessingJob& job) {
     validate(job);
     const auto& e = job.settings.encoding; const auto& s = job.settings.scene;
-    Json json{{"schemaVersion",12},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
+    Json json{{"schemaVersion",13},{"targetRate",job.settings.targetRate.toString()},{"sourceDurationEstimate",optional(job.sourceDurationEstimate)},{"modelDirectory",utf8(job.modelDirectory)},
         {"restorationModelDirectory",utf8(job.restorationModelDirectory)},
         {"expectedRestorationDescriptorSha256",job.expectedRestorationDescriptorSha256},
         {"temporalRestorationModelDirectory",utf8(job.temporalRestorationModelDirectory)},
@@ -231,6 +239,7 @@ std::string serializeJob(const ProcessingJob& job) {
         {"temporalDenoiseSigma255",job.settings.temporalDenoiseSigma255},
         {"automaticTemporalDenoise",nullptr},
         {"automaticCompressionRestoration",nullptr},
+        {"automaticDetailRestoration",nullptr},
         {"motionBlur",{{"enabled",job.settings.motionBlur.enabled},{"shutterAngleDegrees",job.settings.motionBlur.shutterAngleDegrees},{"sampleCount",job.settings.motionBlur.sampleCount}}},
         {"encoding",{{"encoder",e.encoder},{"pixelFormat",e.pixelFormat},{"videoStreamIndex",e.videoStreamIndex},{"outputWidth",e.outputWidth},{"outputHeight",e.outputHeight},{"timeBase",optional(e.timeBase)},{"frameRate",optional(e.frameRate)},
             {"bitRate",e.bitRate},{"gopSize",e.gopSize},{"maxBFrames",e.maxBFrames},{"allowPrecisionLoss",e.allowPrecisionLoss},{"options",e.encoderOptions}}},
@@ -253,13 +262,20 @@ std::string serializeJob(const ProcessingJob& job) {
             {"relativeAdjustment",automatic.relativeAdjustment},{"smoothingSeconds",automatic.smoothingSeconds},
             {"maximumStrengthChangePerSecond",automatic.maximumStrengthChangePerSecond},{"minimumConfidence",automatic.minimumConfidence}};
     }
+    if (job.settings.automaticDetailRestoration) {
+        const auto& automatic = *job.settings.automaticDetailRestoration;
+        json["automaticDetailRestoration"] = {{"algorithmVersion",restoration::automaticDetailAlgorithmVersion},
+            {"analyzer",restoration::automaticDetailAnalyzerId},{"replayPolicy","software-source-pts-from-start-v1"},
+            {"relativeAdjustment",automatic.relativeAdjustment},{"smoothingSeconds",automatic.smoothingSeconds},
+            {"maximumStrengthChangePerSecond",automatic.maximumStrengthChangePerSecond},{"minimumConfidence",automatic.minimumConfidence}};
+    }
     const auto result = json.dump(); if (result.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB"); return result;
 }
 ProcessingJob parseJob(const std::string& source, const std::string& output, const std::string& value) {
     if (value.size() > 64 * 1024) throw std::invalid_argument("Task configuration exceeds 64 KiB");
     const auto json = Json::parse(value);
     const auto schemaVersion = integer<int>(json.at("schemaVersion"));
-    if (schemaVersion < 1 || schemaVersion > 12) throw std::invalid_argument("Unsupported task configuration version");
+    if (schemaVersion < 1 || schemaVersion > 13) throw std::invalid_argument("Unsupported task configuration version");
     ProcessingJob job; job.source = source; job.output = output;
     job.settings.targetRate = Rational::parse(json.at("targetRate").get<std::string>());
     if (json.contains("sourceDurationEstimate")) job.sourceDurationEstimate = rational(json.at("sourceDurationEstimate"));
@@ -310,6 +326,21 @@ ProcessingJob parseJob(const std::string& source, const std::string& output, con
         }
     } else if (json.contains("automaticCompressionRestoration") && !json.at("automaticCompressionRestoration").is_null()) {
         throw std::invalid_argument("Historical task schema cannot declare automatic compression restoration");
+    }
+    if (schemaVersion >= 13) {
+        const auto& automatic = json.at("automaticDetailRestoration");
+        if (!automatic.is_null()) {
+            if (!automatic.is_object() || automatic.size() != 7 ||
+                integer<int>(automatic.at("algorithmVersion")) != restoration::automaticDetailAlgorithmVersion ||
+                automatic.at("analyzer").get<std::string>() != restoration::automaticDetailAnalyzerId ||
+                automatic.at("replayPolicy").get<std::string>() != "software-source-pts-from-start-v1")
+                throw std::invalid_argument("Unsupported automatic detail-restoration algorithm or replay policy");
+            job.settings.automaticDetailRestoration = restoration::AutomaticDetailSettings{
+                automatic.at("relativeAdjustment").get<double>(),automatic.at("smoothingSeconds").get<double>(),
+                automatic.at("maximumStrengthChangePerSecond").get<double>(),automatic.at("minimumConfidence").get<double>()};
+        }
+    } else if (json.contains("automaticDetailRestoration") && !json.at("automaticDetailRestoration").is_null()) {
+        throw std::invalid_argument("Historical task schema cannot declare automatic detail restoration");
     }
     if (schemaVersion >= 9 && !json.at("automaticTemporalDenoise").is_null()) {
         const auto& automatic = json.at("automaticTemporalDenoise");
@@ -395,6 +426,10 @@ void pinRestorationModelDescriptor(ProcessingJob& job) {
     auto temporalDirectory = job.temporalRestorationModelDirectory;
     auto temporalHash = job.expectedTemporalRestorationDescriptorSha256;
     pin(imageDirectory,imageHash,false,!temporalDirectory.empty());
+    if (job.settings.automaticDetailRestoration &&
+        (imageDirectory.empty() || restoration::outputRateImageTask(
+            restoration::loadModelPack(imageDirectory).capabilities) != restoration::Task::deblur))
+        throw std::invalid_argument("Automatic detail restoration requires a pinned same-resolution deblur model");
     pin(temporalDirectory,temporalHash,true,false);
     job.restorationModelDirectory = std::move(imageDirectory);
     job.expectedRestorationDescriptorSha256 = std::move(imageHash);
@@ -472,6 +507,11 @@ std::string serializeResult(const PipelineResult& r) {
             {"analyzer",restoration::automaticCompressionAnalyzerId},{"active",r.automaticCompressionRestorationActive},
             {"analyzedSourceFrames",r.automaticCompressionAnalyzedFrames},{"confidentSourceFrames",r.automaticCompressionConfidentFrames},
             {"conditionedSourceFrames",r.automaticCompressionAppliedFrames},{"countsScope","current_execution_including_replay"}}},
+        {"automaticDetailRestoration",{{"algorithmVersion",restoration::automaticDetailAlgorithmVersion},
+            {"analyzer",restoration::automaticDetailAnalyzerId},{"active",r.automaticDetailRestorationActive},
+            {"analyzedSourceFrames",r.automaticDetailAnalyzedFrames},{"confidentSourceFrames",r.automaticDetailConfidentFrames},
+            {"conditionedOutputFrames",r.automaticDetailAppliedFrames},
+            {"countsScope","source_analysis_including_replay_output_new_only"}}},
         {"modelAdapter",{{"id",r.adapterId},{"version",r.adapterVersion}}},{"inferenceFallbackReason",r.inferenceFallbackReason},
         {"sourceDecoder",r.sourceDecoder},{"sourceDecodeAcceleration",r.sourceDecodeAcceleration},
         {"sourceDecodeFallbackReason",r.sourceDecodeFallbackReason},

@@ -56,7 +56,7 @@ private:
 // than the nominal rate below, drive the production exposure window.
 void writeExposureSource(const std::filesystem::path& path, int rate, int count, int cutAt = -1,
     const std::function<int(int,int,int,int)>& lumaTransform = {},
-    AVPixelFormat pixelFormat = AV_PIX_FMT_YUV444P) {
+    AVPixelFormat pixelFormat = AV_PIX_FMT_YUV444P, int width = 64, int height = 64) {
     using rifelove::media::detail::check;
     struct Output {
         AVFormatContext* value = nullptr;
@@ -80,7 +80,7 @@ void writeExposureSource(const std::filesystem::path& path, int rate, int count,
     if (!output.value || !frame.value || !packet.value) throw std::bad_alloc();
     codec.value = avcodec_alloc_context3(encoder);
     if (!codec.value) throw std::bad_alloc();
-    codec.value->width = 64; codec.value->height = 64;
+    codec.value->width = width; codec.value->height = height;
     codec.value->pix_fmt = pixelFormat;
     codec.value->time_base = {1,rate}; codec.value->framerate = {rate,1};
     codec.value->color_primaries = AVCOL_PRI_BT709;
@@ -98,7 +98,7 @@ void writeExposureSource(const std::filesystem::path& path, int rate, int count,
     check(avio_open(&output.value->pb,path.string().c_str(),AVIO_FLAG_WRITE),"fixture file");
     check(avformat_write_header(output.value,nullptr),"fixture header");
     frame.value->format = codec.value->pix_fmt;
-    frame.value->width = 64; frame.value->height = 64;
+    frame.value->width = width; frame.value->height = height;
     check(av_frame_get_buffer(frame.value,32),"fixture frame allocation");
     const auto drain = [&] {
         for (;;) {
@@ -114,14 +114,14 @@ void writeExposureSource(const std::filesystem::path& path, int rate, int count,
     };
     for (int index = 0; index < count; ++index) {
         check(av_frame_make_writable(frame.value),"fixture writable frame");
-        for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x) {
-            const bool bar = (x - index % 64 + 64) % 64 < 4;
+        for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+            const bool bar = (x - index % width + width) % width < 4;
             const bool after = cutAt >= 0 && index >= cutAt;
             const int luma = cutAt < 0 ? (bar ? 224 : 32) : after ? (bar ? 224 : 192) : (bar ? 64 : 32);
             frame.value->data[0][y * frame.value->linesize[0] + x] = static_cast<std::uint8_t>(lumaTransform ? lumaTransform(index,x,y,luma) : luma);
         }
-        const int chromaWidth = pixelFormat == AV_PIX_FMT_YUV420P ? 32 : 64;
-        const int chromaHeight = pixelFormat == AV_PIX_FMT_YUV420P ? 32 : 64;
+        const int chromaWidth = pixelFormat == AV_PIX_FMT_YUV420P ? width / 2 : width;
+        const int chromaHeight = pixelFormat == AV_PIX_FMT_YUV420P ? height / 2 : height;
         for (int y = 0; y < chromaHeight; ++y) for (int x = 0; x < chromaWidth; ++x) {
             frame.value->data[1][y * frame.value->linesize[1] + x] = 128;
             frame.value->data[2][y * frame.value->linesize[2] + x] = 128;

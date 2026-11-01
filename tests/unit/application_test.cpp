@@ -374,7 +374,7 @@ TEST(AutomaticDenoiseConfiguration, PersistsAlgorithmReplayPolicyAndIndependentP
     job.settings.automaticTemporalDenoise = rifelove::restoration::AutomaticDenoiseSettings{-0.25,0.7,12.0,0.8};
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),12);
+    EXPECT_EQ(document.at("schemaVersion"),13);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("algorithmVersion"),2);
     EXPECT_EQ(document.at("automaticTemporalDenoise").at("replayPolicy"),"software-source-pts-from-start-v1");
     const auto restored = parseJob(job.source,job.output,encoded);
@@ -451,7 +451,7 @@ TEST(AutomaticCompressionConfiguration, IsExplicitOptInAndPinsEveryAnalyzerAndRe
     job.settings.automaticCompressionRestoration = rifelove::restoration::AutomaticCompressionSettings{-0.25,0.7,0.4,0.8};
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),12);
+    EXPECT_EQ(document.at("schemaVersion"),13);
     const auto& automatic = document.at("automaticCompressionRestoration");
     EXPECT_EQ(automatic.at("algorithmVersion"),2);
     EXPECT_EQ(automatic.at("analyzer"),"sdr8-luma-block8-stratified-v2");
@@ -493,7 +493,7 @@ TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndLegacySchema
     job.compressionRestorationStrength = 0.75F;
     const auto encoded = serializeJob(job);
     const auto document = nlohmann::json::parse(encoded);
-    EXPECT_EQ(document.at("schemaVersion"),12);
+    EXPECT_EQ(document.at("schemaVersion"),13);
     EXPECT_EQ(document.at("compressionRestorationModelDirectory"),"C:/models/stdf-r3");
     EXPECT_EQ(document.at("expectedCompressionRestorationDescriptorSha256"),std::string(64,'d'));
     EXPECT_FLOAT_EQ(document.at("compressionRestorationStrength").get<float>(),0.75F);
@@ -527,7 +527,7 @@ TEST(ProcessingConfiguration, CompressionRestorationIsIndependentAndLegacySchema
 TEST(ProcessingConfiguration, SchemaElevenAlwaysRecordsAnExplicitCompressionExecutionPolicy) {
     auto job = configuredJob();
     const auto disabled = nlohmann::json::parse(serializeJob(job));
-    EXPECT_EQ(disabled.at("schemaVersion"),12);
+    EXPECT_EQ(disabled.at("schemaVersion"),13);
     ASSERT_TRUE(disabled.at("compressionRestorationTiled").is_boolean());
     EXPECT_FALSE(disabled.at("compressionRestorationTiled").get<bool>());
     EXPECT_EQ(disabled.at("compressionRestorationPolicy").dump(),serializeCompressionRestorationPolicy(false));
@@ -650,6 +650,28 @@ TEST(ProcessingConfiguration, CompressionRestorationStrengthAndBundleAreStrictly
     EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
     job.expectedCompressionRestorationDescriptorSha256 = std::string(64,'d');
     job.compressionRestorationModelDirectory.clear();
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+}
+TEST(ProcessingConfiguration, AutomaticDetailIsOptInAndRejectsLegacyAndExposureSynthesis) {
+    auto job = configuredJob();
+    job.settings.motionBlur.enabled = false;
+    job.restorationModelDirectory = "C:/models/deblur";
+    job.expectedRestorationDescriptorSha256 = std::string(64,'d');
+    auto disabled = nlohmann::json::parse(serializeJob(job));
+    EXPECT_EQ(disabled.at("schemaVersion"),13);
+    EXPECT_TRUE(disabled.at("automaticDetailRestoration").is_null());
+    job.settings.automaticDetailRestoration.emplace();
+    auto enabled = nlohmann::json::parse(serializeJob(job));
+    EXPECT_EQ(enabled.at("automaticDetailRestoration").at("algorithmVersion"),
+        restoration::automaticDetailAlgorithmVersion);
+    EXPECT_TRUE(parseJob(job.source,job.output,enabled.dump()).settings.automaticDetailRestoration.has_value());
+    enabled["schemaVersion"] = 12;
+    EXPECT_THROW((void)parseJob(job.source,job.output,enabled.dump()),std::invalid_argument);
+    job.settings.motionBlur = {true,180,4};
+    EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
+    job.settings.motionBlur.enabled = false;
+    job.restorationModelDirectory.clear();
+    job.expectedRestorationDescriptorSha256.clear();
     EXPECT_THROW((void)serializeJob(job),std::invalid_argument);
 }
 TEST(ProcessingConfiguration, RejectsNarrowingMalformedHashesAndInvalidThresholds) {

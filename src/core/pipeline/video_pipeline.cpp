@@ -32,7 +32,12 @@ void validateTargetDimensions(int referenceWidth, int referenceHeight, int targe
     if (static_cast<std::int64_t>(targetWidth) * referenceHeight != static_cast<std::int64_t>(targetHeight) * referenceWidth)
         throw std::invalid_argument("Target output dimensions would change the source display aspect ratio");
 }
-struct CachedFrame { media::DecodedFrame source; media::RifeSdrFrame prepared; std::optional<inference::GpuFrame> gpu; };
+struct CachedFrame {
+    media::DecodedFrame source;
+    media::RifeSdrFrame prepared;
+    std::optional<inference::GpuFrame> gpu;
+    restoration::AutomaticDetailValue detail;
+};
 class ScopedTiming final {
 public:
     explicit ScopedTiming(double& destination) : destination_(destination), started_(std::chrono::steady_clock::now()) {}
@@ -272,6 +277,15 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             throw std::invalid_argument("The selected restoration scale exceeds the supported output dimensions");
         requireRestorationProfile(*outputRateCapabilities);
     }
+    std::optional<restoration::AutomaticDetailController> automaticDetail;
+    if (settings.automaticDetailRestoration) {
+        if (!outputBackend || !outputRateCapabilities ||
+            restoration::outputRateImageTask(*outputRateCapabilities) != restoration::Task::deblur)
+            throw std::invalid_argument("Automatic detail restoration requires a separately selected same-resolution deblur model");
+        if (settings.motionBlur.enabled && settings.motionBlur.shutterAngleDegrees > 0 && settings.motionBlur.sampleCount > 1)
+            throw std::invalid_argument("Experimental automatic detail restoration does not support exposure-synthesis motion blur");
+        automaticDetail.emplace(*settings.automaticDetailRestoration);
+    }
     if ((compressionBackend || temporalBackend || outputBackend) && settings.checkpoint && !settings.checkpoint->restorationIdentityVerified)
         throw std::invalid_argument("Checkpoint resume requires verified restoration model and runtime identities");
     if (!encoding.timeBase) encoding.timeBase = encodingTimeBase(video->timeBase,settings.targetRate);
@@ -456,6 +470,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     if (settings.automaticTemporalDenoise)
         result.automaticDenoiseAlgorithmVersion = settings.automaticTemporalDenoise->algorithmVersion;
     result.automaticCompressionRestorationActive = automaticCompression.has_value();
+    result.automaticDetailRestorationActive = automaticDetail.has_value();
     struct SourceNoiseObservation {
         std::size_t index;
         restoration::GaussianNoiseEstimate estimate;
@@ -468,6 +483,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         bool sceneCut;
     };
     std::deque<SourceCompressionObservation> sourceCompression;
+    struct SourceDetailObservation {
+        std::size_t index;
+        restoration::AutomaticDetailValue value;
+    };
+    std::deque<SourceDetailObservation> sourceDetail;
     const auto notify = [&](const std::string& stage, std::optional<Rational> time, const std::string& detail = {}) {
         if (progress) {
             const double seconds = elapsed();
@@ -532,7 +552,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         segmentEndExclusive = timestamp + duration;
         if (segmentFrameCount == settings.checkpoint->framesPerSegment) finalizeSegment();
     };
-    const auto emit = [&](media::DecodedFrame frame) {
+    const auto emit = [&](media::DecodedFrame frame, float detailStrength = 0.0F) {
         const auto time = clock->timestamp();
         if (outputBackend) {
             frame.index = clock->index();
@@ -545,6 +565,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             request.centerIndex = 0;
             request.inputProfile = media::rifeSdrInputProfile(frame.color);
             request.stop = stop;
+            if (automaticDetail) {
+                request.deblurStrength = detailStrength;
+                if (detailStrength > 0.0F) ++result.automaticDetailAppliedFrames;
+            }
             notify("restoration",time,outputRateCapabilities->modelId);
             frame = measure(result.timings.restorationSeconds,[&] {
                 return outputBackend->restore(std::move(request)).get().centerFrame;
@@ -707,12 +731,15 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 continue;
             }
             if (analysis.action != quality::PairAction::interpolate) { ++result.heldFrames; emit(firstFrame.source); }
-            else if (coincident) { ++result.originalFrames; emit(*coincident); }
+            else if (coincident) {
+                ++result.originalFrames;
+                emit(*coincident,coincident == &firstFrame.source ? firstFrame.detail.deblurStrength : secondFrame.detail.deblurStrength);
+            }
             else {
                 ++result.aiFrames;
                 auto generatedSample = interpolateSample(firstFrame,secondFrame,clock->timestamp());
                 auto restored = measure(result.timings.colorRestoreSeconds,[&] { return adapter.postprocess(generatedSample,stop); });
-                emit(std::move(restored));
+                emit(std::move(restored),std::min(firstFrame.detail.deblurStrength,secondFrame.detail.deblurStrength));
             }
         }
     };
@@ -721,7 +748,13 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         if (motionBlurActive && blurFrames.size() >= blurWindowFrameLimit)
             throw std::runtime_error("Motion blur full shutter exceeds the bounded source-window memory budget; lower the shutter angle or increase hostFloatBufferLimit");
         auto prepared = measure(result.timings.sourcePreparationSeconds,[&] { return adapter.preprocess(frame,settings.hostFloatBufferLimit,stop); });
-        CachedFrame current{std::move(frame),std::move(prepared),{}};
+        CachedFrame current{std::move(frame),std::move(prepared),{},{}};
+        if (automaticDetail) {
+            if (sourceDetail.empty() || sourceDetail.front().index != current.source.index)
+                throw std::logic_error("Automatic detail observation does not match the source frame");
+            current.detail = sourceDetail.front().value;
+            sourceDetail.pop_front();
+        }
         if (!clock) {
             origin = current.source.timestamp; clock.emplace(*origin,settings.targetRate);
             if (!segments.empty() && segments.front().contract.firstTimestamp != *origin)
@@ -754,7 +787,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     // repaired frames are never used to guess a new boundary.
     std::optional<media::RifeSdrFrame> temporalPreviousPrepared;
     const auto sourceSceneCutBefore = [&](const media::DecodedFrame& frame) {
-        if (!compressionWindow && !temporalWindow) return false;
+        if (!compressionWindow && !temporalWindow && !automaticDetail) return false;
+        if (automaticDetail && !frame.timestamp) throw std::runtime_error("Automatic detail restoration requires exact source PTS");
         auto prepared = media::prepareRifeSdr(frame,settings.hostFloatBufferLimit,stop);
         bool cut = false;
         if (temporalPreviousPrepared) {
@@ -778,6 +812,19 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             if (sourceCompression.size() > 64)
                 throw std::logic_error("Automatic compression observations exceeded the bounded restoration pipeline window");
             ++result.automaticCompressionAnalyzedFrames;
+        }
+        if (automaticDetail) {
+            const auto estimate = measure(result.timings.sceneAnalysisSeconds,[&] {
+                return restoration::estimateDirectionalSoftEdges(prepared,stop);
+            });
+            auto value = automaticDetail->update(*frame.timestamp,estimate,cut);
+            if (value.confident) ++result.automaticDetailConfidentFrames;
+            // A cut-start frame is held without a cross-scene reference.
+            if (cut) value.deblurStrength = 0.0F;
+            sourceDetail.push_back({frame.index,value});
+            if (sourceDetail.size() > 64)
+                throw std::logic_error("Automatic detail source observations exceeded the bounded restoration window");
+            ++result.automaticDetailAnalyzedFrames;
         }
         temporalPreviousPrepared = std::move(prepared);
         return cut;
@@ -888,7 +935,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     // rather than allowing a later NVDEC/software fallback to change samples.
     // decodeVideo starts at the beginning even when output segments are reused.
     },encoding.videoStreamIndex,stop,{
-        (automaticDenoise || compressionBackend) ? media::DecodeAcceleration::software : media::DecodeAcceleration::preferCuda,
+        (automaticDenoise || automaticDetail || compressionBackend) ? media::DecodeAcceleration::software : media::DecodeAcceleration::preferCuda,
         device.info().ordinal});
     const auto decodeWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - decodeStarted).count();
     result.timings.sourceDecodeSeconds = std::max(0.0,decodeWallSeconds - decodeCallbackSeconds);
@@ -915,6 +962,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     }
     if (!sourceNoise.empty()) throw std::logic_error("Automatic denoise observations were not fully drained");
     if (!sourceCompression.empty()) throw std::logic_error("Automatic compression observations were not fully drained");
+    if (!sourceDetail.empty()) throw std::logic_error("Automatic detail observations were not fully drained");
     if (motionBlurActive ? blurFrames.empty() : !left) throw std::runtime_error("Source produced no video frames");
     if (!motionBlurActive && right) pair(*left,*pairAnalysis,*right);
     // Copy the decoder reference: draining/pruning the shutter window below
@@ -945,7 +993,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             notify("resuming",timestamp,"Reusing a verified checkpoint segment");
             continue;
         }
-        emit(last);
+        emit(last,motionBlurActive ? 0.0F : (right ? right->detail.deblurStrength : left->detail.deblurStrength));
     }
     if (motionBlurActive && result.motionBlurredFrames + result.motionBlurFallbackFrames != result.processedFrames)
         throw std::logic_error("Motion blur exposure accounting does not match the newly processed output");

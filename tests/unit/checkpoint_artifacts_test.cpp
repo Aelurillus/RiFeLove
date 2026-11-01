@@ -449,6 +449,44 @@ TEST(CheckpointArtifacts, AutomaticNoiseIdentityRejectsEveryChangedParameterAndF
     EXPECT_FALSE(CheckpointArtifacts::manifestMatches(automatic.dump(),changed.dump()));
 }
 
+TEST(CheckpointArtifacts, AutomaticDetailPinsModelAnalyzerSettingsAndSourceReplay) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using Json = nlohmann::json;
+    ProcessingJob job;
+    job.source = "C:/source.mkv"; job.output = "C:/output.mkv";
+    job.modelDirectory = "C:/rife"; job.runtimeDirectory = "C:/runtime";
+    job.restorationModelDirectory = "C:/deblur";
+    job.expectedRestorationDescriptorSha256 = std::string(64,'a');
+    job.settings.automaticDetailRestoration.emplace();
+    Json enabled{{"schemaVersion",2},{"job",Json::parse(serializeJob(job))},{"identity",Json::object()},
+        {"restorationRuntime",{{"modelId","test-detail"},{"adapterId","test-deblur-v1"},
+            {"adapterVersion",1},{"backend","onnxruntime_cuda"},{"signature","test-runtime-v1"}}}};
+    enabled["restorationRuntime"]["automaticControl"] = enabled.at("job").at("automaticDetailRestoration");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(enabled.dump(),enabled.dump()));
+    EXPECT_TRUE(parseJob(job.source,job.output,enabled.at("job").dump()).settings.automaticDetailRestoration.has_value());
+    for (const auto* field : {"relativeAdjustment","smoothingSeconds","maximumStrengthChangePerSecond","minimumConfidence"}) {
+        auto changed = enabled;
+        changed["job"]["automaticDetailRestoration"][field] = 0.12345;
+        changed["restorationRuntime"]["automaticControl"] = changed.at("job").at("automaticDetailRestoration");
+        EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),changed.dump())) << field;
+    }
+    auto changed = enabled; changed["restorationRuntime"].erase("automaticControl");
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    changed = enabled; changed["job"]["automaticDetailRestoration"]["replayPolicy"] = "nvdec";
+    EXPECT_THROW((void)parseJob(job.source,job.output,changed.at("job").dump()),std::invalid_argument);
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(changed.dump(),changed.dump()));
+    changed = enabled; changed["job"]["expectedRestorationDescriptorSha256"] = std::string(64,'b');
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),changed.dump()));
+    job.settings.automaticDetailRestoration.reset();
+    auto disabled = enabled; disabled["job"] = Json::parse(serializeJob(job));
+    disabled["restorationRuntime"].erase("automaticControl");
+    auto prior = disabled; prior["job"]["schemaVersion"] = 12; prior["job"].erase("automaticDetailRestoration");
+    EXPECT_TRUE(CheckpointArtifacts::manifestMatches(prior.dump(),disabled.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(prior.dump(),enabled.dump()));
+    EXPECT_FALSE(CheckpointArtifacts::manifestMatches(enabled.dump(),disabled.dump()));
+}
+
 TEST(CheckpointArtifacts, CompressionRestorationIdentityRejectsChangedModelStrengthRuntimeShapeAndReplayPolicy) {
     using namespace rifelove;
     using namespace rifelove::application;

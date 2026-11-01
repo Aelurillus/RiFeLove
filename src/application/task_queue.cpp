@@ -81,6 +81,11 @@ std::string checkpointManifest(const ProcessingJob& source, const std::string& i
             {"scaleNumerator",caps.scaleNumerator},{"scaleDenominator",caps.scaleDenominator}};
     };
     recordRuntime("restorationRuntime",restorationRuntime,job.restorationModelDirectory);
+    if (job.settings.automaticDetailRestoration) {
+        if (!manifest.contains("restorationRuntime"))
+            throw std::invalid_argument("Automatic detail checkpoint needs a verified deblur runtime");
+        manifest["restorationRuntime"]["automaticControl"] = manifest["job"].at("automaticDetailRestoration");
+    }
     recordRuntime("temporalRestorationRuntime",temporalRestorationRuntime,job.temporalRestorationModelDirectory);
     if (compressionRestorationRuntime) {
         const auto& caps = *compressionRestorationRuntime;
@@ -276,6 +281,16 @@ void TaskQueue::resumeCheckpoint(const std::string& id) {
     CheckpointArtifacts::requireMediaPipelineIdentity(manifest,expectedManifest.dump());
     if (!job.restorationModelDirectory.empty() || !job.temporalRestorationModelDirectory.empty()) {
         const auto saved = Json::parse(manifest);
+        const auto& automaticDetail = expectedManifest.at("job").at("automaticDetailRestoration");
+        if (job.settings.automaticDetailRestoration) {
+            if (!saved.contains("restorationRuntime") || !saved.at("restorationRuntime").is_object() ||
+                !saved.at("restorationRuntime").contains("automaticControl") ||
+                saved.at("restorationRuntime").at("automaticControl") != automaticDetail)
+                throw std::logic_error("Automatic detail analyzer, settings or replay identity changed; restart with a new output");
+        } else if (saved.contains("restorationRuntime") && saved.at("restorationRuntime").is_object() &&
+            saved.at("restorationRuntime").contains("automaticControl")) {
+            throw std::logic_error("Checkpoint used automatic detail restoration; restart with a new output");
+        }
         const auto restoreRuntime = [&](const char* name, const std::filesystem::path& modelDirectory) {
             if (modelDirectory.empty()) return;
             if (!saved.contains(name) || !saved.at(name).is_object() ||
@@ -395,6 +410,9 @@ void TaskQueue::run(std::stop_token stop, const Callback& callback) {
                 if (settings.restorationBackend) restorationRuntime = settings.restorationBackend->capabilities();
                 if (job.restorationModelDirectory.empty() == restorationRuntime.has_value())
                     throw std::logic_error("Restoration model and runtime identity do not match");
+                if (job.settings.automaticDetailRestoration && (!restorationRuntime ||
+                    restoration::outputRateImageTask(*restorationRuntime) != restoration::Task::deblur))
+                    throw std::logic_error("Automatic detail restoration requires a verified deblur runtime");
                 std::optional<restoration::Capabilities> temporalRestorationRuntime;
                 if (settings.temporalRestorationBackend) temporalRestorationRuntime = settings.temporalRestorationBackend->capabilities();
                 if (job.temporalRestorationModelDirectory.empty() == temporalRestorationRuntime.has_value())

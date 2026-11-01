@@ -6,6 +6,7 @@
 #include "restoration/video_restoration_backend.hpp"
 #include "restoration/noise_estimate.hpp"
 #include "restoration/compression_estimate.hpp"
+#include "restoration/detail_estimate.hpp"
 
 #include <functional>
 #include <cmath>
@@ -73,6 +74,9 @@ struct PipelineSettings {
     // STDF blend independently at each source PTS. Ambiguous frames bypass.
     // The configured fixed STDF strength remains the manual-mode fallback.
     std::optional<restoration::AutomaticCompressionSettings> automaticCompressionRestoration;
+    // Experimental opt-in. The separately selected, same-resolution deblur
+    // model receives a conservative blend estimated from original source PTS.
+    std::optional<restoration::AutomaticDetailSettings> automaticDetailRestoration;
     std::size_t hostFloatBufferLimit = 512ULL * 1024 * 1024;
     // Runtime-only queue integration. It is intentionally omitted from the
     // serialized user job configuration.
@@ -178,6 +182,10 @@ struct PipelineResult {
     std::size_t automaticCompressionAnalyzedFrames = 0;
     std::size_t automaticCompressionConfidentFrames = 0;
     std::size_t automaticCompressionAppliedFrames = 0;
+    bool automaticDetailRestorationActive = false;
+    std::size_t automaticDetailAnalyzedFrames = 0;
+    std::size_t automaticDetailConfidentFrames = 0;
+    std::size_t automaticDetailAppliedFrames = 0;
     std::string inferenceFallbackReason;
     std::string encoderFallbackReason;
     std::string sourceEndEvidence;

@@ -140,6 +140,39 @@ bool sha256Text(const std::string& value) {
     });
 }
 
+bool validAutomaticDetailRuntime(const Json& manifest) {
+    if (!manifest.contains("job") || !manifest.at("job").is_object()) return true;
+    const auto& job = manifest.at("job");
+    const auto schema = job.value("schemaVersion",0);
+    const auto runtime = manifest.find("restorationRuntime");
+    const bool hasControl = runtime != manifest.end() && runtime->is_object() && runtime->contains("automaticControl");
+    if (schema < 13)
+        return (!job.contains("automaticDetailRestoration") || job.at("automaticDetailRestoration").is_null()) && !hasControl;
+    if (!job.contains("automaticDetailRestoration")) return false;
+    const auto& automatic = job.at("automaticDetailRestoration");
+    if (automatic.is_null()) return !hasControl;
+    if (!automatic.is_object() || automatic.size() != 7 ||
+        automatic.at("algorithmVersion") != restoration::automaticDetailAlgorithmVersion ||
+        automatic.at("analyzer") != restoration::automaticDetailAnalyzerId ||
+        automatic.at("replayPolicy") != "software-source-pts-from-start-v1" ||
+        !job.contains("restorationModelDirectory") || !job.at("restorationModelDirectory").is_string() ||
+        job.at("restorationModelDirectory").get<std::string>().empty() ||
+        !job.contains("expectedRestorationDescriptorSha256") ||
+        !job.at("expectedRestorationDescriptorSha256").is_string() ||
+        !sha256Text(job.at("expectedRestorationDescriptorSha256").get<std::string>()) ||
+        runtime == manifest.end() || !runtime->is_object() || !hasControl ||
+        runtime->at("automaticControl") != automatic ||
+        runtime->value("modelId",std::string()).empty() ||
+        runtime->value("adapterId",std::string()).empty() ||
+        runtime->value("signature",std::string()).empty() ||
+        runtime->value("backend",std::string()).empty() ||
+        runtime->value("backend",std::string()) == "unavailable") return false;
+    (void)restoration::AutomaticDetailController({automatic.at("relativeAdjustment").get<double>(),
+        automatic.at("smoothingSeconds").get<double>(),
+        automatic.at("maximumStrengthChangePerSecond").get<double>(),
+        automatic.at("minimumConfidence").get<double>()});
+    return true;
+}
 bool validCompressionRuntime(const Json& manifest) {
     bool tiled = false;
     const Json* configuredJob = nullptr;
@@ -159,7 +192,7 @@ bool validCompressionRuntime(const Json& manifest) {
             if (!compressionEnabled && (!directory.empty() || !descriptor.empty() || strength != 0.0)) return false;
         }
         if (schema >= 11) {
-            if (schema > 12 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
+            if (schema > 13 || !job.contains("compressionRestorationTiled") || !job.at("compressionRestorationTiled").is_boolean()) return false;
             tiled = job.at("compressionRestorationTiled").get<bool>();
             if (!job.contains("compressionRestorationPolicy") ||
                 job.at("compressionRestorationPolicy").dump() != serializeCompressionRestorationPolicy(tiled)) return false;
@@ -418,8 +451,24 @@ bool CheckpointArtifacts::manifestMatches(const std::string& saved, const std::s
         // when neither side purports to carry the new proof.
         if (actual.contains("mediaPipelineIdentity") || wanted.contains("mediaPipelineIdentity"))
             requireMediaPipelineIdentity(saved,expected);
-        if (!validCompressionRuntime(actual) || !validCompressionRuntime(wanted)) return false;
+        if (!validCompressionRuntime(actual) || !validCompressionRuntime(wanted) ||
+            !validAutomaticDetailRuntime(actual) || !validAutomaticDetailRuntime(wanted)) return false;
         if (actual == wanted) return true;
+        // Schema 13 adds experimental detail control. Historical segments are
+        // reusable only when the stage is explicitly disabled.
+        if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&
+            actual.at("job").is_object() && wanted.at("job").is_object() &&
+            wanted.at("job").value("schemaVersion",0) == 13 && actual.at("job").value("schemaVersion",0) < 13) {
+            if (!wanted.at("job").at("automaticDetailRestoration").is_null() ||
+                (actual.at("job").contains("automaticDetailRestoration") &&
+                 !actual.at("job").at("automaticDetailRestoration").is_null())) return false;
+            auto previous = wanted;
+            previous["job"].erase("automaticDetailRestoration");
+            previous["job"]["schemaVersion"] = 12;
+            auto priorSaved = actual;
+            priorSaved["job"].erase("automaticDetailRestoration");
+            return manifestMatches(priorSaved.dump(),previous.dump());
+        }
         // Schema 12 chooses per-source automatic STDF blending. Only its
         // explicit disabled value can adopt historical fixed-strength output.
         if (actual.is_object() && wanted.is_object() && actual.contains("job") && wanted.contains("job") &&

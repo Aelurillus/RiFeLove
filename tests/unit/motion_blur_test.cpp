@@ -11,6 +11,7 @@
 // integration coverage does not require a second build configuration.
 #include "../integration/motion_blur_pipeline_test.hpp"
 #include "../integration/automatic_denoise_pipeline_test.hpp"
+#include "../integration/automatic_detail_pipeline_test.hpp"
 #include "../integration/restoration_diagnostics_pipeline_test.hpp"
 
 using rifelove::Rational;
@@ -32,6 +33,7 @@ TEST_F(AutomaticDenoisePipeline, CompressionDeblockDrainsOneFrameSceneAtClipEdge
 TEST_F(AutomaticDenoisePipeline, RejectsUnboundCheckpointAndAbsentModelBeforePublication) { verifyConfigurationSafety(); }
 TEST_F(AutomaticDenoisePipeline, CancelsWithoutPublishingPartialOutput) { verifyAutomaticCancellation(); }
 TEST_F(AutomaticDenoisePipeline, ReplaysSourcePtsAndConditioningExactlyAcrossCheckpointInterruptions) { verifyCheckpointReplay(); }
+TEST_F(AutomaticDetailPipeline, SourcePtsSceneBypassAndReplayPreserveOutput) { verifySourcePtsSceneBypassAndCheckpointReplay(); }
 TEST_F(RestorationDiagnosticsPipeline, RefreshesQualifiedCompressionDiagnosticsAfterEofDrainAndBeforePublication) { verifyCompressionDiagnostics(false); }
 TEST_F(RestorationDiagnosticsPipeline, AutomaticZeroBypassKeepsCompressionProfileVerificationPending) { verifyCompressionDiagnostics(true); }
 

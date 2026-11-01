@@ -364,7 +364,7 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
         "MAX(json_extract(d.result,'$.automaticCompressionRestoration.conditionedSourceFrames')) "
         "FROM tasks t JOIN task_details d ON d.task_id=t.id "
         "WHERE t.source_path=?1 AND t.output_path=?2 AND t.state='completed' "
-        "AND json_extract(d.configuration,'$.schemaVersion') IN (10,11,12) "
+        "AND json_extract(d.configuration,'$.schemaVersion') IN (10,11,12,13) "
         "AND json_extract(d.configuration,'$.targetRate')='60/1' "
         "AND json_extract(d.configuration,'$.compressionRestorationModelDirectory')<>'' "
         "AND length(json_extract(d.configuration,'$.expectedCompressionRestorationDescriptorSha256'))=64 "
@@ -378,7 +378,7 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
         "AND json_extract(d.result,'$.validation.decodedFrames')=json_extract(d.result,'$.outputFrames')" : automaticDenoise ?
         "SELECT COUNT(*) FROM tasks t JOIN task_details d ON d.task_id=t.id "
         "WHERE t.source_path=?1 AND t.output_path=?2 AND t.state='completed' "
-        "AND json_extract(d.configuration,'$.schemaVersion') IN (10,11,12) "
+        "AND json_extract(d.configuration,'$.schemaVersion') IN (10,11,12,13) "
         "AND json_extract(d.configuration,'$.temporalRestorationModelDirectory')<>'' "
         "AND json_extract(d.configuration,'$.automaticTemporalDenoise.algorithmVersion')=2 "
         "AND json_extract(d.configuration,'$.automaticTemporalDenoise.replayPolicy')='software-source-pts-from-start-v1' "
@@ -400,11 +400,11 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
         "AND json_extract(d.result,'$.validation.decodedFrames')=json_extract(d.result,'$.outputFrames')";
     // SQLITE_STATIC bindings stay alive until statement finalization.
     if (compression) sql += compressionTiled ?
-        " AND json_extract(d.configuration,'$.schemaVersion') IN (11,12) AND json_extract(d.configuration,'$.compressionRestorationTiled')=1" :
+        " AND json_extract(d.configuration,'$.schemaVersion') IN (11,12,13) AND json_extract(d.configuration,'$.compressionRestorationTiled')=1" :
         " AND COALESCE(json_extract(d.configuration,'$.compressionRestorationTiled'),0)=0";
     if (automaticCompression) {
         sql +=
-            " AND json_extract(d.configuration,'$.schemaVersion')=12 "
+            " AND json_extract(d.configuration,'$.schemaVersion') IN (12,13) "
             "AND json_type(d.configuration,'$.automaticCompressionRestoration')='object' "
             "AND (SELECT COUNT(*) FROM json_each(json_extract(d.configuration,'$.automaticCompressionRestoration')))=7 "
             "AND json_extract(d.configuration,'$.automaticCompressionRestoration.algorithmVersion')=2 "
