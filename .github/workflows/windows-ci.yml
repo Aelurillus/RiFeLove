@@ -62,4 +62,5 @@ jobs:
           python -m pytest tests/model_validation/test_stdf_tiling.py
           tests/model_validation/test_stdf_tiling_reference.py
           tests/model_validation/test_stdf_local_pack.py
-          tests/model_validation/test_stdf_real_luma_quality.py -q
+          tests/model_validation/test_stdf_real_luma_quality.py
+          tests/model_validation/test_nafnet_video_quality.py -q
