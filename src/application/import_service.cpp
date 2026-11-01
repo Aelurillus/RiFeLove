@@ -194,14 +194,6 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         "Output dimensions exceed the generated frame or do not match this source aspect ratio"});
                     valid = false;
                 }
-                if (valid && settings.settings.encoding.encoder != "auto") {
-                    const auto capability = media::MediaEngine::probeEncoder(settings.settings.encoding.encoder,*video,
-                        settings.settings.targetRate,stop);
-                    if (!capability.contextOpened) {
-                        result.rejected.push_back({source,ImportRejection::unsupportedEncoder,capability.reason});
-                        valid = false;
-                    }
-                }
                 if (valid) {
                     auto job = settings; job.source = utf8(source); job.output = utf8(outputPath(result.outputDirectory,source,request.container,reserved));
                     job.settings.encoding.outputWidth = targetWidth;
@@ -214,10 +206,37 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         job.settings.encoding.bitRate = static_cast<std::int64_t>(platform.bitRateKbps) * 1000;
                         job.settings.encoding.gopSize = platform.gopSizeFrames;
                     }
-                    if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;
-                    else if (video->declaredEnd && video->start && *video->declaredEnd > *video->start) job.sourceDurationEstimate = *video->declaredEnd - *video->start;
-                    else if (info.duration && *info.duration > Rational(0)) job.sourceDurationEstimate = info.duration;
-                    jobs.push_back(std::move(job));
+                    const auto& encoding = job.settings.encoding;
+                    if (encoding.encoder != "auto") {
+                        // Probe the frame the writer will encode, after model scaling
+                        // or a per-source target, using the final export parameters.
+                        // Source-only probes can accept an unusable encoder/size pair
+                        // and fail only after loading the GPU models.
+                        auto outputVideo = *video;
+                        const int scale = restorationPack ? restorationPack->capabilities.scaleNumerator : 1;
+                        const int denominator = restorationPack ? restorationPack->capabilities.scaleDenominator : 1;
+                        outputVideo.width = targetWidth > 0 ? targetWidth : video->width * scale / denominator;
+                        outputVideo.height = targetHeight > 0 ? targetHeight : video->height * scale / denominator;
+                        media::EncoderProbeSettings probe;
+                        probe.pixelFormat = encoding.pixelFormat;
+                        probe.timeBase = encoding.timeBase;
+                        probe.frameRate = job.settings.targetRate;
+                        probe.bitRate = encoding.bitRate;
+                        probe.gopSize = encoding.gopSize;
+                        probe.maxBFrames = encoding.maxBFrames;
+                        probe.encoderOptions = encoding.encoderOptions;
+                        const auto capability = media::MediaEngine::probeEncoderWithSettings(encoding.encoder,outputVideo,probe,stop);
+                        if (!capability.contextOpened) {
+                            result.rejected.push_back({source,ImportRejection::unsupportedEncoder,capability.reason});
+                            valid = false;
+                        }
+                    }
+                    if (valid) {
+                        if (video->duration && *video->duration > Rational(0)) job.sourceDurationEstimate = video->duration;
+                        else if (video->declaredEnd && video->start && *video->declaredEnd > *video->start) job.sourceDurationEstimate = *video->declaredEnd - *video->start;
+                        else if (info.duration && *info.duration > Rational(0)) job.sourceDurationEstimate = info.duration;
+                        jobs.push_back(std::move(job));
+                    }
                 }
             }
         } catch (const std::exception& error) { checkStop(stop); result.rejected.push_back({source,ImportRejection::unreadable,error.what()}); }

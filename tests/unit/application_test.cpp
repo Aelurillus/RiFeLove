@@ -81,6 +81,57 @@ TEST(BatchImportDimensions, ValidatesEachSourceAgainstTargetAndModelScale) {
     EXPECT_FALSE(supportsImportOutputDimensions(1920, 1080, 2560, 1440, 0, 1));
 }
 
+TEST(BatchImportDimensions, ProbesExplicitEncoderAtActualTargetSizeAndSettings) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using namespace rifelove::tests::platform_import;
+    Fixture fixture;
+    const auto source = fixture.directory / "qcif.mkv";
+    writeSource(source,176,144);
+    ImportRequest request;
+    request.inputs = {source}; request.outputDirectory = fixture.directory;
+    request.settings.modelDirectory = fixture.directory / "rife";
+    request.settings.restorationModelDirectory = fixture.directory / "sr";
+    request.settings.runtimeDirectory = fixture.directory / "runtime";
+    request.settings.settings.targetRate = Rational(30);
+    auto& encoding = request.settings.settings.encoding;
+    encoding.encoder = "h263";
+    TaskQueue queue(fixture.directory / "encoder-target.sqlite");
+    // Native H.263 accepts QCIF but cannot encode an arbitrary same-aspect size.
+    // A source-only probe would wrongly admit this job before expensive inference.
+    ASSERT_TRUE(media::MediaEngine::probeEncoder("h263",
+        media::MediaEngine::probe(source.string()).streams.front(),Rational(30)).contextOpened);
+    encoding.outputWidth = 264; encoding.outputHeight = 216;
+    const auto invalidSize = importVideos(queue,request);
+    ASSERT_EQ(invalidSize.rejected.size(),1U);
+    EXPECT_EQ(invalidSize.rejected.front().reason,ImportRejection::unsupportedEncoder);
+    EXPECT_TRUE(invalidSize.taskIds.empty());
+    EXPECT_TRUE(queue.list().empty());
+
+    encoding.encoder = "ffv1";
+    encoding.pixelFormat = "rgb24"; // FFV1 does not support this packed RGB format.
+    const auto invalidPixels = importVideos(queue,request);
+    ASSERT_EQ(invalidPixels.rejected.size(),1U);
+    EXPECT_EQ(invalidPixels.rejected.front().reason,ImportRejection::unsupportedEncoder);
+    EXPECT_TRUE(queue.list().empty());
+
+    encoding.pixelFormat = "yuv420p";
+    encoding.encoderOptions = {{"rifelove-unknown-option","1"}};
+    const auto invalidOption = importVideos(queue,request);
+    ASSERT_EQ(invalidOption.rejected.size(),1U);
+    EXPECT_EQ(invalidOption.rejected.front().reason,ImportRejection::unsupportedEncoder);
+    EXPECT_TRUE(queue.list().empty());
+
+    encoding.encoderOptions.clear();
+    const auto valid = importVideos(queue,request);
+    ASSERT_EQ(valid.taskIds.size(),1U);
+    EXPECT_TRUE(valid.rejected.empty());
+    const auto rows = queue.list(); ASSERT_EQ(rows.size(),1U);
+    const auto job = parseJob(rows.front().task.sourcePath,rows.front().task.outputPath,rows.front().configuration);
+    EXPECT_EQ(job.settings.encoding.outputWidth,264);
+    EXPECT_EQ(job.settings.encoding.outputHeight,216);
+}
+
 TEST(BatchPlatformBitrate, UsesEachSourceHeightAndTargetRate) {
     using namespace rifelove::application;
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 720, 30), 5000);
