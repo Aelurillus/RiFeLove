@@ -1,4 +1,5 @@
 #include "restoration/video_restoration_backend.hpp"
+#include "restoration/detail_blend.hpp"
 
 #include <gtest/gtest.h>
 #include <future>
@@ -127,6 +128,70 @@ TEST(VideoRestorationContract, PerFrameDeblockBlendIsBoundedAndTaskSpecific) {
     }
     input.deblockStrength.reset();
     EXPECT_NO_THROW(restoration::validateRequest(caps,input));
+}
+
+TEST(VideoRestorationContract, DeblurBlendCannotBeAppliedToDenoiseDeblockOrSuperResolution) {
+    auto caps = capabilities();
+    auto input = request();
+    input.deblurStrength = 0.5F;
+    EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
+    caps.tasks = {restoration::Task::deblur};
+    caps.placements = {restoration::Placement::outputRateAfterInterpolation};
+    caps.temporalFramesBefore = caps.temporalFramesAfter = 0;
+    caps.scaleNumerator = caps.scaleDenominator = 1;
+    input.task = restoration::Task::deblur;
+    input.placement = restoration::Placement::outputRateAfterInterpolation;
+    input.context = {frame(3,Rational(1,10))}; input.centerIndex = 0;
+    for (const auto strength : {0.0F,0.25F,1.0F}) {
+        input.deblurStrength = strength;
+        EXPECT_NO_THROW(restoration::validateRequest(caps,input));
+    }
+    for (const auto invalid : {-0.1F,1.1F,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}) {
+        input.deblurStrength = invalid;
+        EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
+    }
+    input.deblurStrength = 0.5F;
+    caps.scaleNumerator = 2;
+    EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
+    caps.scaleNumerator = 1;
+    for (const auto task : {restoration::Task::denoise,restoration::Task::deblock,restoration::Task::superResolution}) {
+        caps.tasks = {task}; input.task = task;
+        EXPECT_THROW(restoration::validateRequest(caps,input),std::invalid_argument);
+    }
+}
+
+TEST(DeblurResidualBlend, PreservesEndpointsAndInterpolatesBeforeQuantization) {
+    const std::vector<float> source{0.0F,0.25F,0.5F,1.0F};
+    const std::vector<float> full{1.0F,0.75F,0.25F,0.0F};
+    auto output = full;
+    restoration::blendDeblurPixels(source,output,0.0F);
+    EXPECT_EQ(output,source);
+    output = full;
+    restoration::blendDeblurPixels(source,output,1.0F);
+    EXPECT_EQ(output,full);
+    restoration::blendDeblurPixels(source,output,0.25F);
+    EXPECT_EQ(output,(std::vector<float>{0.25F,0.375F,0.4375F,0.75F}));
+    EXPECT_EQ(source,(std::vector<float>{0.0F,0.25F,0.5F,1.0F}));
+}
+
+TEST(DeblurResidualBlend, FailsBeforeMutationForInvalidPixelsShapesStrengthAndCancellation) {
+    std::vector<float> source(8192,0.25F), output(8192,0.75F);
+    const auto expected = output;
+    source.back() = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_THROW(restoration::blendDeblurPixels(source,output,0.5F),std::invalid_argument);
+    EXPECT_EQ(output,expected);
+    source.back() = 0.25F;
+    for (const auto strength : {-0.1F,1.1F,std::numeric_limits<float>::quiet_NaN()}) {
+        EXPECT_THROW(restoration::blendDeblurPixels(source,output,strength),std::invalid_argument);
+        EXPECT_EQ(output,expected);
+    }
+    EXPECT_THROW(restoration::blendDeblurPixels(std::span<const float>(source).first(4),output,0.5F),std::invalid_argument);
+    EXPECT_THROW(restoration::blendDeblurPixels({}, {},0.5F),std::invalid_argument);
+    std::stop_source stop; stop.request_stop();
+    EXPECT_THROW(restoration::blendDeblurPixels(source,output,0.5F,stop.get_token()),std::runtime_error);
+    EXPECT_EQ(output,expected);
+    output.back() = std::numeric_limits<float>::infinity();
+    EXPECT_THROW(restoration::blendDeblurPixels(source,output,1.0F),std::invalid_argument);
 }
 
 TEST(VideoRestorationContract, RequiresAnOrderedUniformTimestampedColorStableWindow) {

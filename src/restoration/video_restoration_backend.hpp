@@ -72,6 +72,11 @@ struct Request {
     // callers may omit it; STDF and other edge-sensitive adapters must require
     // it before accepting a boundary-padded request.
     std::optional<SceneBounds> sceneBounds;
+    // Independent same-resolution deblur residual blend. Zero returns the
+    // exact input frame without inference; absent means the full model result.
+    // This does not configure super-resolution, denoise or deblock strength.
+    // A caller may vary it per timestamp; it is not an automatic blur estimate.
+    std::optional<float> deblurStrength;
 };
 
 struct Result {

@@ -13,8 +13,8 @@
 using namespace rifelove;
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc < 7 || argc > 8) {
-        std::cerr << "Usage: rifelove-validate-restoration PACK RUNTIME INPUT_RGB WIDTH HEIGHT OUTPUT_RGB [cuda|tensorrt]\n";
+    if (argc < 7 || argc > 9) {
+        std::cerr << "Usage: rifelove-validate-restoration PACK RUNTIME INPUT_RGB WIDTH HEIGHT OUTPUT_RGB [cuda|tensorrt [DEBLUR_BLEND_0_TO_1]]\n";
         return 2;
     }
     try {
@@ -22,7 +22,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto height = std::stoi(argv[5]);
         if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
             throw std::invalid_argument("Invalid RGB fixture dimensions");
-        const std::wstring provider = argc == 8 ? argv[7] : L"cuda";
+        const std::wstring provider = argc >= 8 ? argv[7] : L"cuda";
         if (provider != L"cuda" && provider != L"tensorrt")
             throw std::invalid_argument("Provider must be cuda or tensorrt");
         const auto outputPath = std::filesystem::absolute(std::filesystem::path(argv[6]));
@@ -60,6 +60,14 @@ int wmain(int argc, wchar_t** argv) {
         request.task = *task;
         request.placement = restoration::Placement::outputRateAfterInterpolation;
         request.context = {source}; request.centerIndex = 0; request.inputProfile = "bt709-sdr8";
+        if (argc == 9) {
+            std::size_t parsed = 0;
+            const std::wstring value(argv[8]);
+            request.deblurStrength = std::stof(value,&parsed);
+            if (parsed != value.size()) throw std::invalid_argument("Deblur blend must be a numeric value in [0,1]");
+        }
+        restoration::validateRequest(pack.capabilities,request);
+        const auto deblurStrength = request.deblurStrength;
         const auto result = backend.restore(std::move(request)).get();
         std::ofstream output(outputPath,std::ios::binary);
         for (int row = 0; row < result.centerFrame.height; ++row)
@@ -80,6 +88,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         const auto profileUtf8 = profilePath.u8string();
         std::cout << nlohmann::json{{"backend",backend.capabilities().runtimeBackend},
+            {"deblur_blend",deblurStrength ? nlohmann::json(*deblurStrength) : nlohmann::json(nullptr)},
             {"device",device->info().name},{"width",result.centerFrame.width},{"height",result.centerFrame.height},
             {"elapsed_seconds",result.elapsedSeconds},{"provider_events",assignments},
             {"profile",std::string(profileUtf8.begin(),profileUtf8.end())}}.dump() << '\n';

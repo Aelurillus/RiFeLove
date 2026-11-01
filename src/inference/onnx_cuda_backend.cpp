@@ -4,6 +4,7 @@
 #ifdef RIFELOVE_HAS_MEDIA
 #include "media/rife_color.hpp"
 #include "restoration/onnx_cuda_backend.hpp"
+#include "restoration/detail_blend.hpp"
 #endif
 
 // The pinned Microsoft header spells the Windows calling convention _stdcall.
@@ -796,6 +797,8 @@ private:
         cancel();
         validateRequest(modelCapabilities,request);
         const auto& source = request.context[request.centerIndex];
+        if (request.deblurStrength && *request.deblurStrength == 0.0F)
+            return Result{source,std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()};
         const bool temporalAdapter = supportsOnnxCudaTemporalAdapter(modelCapabilities);
         if (temporalAdapter && (!request.denoiseSigma255 || !std::isfinite(*request.denoiseSigma255) ||
             *request.denoiseSigma255 < 0.0F || *request.denoiseSigma255 > 55.0F ||
@@ -950,6 +953,8 @@ private:
             if (!std::isfinite(value)) throw inference::InferenceError(inference::InferenceErrorKind::runtimeError,"Restoration model returned a non-finite pixel value");
             value = std::clamp(value,0.0F,1.0F);
         }
+        if (request.deblurStrength && *request.deblurStrength < 1.0F)
+            blendDeblurPixels(prepared.pixels,generated.pixels,*request.deblurStrength,request.stop);
         auto outputFrame = media::restoreRifeSdr(generated,request.stop);
         outputFrame.index = source.index;
         outputFrame.timestamp = source.timestamp;

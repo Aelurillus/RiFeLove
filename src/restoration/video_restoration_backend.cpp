@@ -110,6 +110,10 @@ void validateRequest(const Capabilities& capabilities, const Request& request) {
     if (request.deblockStrength && (request.task != Task::deblock ||
         !std::isfinite(*request.deblockStrength) || *request.deblockStrength < 0.0F || *request.deblockStrength > 1.0F))
         throw std::invalid_argument("Per-frame deblock strength requires the deblock task and a finite blend in [0,1]");
+    if (request.deblurStrength && (request.task != Task::deblur ||
+        outputRateImageTask(capabilities) != Task::deblur ||
+        !std::isfinite(*request.deblurStrength) || *request.deblurStrength < 0.0F || *request.deblurStrength > 1.0F))
+        throw std::invalid_argument("Per-frame deblur strength requires same-resolution output-rate deblur and a finite blend in [0,1]");
     if (request.stop.stop_requested()) throw std::runtime_error("Video restoration request was cancelled");
     if (!validTask(request.task) || std::find(capabilities.tasks.begin(),capabilities.tasks.end(),request.task) == capabilities.tasks.end())
         throw std::invalid_argument("Video restoration model does not support the requested task");
