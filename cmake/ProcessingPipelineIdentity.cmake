@@ -86,6 +86,7 @@ set(rifelove_processing_identity_sources
   src/restoration/video_restoration_backend.cpp
   src/restoration/video_restoration_backend.hpp
   src/timeline/timeline.cpp
+  src/timeline/encoding_time_base.hpp
   src/timeline/timeline.hpp)
 
 function(rifelove_generate_processing_identity source_root output_directory)

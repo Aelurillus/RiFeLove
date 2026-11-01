@@ -7,6 +7,7 @@
 #include "restoration/model_pack.hpp"
 #include "restoration/temporal_window.hpp"
 #include "timeline/timeline.hpp"
+#include "timeline/encoding_time_base.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -20,12 +21,6 @@ namespace rifelove {
 namespace {
 void checkStop(std::stop_token stop) { if (stop.stop_requested()) throw inference::InferenceError(inference::InferenceErrorKind::cancelled,"Video processing cancelled"); }
 Rational absolute(Rational value) { return value < Rational(0) ? Rational(0) - value : value; }
-Rational encodingTimeBase(Rational sourceBase, Rational targetRate) {
-    const auto a = sourceBase.denominator(), b = targetRate.numerator();
-    const auto factor = a / std::gcd(a,b);
-    if (factor > std::numeric_limits<int>::max() / b) throw std::invalid_argument("Source and target times need an encoder time base beyond 32-bit range");
-    return Rational(1,factor * b);
-}
 void validateTargetDimensions(int referenceWidth, int referenceHeight, int targetWidth, int targetHeight) {
     if ((targetWidth == 0) != (targetHeight == 0) || targetWidth < 0 || targetHeight < 0)
         throw std::invalid_argument("Target output dimensions must be omitted together or both be positive");

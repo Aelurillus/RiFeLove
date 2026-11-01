@@ -132,6 +132,37 @@ TEST(BatchImportDimensions, ProbesExplicitEncoderAtActualTargetSizeAndSettings) 
     EXPECT_EQ(job.settings.encoding.outputHeight,216);
 }
 
+TEST(BatchImportDimensions, PreflightUsesTheSameDerivedClockAsTheWriter) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using namespace rifelove::tests::platform_import;
+    Fixture fixture;
+    const auto source = fixture.directory / "clock.mkv";
+    writeSource(source,176,144);
+    const auto stream = media::MediaEngine::probe(source.string()).streams.front();
+    ASSERT_EQ(stream.timeBase,Rational(1,1000));
+    ImportRequest request;
+    request.inputs = {source}; request.outputDirectory = fixture.directory;
+    request.settings.modelDirectory = fixture.directory / "rife";
+    request.settings.runtimeDirectory = fixture.directory / "runtime";
+    request.settings.settings.targetRate = Rational(30001);
+    auto& encoding = request.settings.settings.encoding;
+    encoding.encoder = "mpeg4";
+    TaskQueue queue(fixture.directory / "clock.sqlite");
+    media::EncoderProbeSettings oldProbe;
+    oldProbe.frameRate = request.settings.settings.targetRate;
+    ASSERT_TRUE(media::MediaEngine::probeEncoderWithSettings("mpeg4",stream,oldProbe).contextOpened);
+    const auto rejected = importVideos(queue,request);
+    ASSERT_EQ(rejected.rejected.size(),1U);
+    EXPECT_EQ(rejected.rejected.front().reason,ImportRejection::unsupportedEncoder);
+    EXPECT_TRUE(queue.list().empty());
+    // An explicitly configured clock remains authoritative, matching the writer.
+    encoding.timeBase = Rational(1,30001);
+    const auto accepted = importVideos(queue,request);
+    EXPECT_EQ(accepted.taskIds.size(),1U);
+    EXPECT_TRUE(accepted.rejected.empty());
+}
+
 TEST(BatchPlatformBitrate, UsesEachSourceHeightAndTargetRate) {
     using namespace rifelove::application;
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 720, 30), 5000);

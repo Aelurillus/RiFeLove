@@ -3,6 +3,7 @@
 #include "common/output_target.hpp"
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
+#include "timeline/encoding_time_base.hpp"
 #include <algorithm>
 #include <limits>
 #include <set>
@@ -219,7 +220,7 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         outputVideo.height = targetHeight > 0 ? targetHeight : video->height * scale / denominator;
                         media::EncoderProbeSettings probe;
                         probe.pixelFormat = encoding.pixelFormat;
-                        probe.timeBase = encoding.timeBase;
+                        probe.timeBase = encoding.timeBase ? *encoding.timeBase : encodingTimeBase(video->timeBase,job.settings.targetRate);
                         probe.frameRate = job.settings.targetRate;
                         probe.bitRate = encoding.bitRate;
                         probe.gopSize = encoding.gopSize;

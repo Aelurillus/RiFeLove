@@ -1,9 +1,17 @@
 #include "timeline/timeline.hpp"
+#include "timeline/encoding_time_base.hpp"
 
 #include <gtest/gtest.h>
 
 using rifelove::Rational;
 using rifelove::Timeline;
+
+TEST(Timeline, EncoderClockRepresentsBothSourceAndFractionalOutputPeriods) {
+    EXPECT_EQ(rifelove::encodingTimeBase(Rational(1,1000),Rational(30)),Rational(1,3000));
+    EXPECT_EQ(rifelove::encodingTimeBase(Rational(1,90000),Rational(30000,1001)),Rational(1,90000));
+    EXPECT_THROW((void)rifelove::encodingTimeBase(Rational(0),Rational(30)),std::invalid_argument);
+    EXPECT_THROW((void)rifelove::encodingTimeBase(Rational(1,1000000000),Rational(30000,1001)),std::invalid_argument);
+}
 
 TEST(Timeline, EstimatesOutputFramesFromExactDurationAndRate) {
     EXPECT_EQ(rifelove::estimateOutputFrameCount(Rational(1,2),Rational(60)),std::optional<std::size_t>(30));
