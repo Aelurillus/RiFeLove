@@ -275,7 +275,7 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     const auto statusColor = state.stage == L"failed" ? error : state.processing ? blue : state.stage == L"completed" ? accent : muted;
     const bool paused = state.stage == L"已暂停";
     text(paused ? L"已暂停" : state.processing ? L"正在处理" : state.stage == L"completed" ? L"处理完成" : L"任务状态",
-        l.left + 2, l.dock + (l.singleColumn ? 8 : 19), 140, 22, 11, statusColor, true);
+        l.left + 2, l.dock + (l.singleColumn ? 8 : 19), 70, 22, 11, statusColor, true);
     std::wstring status = state.status.empty() ? L"选择源视频开始检查" : state.status;
     if (state.processing && !paused)
         status = std::to_wstring(state.outputFrames) + L" 帧  ·  " + std::to_wstring(static_cast<int>(state.processingFps * 10.0) / 10.0) + L" 处理 FPS  ·  " + status;

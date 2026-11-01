@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "native_renderer.hpp"
+#include "native_status_window.hpp"
 #include "native_output_target.hpp"
 #include "native_model_store.hpp"
 #include "native_data_directory.hpp"
@@ -144,6 +145,7 @@ private:
     static constexpr int kAutomaticCompression = 1032;
     static constexpr int kCompressionAdjustmentEdit = 1033;
     static constexpr int kCompressionAdjustmentReset = 1034;
+    static constexpr int kStatusDetails = 1035;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -192,6 +194,7 @@ private:
     void ensureControlVisible(HWND control);
     void updateView();
     void updateButtonState();
+    void showStatusDetails();
     void toggleAdvancedSettings();
     void resizeForAdvancedSettings();
     void scrollSettings(int delta);
@@ -323,6 +326,7 @@ private:
     HWND cancelButton_ = nullptr;
     HWND pauseResumeButton_ = nullptr;
     HWND rejectionDetailsButton_ = nullptr;
+    HWND statusDetailsButton_ = nullptr;
     HWND historyButton_ = nullptr;
     HWND comparisonButton_ = nullptr;
     HWND automaticDenoiseButton_ = nullptr;
@@ -343,6 +347,7 @@ private:
     HBRUSH staticBrush_ = nullptr;
     NativeRenderer renderer_;
     NativeRenderState state_;
+    NativeStatusWindow statusWindow_;
     std::wstring mediaSummary_;
     std::wstring modelSummary_;
     std::wstring runtimeSummary_;

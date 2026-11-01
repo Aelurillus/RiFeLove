@@ -366,6 +366,7 @@ int NativeApp::run() {
     while (true) {
         const BOOL result = GetMessageW(&message, nullptr, 0, 0);
         if (result <= 0) return result == 0 ? static_cast<int>(message.wParam) : 1;
+        if (statusWindow_.handleDialogMessage(message)) continue;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
         if (comparisonWindow_ && comparisonWindow_->handleDialogMessage(message)) continue;
         if (modelCenterWindow_ && IsDialogMessageW(modelCenterWindow_, &message)) continue;
@@ -815,6 +816,7 @@ void NativeApp::createControls() {
     pauseResumeButton_ = createButton(L"暂停", kPauseResume);
     cancelButton_ = createButton(L"取消", kCancel);
     rejectionDetailsButton_ = createButton(L"拒绝明细", kRejectionDetails);
+    statusDetailsButton_ = createButton(L"查看详情", kStatusDetails);
     historyButton_ = createButton(L"任务历史", kTaskHistory);
     comparisonButton_ = createButton(L"逐帧比较", kComparison);
     automaticDenoiseButton_ = createButton(L"自动降噪：关", kAutomaticDenoise);
@@ -918,7 +920,7 @@ void NativeApp::setFonts() {
     font_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         L"Microsoft YaHei UI");
-    const std::array<HWND, 44> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 45> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, statusDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
         sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_, platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_};
     for (const auto control : controls) if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
     for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) {
@@ -1045,12 +1047,13 @@ void NativeApp::layoutControls() {
 #else
     ShowWindow(historyButton_, SW_HIDE);
 #endif
-    const float actionTop = layout.dock + (layout.singleColumn ? 78 : 26);
+    const float actionTop = layout.dock + (layout.singleColumn ? 78 : 44);
     move(startButton_, right - 158, actionTop, 158, 44, true, true);
     move(pauseResumeButton_, right - 330, actionTop, 76, 44, true, true);
     move(cancelButton_, right - 246, actionTop, 76, 44, true, true);
+    move(statusDetailsButton_, left + 80, layout.dock + (layout.singleColumn ? 4 : 12), 88, 26, true, true);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
-    move(rejectionDetailsButton_, left + 145, layout.dock + 10, 88, 26, !queueRejections_.empty(), true);
+    move(rejectionDetailsButton_, left + 176, layout.dock + (layout.singleColumn ? 4 : 12), 88, 26, !queueRejections_.empty(), true);
 #else
     ShowWindow(rejectionDetailsButton_, SW_HIDE);
 #endif
@@ -1134,9 +1137,9 @@ void NativeApp::ensureControlVisible(HWND control) {
 }
 
 bool NativeApp::focusNextControl(bool reverse) {
-    const std::array<HWND, 33> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
+    const std::array<HWND, 34> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
         motionBlurCheck_, advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
-        modelButton_, runtimeButton_, comparisonButton_, historyButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
+        modelButton_, runtimeButton_, comparisonButton_, historyButton_, statusDetailsButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
     const auto found = std::find(order.begin(), order.end(), GetFocus());
     const int initial = found == order.end() ? (reverse ? 0 : -1) : static_cast<int>(found - order.begin());
     for (int distance = 1; distance <= static_cast<int>(order.size()); ++distance) {
@@ -1309,6 +1312,25 @@ void NativeApp::updateButtonState() {
     EnableWindow(compressionAdjustmentEdit_, FALSE);
     EnableWindow(compressionAdjustmentResetButton_, FALSE);
 #endif
+}
+
+void NativeApp::showStatusDetails() {
+    std::wostringstream report;
+    report << L"当前状态快照（重新打开可刷新）\r\n\r\n"
+        << L"完整状态\r\n" << state_.status << L"\r\n\r\n"
+        << L"处理阶段\r\n" << (state_.stage.empty() ? L"尚未开始" : state_.stage) << L"\r\n"
+        << L"已生成 " << state_.outputFrames << L" 帧 · " << std::fixed << std::setprecision(1)
+        << state_.processingFps << L" 处理 FPS\r\n\r\n"
+        << L"源视频\r\n" << currentSource().wstring() << L"\r\n" << state_.mediaSummary << L"\r\n\r\n"
+        << L"输出文件\r\n" << currentOutput().wstring() << L"\r\n\r\n"
+        << L"导出设置\r\n" << state_.platformSummary << L"\r\n\r\n"
+        << L"显卡\r\n" << state_.deviceSummary << L"\r\n\r\n"
+        << L"模型\r\n" << state_.modelSummary << L"\r\n\r\n"
+        << L"推理运行库\r\n" << state_.runtimeSummary << L"\r\n\r\n"
+        << L"画质设置\r\n" << state_.restorationSummary << L"\r\n"
+        << state_.compressionSummary << L"\r\n" << state_.motionBlurSummary;
+    if (!statusWindow_.show(window_, report.str()))
+        MessageBoxW(window_, L"无法创建任务详情窗口，请稍后重试。", L"RifeLove", MB_OK | MB_ICONERROR);
 }
 
 void NativeApp::resizeForAdvancedSettings() {
@@ -3235,6 +3257,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 #endif
+            case kStatusDetails: showStatusDetails(); return 0;
             case kAdvancedToggle: toggleAdvancedSettings(); return 0;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             case kPauseResume: toggleQueuedPause(); return 0;

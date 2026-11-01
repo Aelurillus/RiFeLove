@@ -719,6 +719,21 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
                 "fixed start, cancel and pause hit targets stay wholly inside the main area");
             check(IsWindowVisible(GetDlgItem(window, id)), "fixed task actions stay visible while settings scroll");
         }
+        const HWND details = GetDlgItem(window, 1035);
+        const auto detailsRect = rect(details);
+        check(IsWindowVisible(details) && detailsRect.left >= px(static_cast<int>(layout.left + 72)) &&
+            detailsRect.right <= client.right && detailsRect.bottom <= client.bottom,
+            "status details stays visible and does not cover the status heading");
+        if (width == 480) {
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(1035, BN_CLICKED), reinterpret_cast<LPARAM>(details));
+            const HWND statusWindow = FindWindowW(L"RifeLoveNativeStatusWindow", nullptr);
+            check(statusWindow && IsWindowVisible(statusWindow), "status details opens a selectable snapshot");
+            if (statusWindow) {
+                const HWND statusText = GetDlgItem(statusWindow, 1401);
+                check(statusText && GetWindowTextLengthW(statusText) > 0, "status snapshot contains text");
+                SendMessageW(statusWindow, WM_CLOSE, 0, 0);
+            }
+        }
 
         SetFocus(source);
         const auto beforeButtonWheel = app.testViewState().scrollOffset;
