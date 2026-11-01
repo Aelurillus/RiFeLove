@@ -58,6 +58,36 @@ look like a blurred edge; the confidence is a heuristic, not a probability that
 the material should be restored. The estimator remains experimental and is not
 connected to desktop processing or enabled by default.
 
+The revised v2 estimator checks whether neighboring scanlines retain a
+same-direction edge, instead of requiring nearly identical pixel values. It
+requires broad soft edges in at least ten of sixteen image regions, at least
+twice as many soft candidates on the dominant axis, and several sharp
+orthogonal edges in the same regions as a within-image reference. The
+algorithm version and replay identity have both advanced to v2; an old v1
+checkpoint identity is rejected. The developer-only validator produced these
+results on the same local RGB24 files (384x288, 25,993 sampled positions each):
+
+| Input | Strength | Confidence |
+| --- | ---: | ---: |
+| clean-00 | 0 | 0 |
+| clean-01 | 0 | 0 |
+| clean-02 | 0 | 0 |
+| blurred-00 | 0.731349 | 0.768577 |
+| blurred-01 | 0.745990 | 0.765843 |
+| blurred-02 | 0.750647 | 0.767795 |
+
+Unit tests additionally exercise a textured nine-pixel synthetic blur,
+isotropic softness, intentionally soft one-direction bands without a sharp
+orthogonal reference, a small locally soft patch, and a sharp reference in a
+different region from the soft evidence. These are regression checks, not proof
+of general footage accuracy. Natural directional softness, camera defocus mixed
+with sharp structure, and video texture can still look
+like degradation in a single image. The reported confidence measures agreement
+with this edge heuristic; it is not a calibrated probability that restoration
+will improve the video. Temporal behavior and diverse false-positive footage
+have not been measured. The estimator remains experimental and is not connected
+to desktop processing or enabled by default.
+
 To reproduce the estimate, first generate the proxy files using the earlier
 command, build the developer-only `rifelove-validate-detail-estimate` target,
 then run it for each `clean-*-input.rgb` and `blurred-*-input.rgb` file with

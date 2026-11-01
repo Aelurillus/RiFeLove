@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <random>
 
@@ -162,6 +163,34 @@ media::RifeSdrFrame softEdgeFrame(bool horizontal, bool vertical) {
     if (vertical) blur(false);
     return image;
 }
+media::RifeSdrFrame texturedEdgeFrame(bool horizontal, bool vertical) {
+    auto image = softEdgeFrame(false,false);
+    const auto plane = static_cast<std::size_t>(image.width * image.height);
+    for (int y = 0; y < image.height; ++y) for (int x = 0; x < image.width; ++x) {
+        const auto offset = static_cast<std::size_t>(y * image.width + x);
+        const float texture = 0.025F * std::sin(0.71F * x + 0.19F * y) +
+            0.018F * std::sin(0.37F * y);
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            image.pixels[channel * plane + offset] =
+                std::clamp(image.pixels[channel * plane + offset] + texture,0.0F,1.0F);
+    }
+    const auto blur = [&](bool alongX) {
+        const auto source = image.pixels;
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            for (int y = 0; y < image.height; ++y) for (int x = 0; x < image.width; ++x) {
+                float sum = 0.0F;
+                for (int offset = -4; offset <= 4; ++offset) {
+                    const int xx = alongX ? std::clamp(x + offset,0,image.width - 1) : x;
+                    const int yy = alongX ? y : std::clamp(y + offset,0,image.height - 1);
+                    sum += source[channel * plane + static_cast<std::size_t>(yy * image.width + xx)];
+                }
+                image.pixels[channel * plane + static_cast<std::size_t>(y * image.width + x)] = sum / 9.0F;
+            }
+    };
+    if (horizontal) blur(true);
+    if (vertical) blur(false);
+    return image;
+}
 }
 
 TEST(DirectionalDetailAnalysis, DetectsDistributedOneAxisSoftEdgesButBypassesClearAndIsotropicImages) {
@@ -176,6 +205,60 @@ TEST(DirectionalDetailAnalysis, DetectsDistributedOneAxisSoftEdgesButBypassesCle
     EXPECT_DOUBLE_EQ(isotropic.confidence,0.0);
     EXPECT_EQ(clear.sampledPositions,directional.sampledPositions);
     EXPECT_LE(directional.sampledPositions,65536U);
+}
+
+TEST(DirectionalDetailAnalysis, TexturedNinePixelBlurNeedsDistributedDirectionalEvidence) {
+    const auto clear = estimateDirectionalSoftEdges(texturedEdgeFrame(false,false));
+    const auto directional = estimateDirectionalSoftEdges(texturedEdgeFrame(true,false));
+    const auto isotropic = estimateDirectionalSoftEdges(texturedEdgeFrame(true,true));
+    EXPECT_DOUBLE_EQ(clear.confidence,0.0);
+    EXPECT_GT(directional.confidence,0.6);
+    EXPECT_GT(directional.strength,0.3);
+    EXPECT_DOUBLE_EQ(isotropic.confidence,0.0);
+}
+
+TEST(DirectionalDetailAnalysis, IntentionallySoftBandsWithoutSharpReferenceStayUncertain) {
+    auto bands = texturedEdgeFrame(true,false);
+    const auto plane = static_cast<std::size_t>(bands.width * bands.height);
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (int y = 1; y < bands.height; ++y)
+            std::copy_n(bands.pixels.begin() + static_cast<std::ptrdiff_t>(channel * plane),
+                bands.width,bands.pixels.begin() + static_cast<std::ptrdiff_t>(channel * plane + y * bands.width));
+    const auto result = estimateDirectionalSoftEdges(bands);
+    EXPECT_DOUBLE_EQ(result.confidence,0.0);
+    EXPECT_DOUBLE_EQ(result.strength,0.0);
+}
+
+TEST(DirectionalDetailAnalysis, OneLocallySoftPatchCannotEnableWholeFrameRestoration) {
+    auto image = texturedEdgeFrame(false,false);
+    const auto softened = texturedEdgeFrame(true,false);
+    const auto plane = static_cast<std::size_t>(image.width * image.height);
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (int y = 64; y < 128; ++y)
+            for (int x = 64; x < 128; ++x) {
+                const auto offset = channel * plane + static_cast<std::size_t>(y * image.width + x);
+                image.pixels[offset] = softened.pixels[offset];
+            }
+    const auto result = estimateDirectionalSoftEdges(image);
+    EXPECT_DOUBLE_EQ(result.confidence,0.0);
+    EXPECT_DOUBLE_EQ(result.strength,0.0);
+}
+
+TEST(DirectionalDetailAnalysis, SharpReferenceInAnotherRegionIsNotEnough) {
+    auto image = texturedEdgeFrame(true,false);
+    const auto clear = softEdgeFrame(false,false);
+    const auto plane = static_cast<std::size_t>(image.width * image.height);
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (int y = 0; y < image.height; ++y)
+            for (int x = 0; x < image.width; ++x) {
+                const auto offset = channel * plane + static_cast<std::size_t>(y * image.width + x);
+                image.pixels[offset] = x < 288
+                    ? image.pixels[channel * plane + static_cast<std::size_t>(x)]
+                    : clear.pixels[channel * plane + static_cast<std::size_t>(y * image.width + 304)];
+            }
+    const auto result = estimateDirectionalSoftEdges(image);
+    EXPECT_DOUBLE_EQ(result.confidence,0.0);
+    EXPECT_DOUBLE_EQ(result.strength,0.0);
 }
 
 TEST(DirectionalDetailAnalysis, SmoothContentAndCancellationDoNotProduceDetailStrength) {
@@ -208,6 +291,13 @@ TEST(AutomaticDetailControl, BoundsBlendAndBypassesUncertainFramesAfterSceneChan
     AutomaticDetailController maximum({1.0,0.35,0.5,0.6});
     EXPECT_FLOAT_EQ(maximum.update(Rational(0),{0.8,0.9,128}).deblurStrength,maximumAutomaticDeblurBlend);
     EXPECT_THROW((void)AutomaticDetailController({0.0,0.35,0.5,1.1}),std::invalid_argument);
+}
+
+TEST(AutomaticDetailControl, AlgorithmRevisionRejectsOldReplayIdentity) {
+    DynamicController old({},"sdr8-directional-soft-edge-v1");
+    (void)old.update(observation(0,0.5));
+    DynamicController current({},automaticDetailAnalyzerId);
+    EXPECT_THROW(current.restore(old.checkpoint()),std::invalid_argument);
 }
 
 TEST(TemporalRestorationWindow, DeliversEveryRealVfrFrameInOrderWithBoundedMemory) {

@@ -35,6 +35,7 @@ struct AxisEvidence {
     std::size_t sharp = 0;
     double softSpread = 0.0;
     std::array<bool,16> regions{};
+    std::array<bool,16> sharpRegions{};
 };
 }
 
@@ -82,7 +83,7 @@ DetailEstimate estimateDirectionalSoftEdges(const media::RifeSdrFrame& frame, st
                 maximum = std::max(maximum,slope[static_cast<std::size_t>(i)]);
                 distributed += slope[static_cast<std::size_t>(i)] >= 0.08 * contrast;
             }
-            if (!monotonic || slope[0] > 0.12 * contrast || slope[7] > 0.12 * contrast)
+            if (!monotonic || slope[0] > 0.14 * contrast || slope[7] > 0.14 * contrast)
                 continue;
             const double midpoint = (profile[0] + profile[8]) * 0.5;
             bool centered = false;
@@ -92,23 +93,31 @@ DetailEstimate estimateDirectionalSoftEdges(const media::RifeSdrFrame& frame, st
                 centered = centered || (first <= 0.0 && second >= 0.0);
             }
             if (!centered) continue;
-            const auto stable = [&](int offset) {
-                for (int i : {0,4,8}) {
-                    const int along = i - 4;
-                    const double value = axis == 0 ? luma(x + along,y + offset) : luma(x + offset,y + along);
-                    if (std::abs(value - profile[static_cast<std::size_t>(i)]) > std::min(0.03,0.18 * contrast)) return false;
-                }
-                return true;
+            const auto neighboringEdge = [&](int offset) {
+                std::array<double,9> neighbor{};
+                for (int i = -4; i <= 4; ++i)
+                    neighbor[static_cast<std::size_t>(i + 4)] =
+                        axis == 0 ? luma(x + i,y + offset) : luma(x + offset,y + i);
+                if (sign * (neighbor[8] - neighbor[0]) < 0.5 * contrast) return false;
+                double centralRise = 0.0;
+                for (int i = 2; i <= 5; ++i)
+                    centralRise = std::max(centralRise,sign * (neighbor[static_cast<std::size_t>(i + 1)] -
+                        neighbor[static_cast<std::size_t>(i)]));
+                return centralRise >= 0.08 * contrast;
             };
-            if (!stable(-2) || !stable(2)) continue;
+            if (!neighboringEdge(-2) || !neighboringEdge(2)) continue;
             auto& evidence = axes[static_cast<std::size_t>(axis)];
             const double concentration = maximum / contrast;
-            if (concentration <= 0.42 && distributed >= 3) {
+            const auto region = static_cast<std::size_t>(std::min(3,y * 4 / frame.height) * 4 +
+                std::min(3,x * 4 / frame.width));
+            if (concentration <= 0.30 && distributed >= 3) {
                 ++evidence.soft;
                 evidence.softSpread += 1.0 - concentration;
-                const auto region = static_cast<std::size_t>(std::min(3,y * 4 / frame.height) * 4 + std::min(3,x * 4 / frame.width));
                 evidence.regions[region] = true;
-            } else if (concentration >= 0.65) ++evidence.sharp;
+            } else if (concentration >= 0.65) {
+                ++evidence.sharp;
+                evidence.sharpRegions[region] = true;
+            }
         }
     }
     cancelled(stop);
@@ -116,8 +125,11 @@ DetailEstimate estimateDirectionalSoftEdges(const media::RifeSdrFrame& frame, st
     const auto& dominant = axes[static_cast<std::size_t>(dominantAxis)];
     const auto& other = axes[static_cast<std::size_t>(1 - dominantAxis)];
     const auto regions = std::count(dominant.regions.begin(),dominant.regions.end(),true);
-    if (dominant.soft < 48 || regions < 6 || dominant.soft < 3 * other.soft ||
-        dominant.soft < 2 * dominant.sharp)
+    int referencedRegions = 0;
+    for (std::size_t region = 0; region < dominant.regions.size(); ++region)
+        if (dominant.regions[region] && other.sharpRegions[region]) ++referencedRegions;
+    if (dominant.soft < 128 || regions < 10 || dominant.soft < 2 * other.soft ||
+        dominant.soft < 2 * dominant.sharp || other.sharp < 24 || referencedRegions < 4)
         return {0.0,0.0,sampled};
     const double spread = dominant.softSpread / static_cast<double>(dominant.soft);
     const double strength = std::clamp((spread - 0.45) * 2.0,0.0,1.0);

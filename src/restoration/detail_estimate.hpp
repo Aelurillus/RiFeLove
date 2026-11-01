@@ -8,8 +8,8 @@
 
 namespace rifelove::restoration {
 
-inline constexpr int automaticDetailAlgorithmVersion = 1;
-inline constexpr const char* automaticDetailAnalyzerId = "sdr8-directional-soft-edge-v1";
+inline constexpr int automaticDetailAlgorithmVersion = 2;
+inline constexpr const char* automaticDetailAnalyzerId = "sdr8-directional-soft-edge-v2";
 inline constexpr float maximumAutomaticDeblurBlend = 0.35F;
 
 struct DetailEstimate {
@@ -18,8 +18,9 @@ struct DetailEstimate {
     std::size_t sampledPositions = 0;
 };
 
-// Looks only for numerous, spatially distributed soft step edges concentrated
-// in one direction. This is evidence of soft edges, not proof of motion blur:
+// Looks for numerous, spatially distributed soft step edges concentrated in
+// one direction, with sharp edges on the other axis as an image reference.
+// This is evidence of directional softness, not proof of motion blur:
 // naturally soft textures or intentional defocus may also trigger the model.
 // This experimental estimate must not be used as a default without realistic
 // false-positive and temporal-quality evaluation.
