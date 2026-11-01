@@ -1290,6 +1290,36 @@ void checkProcessing(NativeApp& app, HWND window, const std::filesystem::path& s
     }
 }
 
+void checkDropDuringActiveQueue(NativeApp& app, HWND window) {
+    const HWND source = GetDlgItem(window, 1001), output = GetDlgItem(window, 1003);
+    const auto readText = [](HWND control) {
+        const int length = GetWindowTextLengthW(control);
+        std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
+        GetWindowTextW(control, value.data(), length + 1);
+        value.resize(static_cast<std::size_t>(length));
+        return value;
+    };
+    const auto originalSource = readText(source), originalOutput = readText(output);
+    app.testSetQueueControlsBusy(true);
+    for (const auto& paths : {std::vector<std::wstring>{L"C:\\fake-source.mp4"},
+                              std::vector<std::wstring>{L"C:\\fake-first.mp4",L"C:\\fake-second.mp4"}}) {
+        std::size_t characters = 1;
+        for (const auto& path : paths) characters += path.size() + 1;
+        const HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DROPFILES) + characters * sizeof(wchar_t));
+        if (!memory) { check(false, "allocate active queue drop"); break; }
+        auto* drop = static_cast<DROPFILES*>(GlobalLock(memory));
+        if (!drop) { GlobalFree(memory); check(false, "lock active queue drop"); break; }
+        drop->pFiles = sizeof(DROPFILES); drop->fWide = TRUE;
+        auto* cursor = reinterpret_cast<wchar_t*>(reinterpret_cast<char*>(drop) + sizeof(DROPFILES));
+        for (const auto& path : paths) { std::copy(path.begin(), path.end(), cursor); cursor += path.size() + 1; }
+        GlobalUnlock(memory);
+        SendMessageW(window, WM_DROPFILES, reinterpret_cast<WPARAM>(memory), 0);
+        check(readText(source) == originalSource && readText(output) == originalOutput,
+              "single and multiple drops cannot change the selected paths during an active queue");
+    }
+    app.testSetQueueControlsBusy(false);
+}
+
 void checkBatchProcessing(NativeApp& app, HWND window, const std::filesystem::path& directory, bool expectRejection, bool cancelBatch, bool allRejected, bool youtube) {
     const auto first = directory / (youtube ? L"first_RifeLove.mp4" : L"first_RifeLove.mkv");
     const auto second = directory / (youtube ? L"second_RifeLove.mp4" : L"second_RifeLove.mkv");
@@ -1441,6 +1471,7 @@ int wmain(int argc, wchar_t** argv) {
             checkQualityFieldSpacing(window);
             checkResponsiveInteraction(app, window, argc == 3 && argv[1][0] != L'-' ? std::filesystem::path(argv[2]) : std::filesystem::path{});
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+            checkDropDuringActiveQueue(app, window);
             const bool denoiseRun = (argc == 4 || argc == 5) &&
                 (std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" ||
                  std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");

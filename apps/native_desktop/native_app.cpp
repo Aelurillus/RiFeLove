@@ -3155,6 +3155,14 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     case WM_DROPFILES: {
         const auto drop = reinterpret_cast<HDROP>(wParam);
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+        // Drag-and-drop must honor the same lock as the source controls. The
+        // queue owns an immutable job snapshot while a task is active.
+        if ((processingService_ && processingService_->busy()) || queueSessionActive_.load()) {
+            if (drop) DragFinish(drop);
+            return 0;
+        }
+#endif
         const UINT count = drop ? DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0) : 0;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
         if (drop && count > 1) {
@@ -3168,7 +3176,8 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
                 queuedInputs_ = std::move(inputs);
                 SetWindowTextW(sourceEdit_, queuedInputs_.front().c_str());
                 const auto first = queuedInputs_.front();
-                const auto outputDirectory = std::filesystem::is_directory(first) ? first : first.parent_path();
+                std::error_code sourceError;
+                const auto outputDirectory = std::filesystem::is_directory(first, sourceError) ? first : first.parent_path();
                 setOutputPath(outputDirectory);
                 sourceInspected_ = false;
                 sourceColorSupported_ = false;
