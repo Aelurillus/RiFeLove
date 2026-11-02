@@ -318,6 +318,12 @@ if(RIFELOVE_BUILD_MEDIA AND RIFELOVE_BUILD_ONNX_CUDA)
   rifelove_generate_processing_identity("${CMAKE_CURRENT_SOURCE_DIR}" "${rifelove_generated_include}")
   target_include_directories(rifelove_application PRIVATE "${rifelove_generated_include}")
   if(RIFELOVE_BUILD_TESTS)
+    # Local-only GPU/recovery qualification helper, never part of the desktop bundle.
+    add_executable(rifelove-automatic-detail-gpu-runner tools/validation/automatic_detail_gpu_runner.cpp)
+    target_link_libraries(rifelove-automatic-detail-gpu-runner PRIVATE rifelove_application)
+    if(MINGW)
+      target_link_options(rifelove-automatic-detail-gpu-runner PRIVATE -municode)
+    endif()
     add_test(NAME ProcessingPipelineIdentity.SourceHeadersBuildAndInventory
       COMMAND ${CMAKE_COMMAND} "-DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
         "-DTEST_OUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/identity-fixtures"

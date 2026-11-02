@@ -58,3 +58,21 @@ for other devices or material. See `tools/validation/automatic_detail_gpu_e2e.py
 and its retained local report for the measurements. This is not real-footage,
 audio, TensorRT, combined-super-resolution, multi-hour or visual-quality
 qualification.
+
+## Local CUDA dual-model check
+
+An additional local test ran the same synthetic 384×256 source through RIFE,
+NAFNet and Real-ESRGAN x2 on a GTX 1660 SUPER. The output had 16 frames at
+60 FPS and 768×512; an instrumented run recorded 32 ordered stage events,
+NAFNet followed by Real-ESRGAN at each exact output PTS. The saved checkpoint
+identified both models and the fixed order. Direct model probes recorded CUDA
+events for each model; the NAFNet probe also assigned some events to CPU.
+
+The queued run took 44.4 seconds wall time, compared with 24.5 seconds for a
+super-resolution-only control; total GPU memory sampled during the dual run
+peaked at 2,862 MiB, including desktop and other processes. These numbers are
+not a benchmark for larger clips. The result covers one short synthetic SDR
+video, not real-footage quality, two-model checkpoint recovery, audio, HDR,
+NVENC or other GPU configurations. The reproducible local check is
+`tools/validation/dual_image_cuda_e2e.py`; it is a developer tool and does not
+ship with the desktop app.

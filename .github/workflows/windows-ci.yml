@@ -63,4 +63,5 @@ jobs:
           tests/model_validation/test_stdf_tiling_reference.py
           tests/model_validation/test_stdf_local_pack.py
           tests/model_validation/test_stdf_real_luma_quality.py
-          tests/model_validation/test_nafnet_video_quality.py -q
+          tests/model_validation/test_nafnet_video_quality.py
+          tests/model_validation/test_automatic_detail_gpu_e2e.py -q
