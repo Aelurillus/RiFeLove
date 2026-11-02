@@ -2,6 +2,8 @@
 
 #include "core/pipeline/video_pipeline.hpp"
 
+#include <string_view>
+
 namespace rifelove::detail {
 // Shared by publication and regression tests. Verifies the actual local file,
 // including decoded timestamps, frame count, end boundary and copied streams.
@@ -9,5 +11,6 @@ namespace rifelove::detail {
 [[nodiscard]] OutputTimingValidation validatePipelineOutput(const std::string& path, int selected,
     int expectedWidth, int expectedHeight, Rational origin, Rational end, Rational rate,
     std::size_t expectedCount, const media::MediaInfo& source,
-    const std::function<void(const PipelineProgress&)>& progress = {}, std::stop_token stop = {});
+    const std::function<void(const PipelineProgress&)>& progress = {}, std::stop_token stop = {},
+    std::string_view expectedPixelFormat = {});
 } // namespace rifelove::detail

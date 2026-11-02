@@ -22,6 +22,7 @@
 #include <string_view>
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+#include "media/encoder_policy.hpp"
 #include "media/media_engine.hpp"
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
@@ -611,9 +612,18 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
         return result;
     }
     if (!batch && !sourceColorSupported_) add(L"色彩配置");
+    const auto output = currentOutput();
     bool selectedEncoderAvailable = encoderAvailable_;
     const int encoderIndex = encoderCombo_ ? static_cast<int>(SendMessageW(encoderCombo_, CB_GETCURSEL, 0, 0)) : 0;
-    if (encoderIndex == 1 || encoderIndex == 2) {
+    if (encoderIndex == 0) {
+        selectedEncoderAvailable = false;
+        for (const auto& capability : encoderCapabilities_) {
+            if (media::isAutomaticEncoderCandidate(utf8(output), capability.encoder) && capability.contextOpened) {
+                selectedEncoderAvailable = true;
+                break;
+            }
+        }
+    } else if (encoderIndex == 1 || encoderIndex == 2) {
         const char* selectedEncoder = encoderIndex == 1 ? "h264_nvenc" : "libopenh264";
         const auto capability = std::find_if(encoderCapabilities_.begin(), encoderCapabilities_.end(), [&](const auto& item) {
             return item.encoder == selectedEncoder;
@@ -625,7 +635,6 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
     if (!modelPack_) add(L"RIFE 模型");
     if (!state_.runtimeReady) add(L"推理运行库");
 
-    const auto output = currentOutput();
     std::error_code outputError;
     if (output.empty()) add(L"输出位置");
     else if (batch) {

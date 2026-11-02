@@ -50,6 +50,7 @@ set(rifelove_processing_identity_sources
   src/interpolation/scene_analysis.cpp
   src/interpolation/scene_analysis.hpp
   src/media/decode.cpp
+  src/media/encoder_policy.hpp
   src/media/ffmpeg_helpers.cpp
   src/media/ffmpeg_helpers.hpp
   src/media/media_engine.hpp

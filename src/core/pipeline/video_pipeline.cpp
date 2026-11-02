@@ -3,6 +3,7 @@
 #include "core/pipeline/motion_blur.hpp"
 #include "common/logging.hpp"
 #include "media/nvenc_diagnostic.hpp"
+#include "media/encoder_policy.hpp"
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
 #include "restoration/temporal_window.hpp"
@@ -54,7 +55,8 @@ template<class Work> decltype(auto) measure(double& destination, Work&& work) {
 }
 } // namespace
 OutputTimingValidation detail::validatePipelineOutput(const std::string& path, int selected, int expectedWidth, int expectedHeight, Rational origin, Rational end, Rational rate,
-    std::size_t expectedCount, const media::MediaInfo& source, const std::function<void(const PipelineProgress&)>& progress, std::stop_token stop) {
+    std::size_t expectedCount, const media::MediaInfo& source, const std::function<void(const PipelineProgress&)>& progress, std::stop_token stop,
+    std::string_view expectedPixelFormat) {
     const auto info = media::MediaEngine::probe(path,stop);
     const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const media::StreamInfo& stream) { return stream.index == selected && stream.type == "video"; });
     if (video == info.streams.end() || video->timeBase <= Rational(0)) throw std::runtime_error("Output has no valid video time base");
@@ -66,7 +68,8 @@ OutputTimingValidation detail::validatePipelineOutput(const std::string& path, i
     if (originalVideo == source.streams.end()) throw std::runtime_error("Original selected video stream is unavailable for output validation");
     const auto& inputColor = originalVideo->color;
     const auto& outputColor = video->color;
-    if (outputColor.pixelFormat != inputColor.pixelFormat || outputColor.bitDepth != inputColor.bitDepth ||
+    const auto& expectedOutputPixelFormat = expectedPixelFormat.empty() ? inputColor.pixelFormat : expectedPixelFormat;
+    if (outputColor.pixelFormat != expectedOutputPixelFormat || outputColor.bitDepth != inputColor.bitDepth ||
         outputColor.primaries != inputColor.primaries || outputColor.transfer != inputColor.transfer ||
         outputColor.matrix != inputColor.matrix || outputColor.range != inputColor.range)
         throw std::runtime_error("Output pixel format, bit depth or color tags did not preserve the source contract");
@@ -184,6 +187,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto info = measure(result.timings.sourceProbeSeconds,[&] { return media::MediaEngine::probe(source,stop); });
     auto encoding = settings.encoding;
     if (encoding.videoStreamIndex < 0) encoding.videoStreamIndex = info.preferredVideoStream;
+    if (encoding.pixelFormat.empty()) {
+        const auto defaultPixelFormat = media::automaticOutputPixelFormat(destination);
+        if (!defaultPixelFormat.empty()) encoding.pixelFormat = defaultPixelFormat;
+    }
     const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const media::StreamInfo& stream) { return stream.index == encoding.videoStreamIndex && stream.type == "video"; });
     if (video == info.streams.end()) throw std::invalid_argument("Input has no selected video stream");
     if (video->width <= 0 || video->height <= 0 || video->width > 8192 || video->height > 8192)
@@ -375,18 +382,25 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             }
         } else fallback = "h264_nvenc is not registered in this FFmpeg build";
         if (!writer) {
-            const std::array<const char*,3> softwareEncoders{"libopenh264","libkvazaar","libaom-av1"};
             auto attempts = fallback;
-            for (const auto* candidate : softwareEncoders) {
+            for (const auto candidate : media::automaticSoftwareEncoderFallbacks(destination)) {
                 checkStop(stop);
-                const auto capability = media::MediaEngine::probeEncoder(candidate,*video,settings.targetRate,stop);
+                const auto candidateName = std::string(candidate);
+                media::EncoderProbeSettings probeSettings;
+                probeSettings.pixelFormat = encoding.pixelFormat;
+                probeSettings.frameRate = settings.targetRate;
+                probeSettings.bitRate = encoding.bitRate;
+                probeSettings.gopSize = encoding.gopSize;
+                probeSettings.maxBFrames = encoding.maxBFrames;
+                probeSettings.encoderOptions = encoding.encoderOptions;
+                const auto capability = media::MediaEngine::probeEncoderWithSettings(candidateName,*video,probeSettings,stop);
                 checkStop(stop);
                 if (!capability.contextOpened) {
                     if (!attempts.empty()) attempts += "; ";
                     attempts += capability.encoder + ": " + capability.reason;
                     continue;
                 }
-                encoding.encoder = candidate;
+                encoding.encoder = candidateName;
                 try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop); }
                 catch (const media::MediaError& error) {
                     if (error.operation() != "open video encoder " + encoding.encoder || stop.stop_requested()) throw;
@@ -1046,7 +1060,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 progress(event);
             };
             return detail::validatePipelineOutput(temporary,encoding.videoStreamIndex,encoding.outputWidth > 0 ? encoding.outputWidth : video->width,
-                encoding.outputHeight > 0 ? encoding.outputHeight : video->height,*origin,end,settings.targetRate,clock->index(),info,validationProgress,stop);
+                encoding.outputHeight > 0 ? encoding.outputHeight : video->height,*origin,end,settings.targetRate,clock->index(),info,
+                validationProgress,stop,encoding.pixelFormat);
         });
     };
     if (checkpointMode) {

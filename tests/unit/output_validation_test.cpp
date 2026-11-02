@@ -39,6 +39,11 @@ protected:
         return output;
     }
     OutputTimingValidation validate(const std::filesystem::path& path, const media::MediaInfo& reference,
+        std::string_view expectedPixelFormat) {
+        return detail::validatePipelineOutput(path.string(),0,192,128,Rational(0),Rational(3,4),Rational(4),3,
+            reference,{}, {},expectedPixelFormat);
+    }
+    OutputTimingValidation validate(const std::filesystem::path& path, const media::MediaInfo& reference,
         Rational origin = {}, Rational end = Rational(3,4), std::size_t count = 3) {
         return detail::validatePipelineOutput(path.string(),0,192,128,origin,end,Rational(4),count,reference);
     }
@@ -74,6 +79,18 @@ TEST_F(OutputValidationFixture, H264AndAacTailPreserveIndependentTrackEndsAcross
         EXPECT_EQ(*result.declaredEndError,Rational(0));
         EXPECT_LE(result.auxiliaryMaximumEndError,result.timeBase);
     }
+}
+
+TEST_F(OutputValidationFixture, ExplicitPlatformChromaConversionIsValidatedWithoutWaivingColorMetadata) {
+    const auto path = transcode("platform-copy.mp4",false);
+    auto source444 = input;
+    source444.streams.front().color.pixelFormat = "yuv444p";
+    source444.streams.erase(source444.streams.begin() + 1,source444.streams.end());
+    EXPECT_THROW((void)validate(path,source444),std::runtime_error);
+    const auto result = validate(path,source444,"yuv420p");
+    EXPECT_EQ(result.decodedFrames,3U);
+    EXPECT_EQ(result.width,192);
+    EXPECT_EQ(result.height,128);
 }
 
 TEST_F(OutputValidationFixture, VfrSourceLongOutputKeepsValidationTimelineForFreshAndCheckpointedRuns) {

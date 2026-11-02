@@ -661,7 +661,7 @@ bool checkPackagedComparison(HDESK desktop, DWORD processId, HWND owner,
 // that is never switched to, so no user input or foreground window is touched.
 int wmain(int argc, wchar_t** argv) {
     if (argc != 4 && argc != 5) {
-        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --auto-denoise, --dual, --dual-blur, --compression, --compression-tiled, --auto-compression, --auto-compression-tiled or --comparison; or native executable --capture-only new-client.bmp. All compression modes, --auto-denoise, --comparison and --capture-only require a fresh writable portable QA package. Full-frame compression requires a tagged BT.709 limited-range SDR8 yuv420p source no larger than 384x256 and a qualified local STDF pack. The -tiled variants explicitly enable the separate bounded UHD tile evaluation path. Automatic compression accepts its experimental warning, tests -25.5%/reset and validates schema12 analyzer/replay/settings and result counters read-only. --comparison additionally requires qa-fixtures/synthetic-fixtures.txt declaring RifeLoveSyntheticComparison 1, synthetic-comparison-source.mp4 and new synthetic-comparison-output.mkv inside that package.\n";
+        std::cerr << "Expected native executable, source fixture, new output path and optional screenshot, --blur, --300, --360, --480, --600, --denoise, --auto-denoise, --dual, --dual-blur, --compression, --compression-tiled, --auto-compression, --auto-compression-tiled, --platform-auto or --comparison; or native executable --capture-only new-client.bmp. --platform-auto selects the YouTube MP4 profile with Auto H.264 and requires an .mp4 output path. All compression modes, --auto-denoise, --comparison and --capture-only require a fresh writable portable QA package. Full-frame compression requires a tagged BT.709 limited-range SDR8 yuv420p source no larger than 384x256 and a qualified local STDF pack. The -tiled variants explicitly enable the separate bounded UHD tile evaluation path. Automatic compression accepts its experimental warning, tests -25.5%/reset and validates schema12 analyzer/replay/settings and result counters read-only. --comparison additionally requires qa-fixtures/synthetic-fixtures.txt declaring RifeLoveSyntheticComparison 1, synthetic-comparison-source.mp4 and new synthetic-comparison-output.mkv inside that package.\n";
         return 2;
     }
     const std::filesystem::path executable = std::filesystem::absolute(argv[1]).lexically_normal();
@@ -676,9 +676,14 @@ int wmain(int argc, wchar_t** argv) {
         (std::wcscmp(argv[4], L"--compression-tiled") == 0 || std::wcscmp(argv[4], L"--auto-compression-tiled") == 0);
     const bool compression = automaticCompression || compressionTiled || (argc == 5 && std::wcscmp(argv[4], L"--compression") == 0);
     const bool comparison = argc == 5 && std::wcscmp(argv[4], L"--comparison") == 0;
+    const bool platformAuto = argc == 5 && std::wcscmp(argv[4], L"--platform-auto") == 0;
     if (!std::filesystem::is_regular_file(executable) || (!captureOnly && !std::filesystem::is_regular_file(source)) ||
         std::filesystem::exists(output)) {
         std::cerr << "Executable/fixture is missing or output already exists.\n";
+        return 2;
+    }
+    if (platformAuto && output.extension() != L".mp4") {
+        std::cerr << "--platform-auto requires an .mp4 output path.\n";
         return 2;
     }
     if (comparison && !comparisonQaFixtures(executable, source, output)) {
@@ -740,7 +745,7 @@ int wmain(int argc, wchar_t** argv) {
         const HWND encoder = GetDlgItem(context.result, 1006), start = GetDlgItem(context.result, 1009);
         const HWND cancel = GetDlgItem(context.result, 1010);
         if (sourceEdit && outputEdit && encoder && start && cancel) {
-            SendMessageW(encoder, CB_SETCURSEL, 1, 0); // Explicit H.264 NVENC.
+            SendMessageW(encoder, CB_SETCURSEL, platformAuto ? 0 : 1, 0); // Auto for platform QA; NVENC for other modes.
             SendMessageW(context.result, WM_COMMAND, MAKEWPARAM(1006, CBN_SELCHANGE), reinterpret_cast<LPARAM>(encoder));
             // SetWindowTextW does not update another process's child edit
             // controls. WM_SETTEXT is a system message and is marshalled by
@@ -758,6 +763,28 @@ int wmain(int argc, wchar_t** argv) {
             SendMessageW(context.result, WM_COMMAND, MAKEWPARAM(1003, EN_CHANGE), 0);
             if (waitUntil([&] { return IsWindowEnabled(start) != FALSE; }, std::chrono::seconds(30))) {
                 const std::wstring option = argc == 5 ? std::wstring(argv[4]) : std::wstring{};
+                if (platformAuto) {
+                    const HWND profile = GetDlgItem(context.result, 1012);
+                    if (!profile) {
+                        std::cerr << "Platform profile control is unavailable.\n";
+                        PostMessageW(context.result, WM_CLOSE, 0, 0);
+                        WaitForSingleObject(process.hProcess, 10000);
+                        CloseHandle(process.hProcess);
+                        CloseDesktop(desktop);
+                        return 1;
+                    }
+                    SendMessageW(profile, CB_SETCURSEL, 1, 0); // YouTube 60 FPS MP4 copy.
+                    SendMessageW(context.result, WM_COMMAND, MAKEWPARAM(1012, CBN_SELCHANGE), reinterpret_cast<LPARAM>(profile));
+                    if (!IsWindowEnabled(start)) {
+                        std::cerr << "The automatic H.264 YouTube profile did not pass source/encoder readiness.\n";
+                        PostMessageW(context.result, WM_CLOSE, 0, 0);
+                        WaitForSingleObject(process.hProcess, 10000);
+                        CloseHandle(process.hProcess);
+                        CloseDesktop(desktop);
+                        return 1;
+                    }
+                    std::cout << "Actual EXE selected the YouTube 60 FPS platform preset with Auto H.264 encoding.\n";
+                }
                 const bool blur = option == L"--blur" || option == L"--dual-blur";
                 const bool dual = option == L"--dual" || option == L"--dual-blur";
                 const bool denoise = argc == 5 && (std::wstring(argv[4]) == L"--denoise" || dual || automaticDenoise);
@@ -901,7 +928,7 @@ int wmain(int argc, wchar_t** argv) {
                         return 1;
                     }
                 }
-                if (argc == 5 && !blur && !highRate && !denoise && !compression && !comparison && !automaticDetailSr && !captureTarget(context.result, std::filesystem::absolute(argv[4])))
+                if (argc == 5 && !blur && !highRate && !denoise && !compression && !comparison && !automaticDetailSr && !platformAuto && !captureTarget(context.result, std::filesystem::absolute(argv[4])))
                     std::cerr << "Could not capture the target window on the isolated desktop.\n";
                 SendMessageW(start, BM_CLICK, 0, 0);
                 bool automaticControlsLocked = true;
