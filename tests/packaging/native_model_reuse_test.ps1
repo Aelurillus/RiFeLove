@@ -176,11 +176,16 @@ $baseSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly
 $fourSelection = Resolve-NativeModelBundleSelection
 $temporalSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeTemporalRestoration
 $compressionSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeCompressionRestoration
+$deblurSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeDeblurRestoration
+$fiveSelection = Resolve-NativeModelBundleSelection -IncludeDeblurRestoration
 $allSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeTemporalRestoration -IncludeCompressionRestoration
 Assert-Equal 2 @($baseSelection.modelIds).Count 'Base explicitly selects one RIFE and one SR'
 Assert-Equal 4 @($fourSelection.modelIds).Count 'Default full packaging preserves four-model selection'
+Assert-Equal $false $fourSelection.includeDeblurRestoration 'Default full packaging never opts into NAFNet'
 Assert-Equal 3 @($temporalSelection.modelIds).Count 'FastDVDnet can be added independently'
 Assert-Equal 3 @($compressionSelection.modelIds).Count 'STDF can be added independently'
+Assert-Equal 3 @($deblurSelection.modelIds).Count 'NAFNet can be added independently of other experiments'
+Assert-Equal 5 @($fiveSelection.modelIds).Count 'Full packaging includes NAFNet only when explicitly selected'
 Assert-Equal 4 @($allSelection.modelIds).Count 'Both experiments can be added to a fresh base package'
 $rifeFixture = New-ModelFixture 'rife-4.25-fp32-sdr8-v3' (Join-Path $testRoot 'base-cache') 'rife'
 $srFixture = New-ModelFixture 'realesrgan-x2plus-sdr8-v2' (Join-Path $testRoot 'base-cache')
@@ -190,6 +195,7 @@ Assert-Equal 2 $basePacks.Count 'Full packager base mode does not require exclud
 Assert-Equal 4 @(Get-NativeFullModelPacks $fourSelection $rifeFixture $srFixture $localTemporal $localCompression).Count 'Full packager default still validates all four packs'
 Assert-Equal 3 @(Get-NativeFullModelPacks $temporalSelection $rifeFixture $srFixture $localTemporal $missing).Count 'Full packager can include temporal only'
 Assert-Equal 3 @(Get-NativeFullModelPacks $compressionSelection $rifeFixture $srFixture $missing $localCompression).Count 'Full packager can include compression only'
+Assert-Rejected { Get-NativeFullModelPacks $deblurSelection $rifeFixture $srFixture $missing $missing $missing } '不存在' 'Selected missing NAFNet is rejected'
 Assert-Rejected { Get-NativeFullModelPacks $temporalSelection $rifeFixture $srFixture $missing $localCompression } '不存在' 'Selected missing FastDVDnet is rejected'
 Assert-Rejected { Get-NativeFullModelPacks $compressionSelection $rifeFixture $srFixture $localTemporal $missing } '不存在' 'Selected missing STDF is rejected'
 
@@ -205,8 +211,10 @@ foreach ($pack in $basePacks) {
 }
 Write-Fixture (Join-Path $baseSource "models/$temporalId/model.json") 'THIS IS INTENTIONALLY INVALID JSON'
 Write-Fixture (Join-Path $baseSource "models/$compressionId/model.json") 'THIS IS INTENTIONALLY INVALID JSON'
+Write-Fixture (Join-Path $baseSource 'models/nafnet-gopro-deblur-sdr8-fp32-eval/model.json') 'THIS IS INTENTIONALLY INVALID JSON'
 Write-Fixture (Join-Path $baseSource "licenses/Model-$temporalId-LICENSE.txt") 'EXCLUDED LICENSE FIXTURE'
 Write-Fixture (Join-Path $baseSource "licenses/Model-$compressionId-LICENSE-LOCAL-EVALUATION.txt") 'EXCLUDED LICENSE FIXTURE'
+Write-Fixture (Join-Path $baseSource 'licenses/Model-nafnet-gopro-deblur-sdr8-fp32-eval-LICENSE') 'EXCLUDED LICENSE FIXTURE'
 Write-Fixture (Join-Path $baseSource 'models/rife-4.25-fp32-sdr8-v2/model.json') 'EXCLUDED LEGACY FIXTURE'
 Write-Fixture (Join-Path $baseSource 'models/user-custom-model/model.json') 'USER MODEL MUST NOT BE COPIED'
 Write-Fixture (Join-Path $baseSource 'models/legacy-models.json') '{"recoveryFixture":"must remain in source"}'
@@ -217,6 +225,8 @@ $recoveryHash = Hash-File (Join-Path $baseSource 'data/checkpoints/recovery.json
 $sourceBefore = @(Get-ChildItem -LiteralPath $baseSource -File -Recurse | ForEach-Object { $_.FullName + ':' + (Hash-File $_.FullName) }) -join "`n"
 $baseExcluded = @(Get-NativeExcludedModelRoots $baseSelection)
 Assert-Equal 0 @(Get-NativeOptionalRestorationPacks $manifest $baseSource $missing $missing $baseSelection).Count 'Reuse base skips declared but invalid excluded optional descriptors'
+Assert-Equal 2 @(Get-NativeOptionalRestorationPacks $manifest $source $missing $missing $fourSelection).Count 'Default full reuse keeps existing experiments without adding NAFNet'
+Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $testRoot $missing $missing $deblurSelection $missing } 'missing' 'Selected missing NAFNet is never silently omitted'
 Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $baseSource $missing $missing $compressionSelection } 'not declared' 'A selected undeclared STDF source is rejected'
 Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $testRoot $missing '' $compressionSelection } 'missing' 'Explicitly selected missing STDF is never silently omitted'
 $baseFiles = @(Get-SafeFiles $baseSource $baseExcluded $baseSource $baseSelection)
@@ -260,7 +270,86 @@ Assert-Equal 'not-bundled' $baseDefaults.temporalRestorationMode 'Temporal exclu
 Assert-Equal 'not-bundled' $baseDefaults.compressionRestorationMode 'Compression exclusion is explicit in defaults'
 Assert-Equal $false $baseDefaults.temporalRestorationDefaultEnabled 'Base temporal mode remains disabled'
 Assert-Equal $false $baseDefaults.compressionRestorationDefaultEnabled 'Base compression mode remains disabled'
+Assert-Equal $null $baseDefaults.deblurRestorationModelDirectory 'Default bundle has no NAFNet model path'
+Assert-Equal $false $baseDefaults.deblurRestorationDefaultEnabled 'NAFNet is never enabled by packaging'
+Assert-Equal 'not-bundled' $baseDefaults.deblurRestorationMode 'Default bundle records NAFNet as absent'
 Assert-Equal '144/1' $baseDefaults.targetRate 'Base selection preserves unrelated defaults'
+
+# The real local NAFNet cache is optional in CI. When available, validate its
+# fixed graph identity without duplicating 274 MB: test package trees hard-link
+# the graph and copy only the small descriptor, license and sidecar files.
+$deblurCache = Join-Path $repositoryRoot 'models/cache/nafnet-gopro-deblur-sdr8-fp32-eval'
+$deblurVerified = $false
+if (Test-Path -LiteralPath (Join-Path $deblurCache 'model.onnx') -PathType Leaf) {
+    $deblurDirectory = 'nafnet-gopro-deblur-sdr8-fp32-eval'
+    $deblurId = 'nafnet-zoo-gopro-sdr8-local'
+    $deblurHash = 'b99b39f0bdf29f15205aa50dd23b7a14b571b0c7ae9576ba2f9417fccad4f056'
+    $deblurFullPack = Validate-ModelPack $deblurCache $deblurDirectory 'video-restoration' $false
+    Assert-Equal $deblurHash $deblurFullPack.graphHash 'Full packaging pins the verified NAFNet graph'
+    Assert-Equal $deblurId $deblurFullPack.id 'NAFNet descriptor ID differs safely from its package directory'
+    Assert-Equal 3 @(Get-NativeFullModelPacks $deblurSelection $rifeFixture $srFixture $missing $missing $deblurCache).Count 'Full packager accepts independently selected NAFNet'
+    Assert-Equal 'experimental-optional-deblur' (Get-NativeModelRole "models\$deblurDirectory") 'NAFNet has a distinct deblur role'
+    $deblurSource = Join-Path $testRoot 'source-with-deblur'
+    New-Item -ItemType Directory -Path $deblurSource | Out-Null
+    $deblurManifest = @{ models = @() }
+    $deblurLocal = @(Get-NativeOptionalRestorationPacks $deblurManifest $deblurSource $missing $missing $deblurSelection $deblurCache)
+    Assert-Equal 1 $deblurLocal.Count 'Explicit NAFNet selection adds one local pack'
+    Assert-Equal $false $deblurLocal[0].inSource 'Initially missing NAFNet comes from the validated cache'
+    Assert-Equal 6 @($deblurLocal[0].pack.files | Where-Object { $_.Name -cin @('model.onnx','model.json','LICENSE','conversion.json','source-manifest.json','validation.json') }).Count 'Model graph, descriptor, license, conversion, source and validation all travel in pack'
+    $deblurModelRoot = Join-Path $deblurSource "models/$deblurDirectory"
+    New-Item -ItemType Directory -Path $deblurModelRoot -Force | Out-Null
+    foreach ($file in $deblurLocal[0].pack.files) {
+        $destination = Join-Path $deblurModelRoot ([IO.Path]::GetRelativePath($deblurCache,$file.FullName))
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        if ($file.Name -ceq 'model.onnx') { New-HardLinkChecked $file.FullName $destination }
+        else { Copy-Item -LiteralPath $file.FullName -Destination $destination }
+    }
+    $deblurLicense = "licenses/Model-$deblurDirectory-LICENSE"
+    Write-Fixture (Join-Path $deblurSource $deblurLicense) ([IO.File]::ReadAllText((Join-Path $deblurCache 'LICENSE')))
+    Assert-Rejected { Get-NativeOptionalRestorationPacks $deblurManifest $deblurSource $missing $missing $deblurSelection $deblurCache } 'not declared in its manifest' 'NAFNet files cannot bypass source manifest declaration'
+    Update-NativeOptionalRestorationManifest $deblurManifest $deblurLocal
+    $deblurEntry = @($deblurManifest.models)[0]
+    Assert-Equal $deblurId $deblurEntry.id 'Manifest preserves NAFNet model ID'
+    Assert-Equal $deblurDirectory $deblurEntry.canonicalBasename 'Manifest records the actual packaged directory'
+    Assert-Equal $deblurHash $deblurEntry.sha256 'Manifest records pinned graph hash'
+    Assert-Equal 'experimental-optional-deblur' $deblurEntry.role 'Manifest distinguishes NAFNet from super resolution'
+    Assert-Equal $deblurLicense $deblurEntry.licensePath 'Manifest names the separate model license'
+    Assert-Equal "models/$deblurDirectory/source-manifest.json" $deblurEntry.provenancePath 'Manifest names NAFNet provenance'
+    Assert-Equal $false $deblurManifest.deblurRestorationDefaultEnabled 'Manifest leaves NAFNet disabled'
+    $deblurDefaults = @{ deblurRestorationDefaultEnabled = $true }
+    Set-NativeRestorationDefaults $deblurDefaults $false $false $true
+    Assert-Equal "models/$deblurDirectory" $deblurDefaults.deblurRestorationModelDirectory 'Selected NAFNet is discoverable in model directory'
+    Assert-Equal $false $deblurDefaults.deblurRestorationDefaultEnabled 'Selected NAFNet still defaults off'
+    $deblurFromSource = @(Get-NativeOptionalRestorationPacks $deblurManifest $deblurSource $missing $missing $deblurSelection $missing)
+    Assert-Equal 1 @($deblurFromSource | Where-Object { $_.inSource }).Count 'NAFNet source package reuses verified bytes without a cache'
+    Assert-Equal $deblurHash (Hash-File (Join-Path $deblurModelRoot 'model.onnx')) 'Linked fixture has the verified graph bytes'
+    $badDeblurDescriptor = Get-Content -LiteralPath (Join-Path $deblurModelRoot 'model.json') -Raw | ConvertFrom-Json
+    $badDeblurDescriptor.adapter.id = 'wrong-adapter'
+    Assert-Rejected { Assert-NativeDeblurModelIdentity -Descriptor $badDeblurDescriptor -GraphHash $deblurHash -Directory $deblurModelRoot } 'identity/capabilities mismatch' 'Wrong NAFNet adapter is rejected'
+    Assert-Rejected { Assert-NativeDeblurModelIdentity -Descriptor $deblurFullPack.descriptor -GraphHash ('0' * 64) -Directory $deblurCache } 'identity/capabilities mismatch' 'Wrong NAFNet graph is rejected even if a descriptor claims it'
+    $badDeblurManifest = $deblurManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -AsHashtable
+    $badDeblurManifest.models[0].id = 'wrong-id'
+    Assert-Rejected { Get-NativeOptionalRestorationPacks $badDeblurManifest $deblurSource $missing $missing $deblurSelection $missing } 'manifest identity mismatch' 'Reused NAFNet must match its source manifest identity'
+    $missingSidecarRoot = Join-Path $testRoot 'nafnet-with-missing-source-sidecar'
+    New-Item -ItemType Directory -Path $missingSidecarRoot | Out-Null
+    foreach ($name in @('model.json','LICENSE','validation.json','conversion.json')) {
+        Copy-Item -LiteralPath (Join-Path $deblurCache $name) -Destination (Join-Path $missingSidecarRoot $name)
+    }
+    New-HardLinkChecked (Join-Path $deblurCache 'model.onnx') (Join-Path $missingSidecarRoot 'model.onnx')
+    Assert-Rejected { Read-ValidatedModelPack $missingSidecarRoot 'NAFNet model' $deblurId 'video-restoration' } 'provenance sidecar is missing' 'Missing NAFNet source record is rejected'
+    $badDeblurLicense = Join-Path $testRoot 'source-with-tampered-deblur-license'
+    $badDeblurModelRoot = Join-Path $badDeblurLicense "models/$deblurDirectory"
+    New-Item -ItemType Directory -Path $badDeblurModelRoot -Force | Out-Null
+    foreach ($file in (Get-ChildItem -LiteralPath $deblurModelRoot -Recurse -File)) {
+        $destination = Join-Path $badDeblurModelRoot ([IO.Path]::GetRelativePath($deblurModelRoot,$file.FullName))
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        if ($file.Name -ceq 'model.onnx') { New-HardLinkChecked $file.FullName $destination }
+        else { Copy-Item -LiteralPath $file.FullName -Destination $destination }
+    }
+    Write-Fixture (Join-Path $badDeblurLicense $deblurLicense) 'TAMPERED LICENSE'
+    Assert-Rejected { Get-NativeOptionalRestorationPacks $deblurManifest $badDeblurLicense $missing $missing $deblurSelection $missing } 'bundled license mismatch' 'Reused NAFNet rejects a changed separate license'
+    $deblurVerified = $true
+}
 
 # No legacy descriptor or graph is required when the exact recovery identity
 # is absent. A precise match makes validation mandatory, not a silent fallback.
@@ -304,6 +393,6 @@ if ($SourcePackageDirectory) {
     stdfRoleAndDefaultsPreserved = $true; tamperedModelsRejected = $true
     ntfsHardLinkIdentityVerified = $true; launchedExe = $false; cleanupPerformed = $false
     baseModelSelectionVerified = $true; excludedModelsNotRead = $true; userDataNotCopied = $true
-    legacyModelValidatedOnlyWhenReferenced = $true
+    legacyModelValidatedOnlyWhenReferenced = $true; deblurCacheVerified = $deblurVerified
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $testRoot 'test-result.json') -Encoding utf8NoBOM
-Write-Output "Native model reuse checks passed ($checks). Tiny fixtures retained at $testRoot"
+Write-Output "Native model reuse checks passed ($checks). Fixtures retained at $testRoot; real NAFNet cache verified=$deblurVerified"

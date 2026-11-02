@@ -50,19 +50,21 @@ pwsh -NoProfile -File packaging/windows/package-native-local.ps1 `
   -BaseModelsOnly
 ```
 
-在基础模式上按需添加 `-IncludeTemporalRestoration`（FastDVDnet）和/或 `-IncludeCompressionRestoration`（STDF-R3）。这些开关只选择随包文件，不启用处理功能；实验模型仍默认关闭。显式选择但缺失或校验失败的模型会报错。完整打包使用对应 `-...ModelDirectory` 或默认缓存；复用打包先使用源清单声明的模型，源包缺少时使用显式目录，STDF 的显式 Include 开关也可使用默认缓存。单独指定目录不会让基础模式自动选择该模型。
+在基础模式上按需添加 `-IncludeTemporalRestoration`（FastDVDnet）、`-IncludeCompressionRestoration`（STDF-R3）和/或 `-IncludeDeblurRestoration`（NAFNet GoPro）。这些开关只选择随包文件，不启用处理功能；实验模型仍默认关闭。NAFNet 在完整四模型模式中也必须显式选择；仅传 `-DeblurModelDirectory` 不会让它入包。显式选择但缺失或校验失败的模型会报错。完整打包使用对应 `-...ModelDirectory` 或默认缓存；复用打包先使用源清单声明的模型，源包缺少时使用显式目录，STDF 与 NAFNet 的显式 Include 开关也可使用默认缓存。单独指定目录不会让基础模式自动选择该模型。
 
-未传 `-BaseModelsOnly` 时保持兼容：完整打包仍默认包含四模型；四模型源包复用仍保留四模型，旧三模型源包仍可按原逻辑复用。复用已有三模型包时，只有显式 STDF 目录或 `-IncludeCompressionRestoration` 才新增 STDF。默认行为没有改成基础包。
+未传 `-BaseModelsOnly` 时保持兼容：完整打包仍默认包含原四模型；四模型源包复用仍保留四模型，旧三模型源包仍可按原逻辑复用。复用已有三模型包时，只有显式 STDF 目录或 `-IncludeCompressionRestoration` 才新增 STDF。NAFNet 不因源包恰好包含它而在新包中自动保留；需要 `-IncludeDeblurRestoration`。完整刷新现有 NAFNet 包若未带此开关会报错，避免把已有任务引用的模型无声移除。默认行为没有改成基础包。
 
 基础包的 `config/defaults.json` 将未捆绑模型路径设为 `null`、模式设为 `not-bundled`；`PACKAGE-MANIFEST.json` 只列实际选中模型，并记录 `modelBundleMode`。模型目录、独立许可证、校验清单和 README 同步过滤，默认插帧选择重置为 RIFE v3。基础模式不迁移源包历史恢复记录、队列或用户添加模型；源文件不被修改或删除。完整脚本的基础模式只允许全新输出目录，避免把删减模型选择作用于已有用户数据；默认完整刷新仍沿用原来的 data 保留机制。
 
 旧 v2 不再无条件读取：完整刷新先用固定历史图 SHA-256 检查旧 `data/` 中精确路径、ID、版本和 hash 的恢复引用，仅命中时才读取并校验旧包。干净目录无需存在 v2 缓存。此变化不会改写、迁移或删除开发队列、Windows 用户数据库或恢复记录；用户现有的同名数据仍保留原位置。
 
-CPU-only 打包契约回归：`pwsh -NoProfile -File tests/packaging/native_model_reuse_test.ps1`。微型假 ONNX/侧车覆盖基础与四模型模式、独立实验选择、缺失/损坏排除模型、实际硬链接复制、空目标 data、源队列/恢复数据 hash 不变及按引用延迟验证 v2。夹具会保留；该测试不启动产品、不下载权重，也不代表模型画质、GPU 或正式发行包已验收。
+CPU-only 打包契约回归：`pwsh -NoProfile -File tests/packaging/native_model_reuse_test.ps1`。微型假 ONNX/侧车覆盖基础与四模型模式、独立实验选择、缺失/损坏排除模型、实际硬链接复制、空目标 data、源队列/恢复数据 hash 不变及按引用延迟验证 v2。若本机已有 NAFNet 缓存，额外核验真实图 SHA-256、身份、来源与许可证，并通过 NTFS 硬链接复用模型图，不另复制大权重。夹具会保留；该测试不启动产品、不下载权重，也不代表模型画质、GPU 或正式发行包已验收。
 
 推理运行库发现顺序为 `-InferenceRuntimeDirectory`、环境变量 `RIFELOVE_TENSORRT_RUNTIME_DIR`、选定构建的同名 CMake 缓存。MinGW 运行库发现顺序为 `-MinGWBinDirectory`、环境变量 `RIFELOVE_MINGW_BIN`、由该构建缓存与生成记录核定的实际编译器所在目录；不通过 PATH 搜索 `g++`，不再假定用户名、Scoop 或 TensorRT 的安装位置。缺失依赖时脚本给出对应参数/环境变量提示，环境变量无效不会静默退回其他安装。
 
-模型来源与包内目录是两套明确的路径：`-SuperResolutionModelDirectory` 默认读取本机缓存 `models/cache/realesrgan-x2plus-sdr8-candidate-v2`，经过描述文件、模型图、许可证和侧车校验后，统一打包为 `models/realesrgan-x2plus-sdr8-v2`；这不是遗漏模型或第二份权重。`-TemporalRestorationModelDirectory` 与 `-CompressionRestorationModelDirectory` 分别默认读取同名 FastDVDnet / STDF-R3 缓存，包内保留规范 basename。不得把缓存目录名直接写入包内 defaults。
+模型来源与包内目录是两套明确的路径：`-SuperResolutionModelDirectory` 默认读取本机缓存 `models/cache/realesrgan-x2plus-sdr8-candidate-v2`，经过描述文件、模型图、许可证和侧车校验后，统一打包为 `models/realesrgan-x2plus-sdr8-v2`；这不是遗漏模型或第二份权重。`-TemporalRestorationModelDirectory`、`-CompressionRestorationModelDirectory` 和 `-DeblurModelDirectory` 分别默认读取 FastDVDnet、STDF-R3 和 NAFNet 缓存，包内保留规范 basename。NAFNet 缓存目录为 `models/cache/nafnet-gopro-deblur-sdr8-fp32-eval`，描述中的模型 ID 为 `nafnet-zoo-gopro-sdr8-local`；包内路径使用目录 basename，不用模型 ID 代替。不得把缓存目录名直接写入包内 defaults。
+
+NAFNet 是可选的本机评估权重，不是 RIFE 或超分的默认模型。选择后打包器核对固定图 SHA-256 `b99b39f0bdf29f15205aa50dd23b7a14b571b0c7ae9576ba2f9417fccad4f056`、去模糊适配器及 BT.709 SDR8 能力、独立 `LICENSE`、来源清单、转换记录和验证侧车。包内 `config/defaults.json` 的 `deblurRestorationDefaultEnabled` 仍为 `false`；`PACKAGE-MANIFEST.json` 记为 `experimental-optional-deblur` 并指向 `licenses/Model-nafnet-gopro-deblur-sdr8-fp32-eval-LICENSE` 与来源侧车，所有实际文件进入 `SHA256SUMS.txt`。原生模型中心从 `models/` 扫描 `model.json` 发现它。逐帧去模糊可能有闪烁或伪影，速度也会下降；与曝光动态模糊并用可能相互抵消。来源清单明确写明链接 ONNX 权重再分发授权尚未确认，因此这里只允许本机打包与验证，不构成公开分发许可确认。
 
 `config/defaults.json` 包含 `compressionRestorationModelDirectory = "models/stdf-r3-y7-sdr8-local-eval"`、`compressionRestorationDefaultEnabled = false`、`compressionRestorationStrength = 0.75` 与 `compressionRestorationMode = "experimental-local-evaluation"`。强度只是显式启用时的设置，不会使模型自动启用。`PACKAGE-MANIFEST.json` 将 STDF 标记为 `experimental-optional-compression-repair`，保留许可证、版本、验证后端与图 SHA-256；模型目录、来源/验证侧车及复制到 `licenses/` 的许可文本全部进入 `SHA256SUMS.txt`。原生模型中心通过 `models/` 下的 `model.json` 和能力字段发现修复模型，不依赖 `default-model.txt` 把它选为插帧模型。
 

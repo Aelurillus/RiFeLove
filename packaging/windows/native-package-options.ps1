@@ -89,19 +89,23 @@ function Resolve-NativeModelBundleSelection {
     param(
         [switch]$BaseModelsOnly,
         [switch]$IncludeTemporalRestoration,
-        [switch]$IncludeCompressionRestoration
+        [switch]$IncludeCompressionRestoration,
+        [switch]$IncludeDeblurRestoration
     )
     $includeTemporal = if ($BaseModelsOnly) { [bool]$IncludeTemporalRestoration } else { $true }
     $includeCompression = if ($BaseModelsOnly) { [bool]$IncludeCompressionRestoration } else { $true }
+    $includeDeblur = [bool]$IncludeDeblurRestoration
     $modelIds = @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2')
     if ($includeTemporal) { $modelIds += 'fastdvdnet-clipped-five-frame-sdr8-eval' }
     if ($includeCompression) { $modelIds += 'stdf-r3-y7-sdr8-local-eval' }
+    if ($includeDeblur) { $modelIds += 'nafnet-gopro-deblur-sdr8-fp32-eval' }
     [pscustomobject]@{
         mode = if ($BaseModelsOnly) { 'base' } else { 'full' }
         baseModels = @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2')
         includeTemporalRestoration = $includeTemporal
         includeCompressionRestoration = $includeCompression
         requireCompressionRestoration = [bool]$IncludeCompressionRestoration
+        includeDeblurRestoration = $includeDeblur
         modelIds = $modelIds
     }
 }
@@ -121,6 +125,12 @@ function Get-NativeExcludedModelRoots {
             'licenses/Model-stdf-r3-y7-sdr8-local-eval'
         )
     }
+    if (-not $Selection.includeDeblurRestoration) {
+        $roots += @(
+            'models/nafnet-gopro-deblur-sdr8-fp32-eval',
+            'licenses/Model-nafnet-gopro-deblur-sdr8-fp32-eval'
+        )
+    }
     if ($Selection.mode -ceq 'base') {
         # A base bundle has no recovery data to migrate, so a hidden legacy
         # RIFE checkpoint is not copied as a second interpolation model.
@@ -130,6 +140,55 @@ function Get-NativeExcludedModelRoots {
         )
     }
     return @($roots | Sort-Object -Unique)
+}
+
+# This local-only evaluation pack has a directory name distinct from its model
+# ID. Pin the graph and adapter, then verify the license and source claims made
+# by its checksummed descriptor/sidecars. An arbitrary deblur model must not be
+# relabelled as the validated NAFNet candidate.
+function Assert-NativeDeblurModelIdentity {
+    param([Parameter(Mandatory=$true)][object]$Descriptor,
+          [Parameter(Mandatory=$true)][string]$GraphHash,
+          [Parameter(Mandatory=$true)][string]$Directory)
+    $expectedHash = 'b99b39f0bdf29f15205aa50dd23b7a14b571b0c7ae9576ba2f9417fccad4f056'
+    if ($GraphHash -cne $expectedHash -or [string]$Descriptor.sha256 -cne $expectedHash -or
+        [string]$Descriptor.id -cne 'nafnet-zoo-gopro-sdr8-local' -or
+        [string]$Descriptor.family -cne 'video-restoration' -or
+        [string]$Descriptor.adapter.id -cne 'nafnet-zoo-deblur-rgb-f32-nchw-v1' -or
+        [int]$Descriptor.adapter.version -ne 1 -or
+        [string]$Descriptor.license.id -cne 'MIT' -or
+        [string]$Descriptor.license.file -cne 'LICENSE' -or
+        [string]$Descriptor.provenance.manifestFile -cne 'source-manifest.json' -or
+        [string]$Descriptor.validation.reportFile -cne 'validation.json' -or
+        (@($Descriptor.capabilities.tasks).Count -ne 1) -or
+        [string]@($Descriptor.capabilities.tasks)[0] -cne 'deblur' -or
+        (@($Descriptor.capabilities.placements).Count -ne 1) -or
+        [string]@($Descriptor.capabilities.placements)[0] -cne 'output-rate-after-interpolation' -or
+        (@($Descriptor.capabilities.supportedInputProfiles).Count -ne 1) -or
+        [string]@($Descriptor.capabilities.supportedInputProfiles)[0] -cne 'bt709-sdr8' -or
+        [int]$Descriptor.capabilities.temporalFramesBefore -ne 0 -or
+        [int]$Descriptor.capabilities.temporalFramesAfter -ne 0 -or
+        [int]$Descriptor.capabilities.scaleNumerator -ne 1 -or
+        [int]$Descriptor.capabilities.scaleDenominator -ne 1) {
+        throw "NAFNet deblur model identity/capabilities mismatch: $Directory"
+    }
+    $source = Get-Content -LiteralPath (Join-Path $Directory 'source-manifest.json') -Raw | ConvertFrom-Json
+    $validation = Get-Content -LiteralPath (Join-Path $Directory 'validation.json') -Raw | ConvertFrom-Json
+    $conversionPath = Join-Path $Directory 'conversion.json'
+    if (-not (Test-Path -LiteralPath $conversionPath -PathType Leaf) -or
+        [string]$source.modelId -cne [string]$Descriptor.id -or
+        [string]$source.upstreamRepository -cne 'https://github.com/opencv/opencv_zoo' -or
+        [string]$source.license -cne 'MIT' -or
+        [string]$source.derivedGraphSha256 -cne $expectedHash -or
+        [string]$source.weightLicenseStatus -notmatch '(?i)unconfirmed.*local evaluation only' -or
+        [string]$source.conversionReportSha256 -cne (Get-FileHash -LiteralPath $conversionPath -Algorithm SHA256).Hash.ToLowerInvariant() -or
+        [string]$validation.model_sha256 -cne $expectedHash -or
+        [string]$validation.model_adapter.id -cne [string]$Descriptor.adapter.id -or
+        [string]$validation.status -notmatch '^passed_' -or
+        (@($validation.capabilities.tasks).Count -ne 1) -or
+        [string]@($validation.capabilities.tasks)[0] -cne 'deblur') {
+        throw "NAFNet deblur provenance/validation mismatch: $Directory"
+    }
 }
 
 function Test-NativeRelativePathExcluded {

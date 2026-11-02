@@ -5,10 +5,12 @@ param(
     [string]$OutputDirectory = "",
     [string]$TemporalRestorationModelDirectory = "",
     [string]$CompressionRestorationModelDirectory = "",
+    [string]$DeblurModelDirectory = "",
     # Fresh base bundle: only RIFE + SR are staged; experiments are explicit.
     [switch]$BaseModelsOnly,
     [switch]$IncludeTemporalRestoration,
     [switch]$IncludeCompressionRestoration,
+    [switch]$IncludeDeblurRestoration,
     # Explicitly restage only differing FFmpeg DLLs from the selected build's
     # SDK. Source/model/inference files remain verified, immutable hard links.
     [switch]$RefreshFfmpegRuntime,
@@ -26,12 +28,13 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "native-build-dependencies.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
-$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration
+$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration -IncludeDeblurRestoration:$IncludeDeblurRestoration
 if (-not $SourceDirectory) { $SourceDirectory = Join-Path $outputRoot "RifeLoveNative-local-nvenc" }
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $repositoryRoot "build/native-ui-review" }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $outputRoot "RifeLoveNative-local-ui-preview" }
 if (-not $TemporalRestorationModelDirectory) { $TemporalRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/fastdvdnet-clipped-five-frame-sdr8-eval" }
 if (-not $CompressionRestorationModelDirectory -and $IncludeCompressionRestoration) { $CompressionRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/stdf-r3-y7-sdr8-local-eval" }
+if (-not $DeblurModelDirectory -and $IncludeDeblurRestoration) { $DeblurModelDirectory = Join-Path $repositoryRoot "models/cache/nafnet-gopro-deblur-sdr8-fp32-eval" }
 $source = [IO.Path]::GetFullPath($SourceDirectory)
 $build = [IO.Path]::GetFullPath($BuildDirectory)
 $target = [IO.Path]::GetFullPath($OutputDirectory)
@@ -119,6 +122,7 @@ function Get-NativeModelRole([string]$relative) {
     switch ($relative.Replace('\', '/')) {
         "models/fastdvdnet-clipped-five-frame-sdr8-eval" { return "experimental-optional-temporal-denoise" }
         "models/stdf-r3-y7-sdr8-local-eval" { return "experimental-optional-compression-repair" }
+        "models/nafnet-gopro-deblur-sdr8-fp32-eval" { return "experimental-optional-deblur" }
         "models/realesrgan-x2plus-sdr8-v2" { return "optional-super-resolution" }
         default { return "default-interpolation" }
     }
@@ -127,20 +131,22 @@ function Get-NativeModelRole([string]$relative) {
 function Get-NativeOptionalRestorationPacks(
     [object]$Manifest, [string]$SourceDirectory,
     [string]$TemporalModelDirectory, [string]$CompressionModelDirectory,
-    [object]$Selection = $null) {
+    [object]$Selection = $null, [string]$DeblurModelDirectory = '') {
     foreach ($spec in @(
-        [pscustomobject]@{ id = "fastdvdnet-clipped-five-frame-sdr8-eval"; local = $TemporalModelDirectory; label = "FastDVDnet" },
-        [pscustomobject]@{ id = "stdf-r3-y7-sdr8-local-eval"; local = $CompressionModelDirectory; label = "STDF-R3" }
+        [pscustomobject]@{ directory = "fastdvdnet-clipped-five-frame-sdr8-eval"; id = "fastdvdnet-clipped-five-frame-sdr8-eval"; local = $TemporalModelDirectory; label = "FastDVDnet" },
+        [pscustomobject]@{ directory = "stdf-r3-y7-sdr8-local-eval"; id = "stdf-r3-y7-sdr8-local-eval"; local = $CompressionModelDirectory; label = "STDF-R3" },
+        [pscustomobject]@{ directory = "nafnet-gopro-deblur-sdr8-fp32-eval"; id = "nafnet-zoo-gopro-sdr8-local"; local = $DeblurModelDirectory; label = "NAFNet" }
     )) {
-        if ($null -ne $Selection -and $spec.id -ceq 'fastdvdnet-clipped-five-frame-sdr8-eval' -and -not $Selection.includeTemporalRestoration) { continue }
-        if ($null -ne $Selection -and $spec.id -ceq 'stdf-r3-y7-sdr8-local-eval' -and -not $Selection.includeCompressionRestoration) { continue }
-        $relative = "models/$($spec.id)"
+        if ($null -ne $Selection -and $spec.directory -ceq 'fastdvdnet-clipped-five-frame-sdr8-eval' -and -not $Selection.includeTemporalRestoration) { continue }
+        if ($null -ne $Selection -and $spec.directory -ceq 'stdf-r3-y7-sdr8-local-eval' -and -not $Selection.includeCompressionRestoration) { continue }
+        if ($spec.directory -ceq 'nafnet-gopro-deblur-sdr8-fp32-eval' -and ($null -eq $Selection -or -not $Selection.includeDeblurRestoration)) { continue }
+        $relative = "models/$($spec.directory)"
         $entries = @($Manifest.models | Where-Object { ([string]$_.directory).Replace('\', '/') -ieq $relative })
         if ($entries.Count -gt 1) { throw "Duplicate source model manifest entry: $relative" }
         $inSource = $entries.Count -eq 1
         # An older three-model bundle remains usable without claiming it has
         # STDF. Adding STDF from a local cache requires the explicit parameter.
-        if (-not $inSource -and $spec.id -ceq "stdf-r3-y7-sdr8-local-eval" -and
+        if (-not $inSource -and $spec.directory -ceq "stdf-r3-y7-sdr8-local-eval" -and
             [string]::IsNullOrWhiteSpace($spec.local) -and
             ($null -eq $Selection -or -not $Selection.requireCompressionRestoration)) { continue }
         $packRoot = if ($inSource) { Join-Path $SourceDirectory $relative } else { $spec.local }
@@ -149,7 +155,10 @@ function Get-NativeOptionalRestorationPacks(
             throw "Source model directory is not declared in its manifest: $relative"
         }
         $pack = Read-ValidatedModelPack $packRoot "$($spec.label) model" $spec.id "video-restoration"
-        $licenseRelative = "licenses/Model-$($spec.id)-$([IO.Path]::GetFileName($pack.licensePath))"
+        if ($spec.directory -ceq 'nafnet-gopro-deblur-sdr8-fp32-eval') {
+            Assert-NativeDeblurModelIdentity -Descriptor $pack.descriptor -GraphHash $pack.graphHash -Directory $pack.source
+        }
+        $licenseRelative = "licenses/Model-$($spec.directory)-$([IO.Path]::GetFileName($pack.licensePath))"
         if ($inSource) {
             if ([string]$entries[0].sha256 -ine $pack.graphHash -or
                 [string]$entries[0].id -cne [string]$pack.descriptor.id -or
@@ -172,7 +181,7 @@ function Get-NativeOptionalRestorationPacks(
 
 function Set-NativeRestorationDefaults(
     [System.Collections.IDictionary]$Defaults, [bool]$CompressionModelIncluded = $true,
-    [bool]$TemporalModelIncluded = $true) {
+    [bool]$TemporalModelIncluded = $true, [bool]$DeblurModelIncluded = $false) {
     $Defaults["temporalRestorationModelDirectory"] = if ($TemporalModelIncluded) { "models/fastdvdnet-clipped-five-frame-sdr8-eval" } else { $null }
     $Defaults["temporalRestorationDefaultEnabled"] = $false
     $Defaults["temporalRestorationMode"] = if ($TemporalModelIncluded) { "experimental-optional" } else { "not-bundled" }
@@ -181,6 +190,9 @@ function Set-NativeRestorationDefaults(
     $Defaults["compressionRestorationTiled"] = $false
     $Defaults["compressionRestorationStrength"] = 0.75
     $Defaults["compressionRestorationMode"] = if ($CompressionModelIncluded) { "experimental-local-evaluation" } else { "not-bundled" }
+    $Defaults["deblurRestorationModelDirectory"] = if ($DeblurModelIncluded) { "models/nafnet-gopro-deblur-sdr8-fp32-eval" } else { $null }
+    $Defaults["deblurRestorationDefaultEnabled"] = $false
+    $Defaults["deblurRestorationMode"] = if ($DeblurModelIncluded) { "experimental-local-evaluation" } else { "not-bundled" }
 }
 
 function Update-NativeOptionalRestorationManifest(
@@ -199,13 +211,16 @@ function Update-NativeOptionalRestorationManifest(
         $entry["validatedBackends"] = @($pack.descriptor.validation.validatedBackends)
         $entry["legacy"] = $false
         $entry["hiddenFromDefaultSelection"] = $false
-        $entry["canonicalBasename"] = [string]$pack.descriptor.id
+        $entry["canonicalBasename"] = ($optional.relative -split '/')[-1]
         $entry["role"] = $optional.role
+        $entry["licensePath"] = $optional.licenseRelative
+        $entry["provenancePath"] = "$($optional.relative)/$($pack.descriptor.provenance.manifestFile)"
         $entry["redistribution"] = "local-only-until-license-review"
         if ($rows.Count -eq 0) { $Manifest["models"] = @($Manifest.models) + $entry }
     }
     $Manifest["temporalRestorationDefaultEnabled"] = $false
     $Manifest["compressionRestorationDefaultEnabled"] = $false
+    $Manifest["deblurRestorationDefaultEnabled"] = $false
 }
 
 function Resolve-ManifestPath([string]$relative) {
@@ -353,7 +368,7 @@ if ($manifest.packageKind -ne "local-native-windows-x64" -or $manifest.qtInclude
     throw "Source package is not the expected local, non-Qt desktop bundle."
 }
 $excludedModelRoots = @(Get-NativeExcludedModelRoots $modelSelection)
-if ($modelSelection.mode -ceq 'base') {
+if ($modelSelection.mode -ceq 'base' -or -not $modelSelection.includeDeblurRestoration) {
     # Filter metadata before optional model validation and staging. This is the
     # key isolation boundary: excluded model directories and their licenses are
     # never opened, hashed, or hard-linked for a base bundle.
@@ -366,7 +381,9 @@ if ($modelSelection.mode -ceq 'base') {
     $manifest.models = @($manifest.models | Where-Object {
         -not (Test-NativeRelativePathExcluded ([string]$_.directory) $excludedModelRoots $modelSelection)
     })
-    $manifest['migration'] = [ordered]@{ legacyModelIncluded = $false; evidence = @(); sourceRecoveryDataCopied = $false }
+    if ($modelSelection.mode -ceq 'base') {
+        $manifest['migration'] = [ordered]@{ legacyModelIncluded = $false; evidence = @(); sourceRecoveryDataCopied = $false }
+    }
 }
 if ([string]::IsNullOrWhiteSpace([string]$manifest.ffmpeg.root)) { throw "Source package has no FFmpeg SDK root; rebuild a full package first." }
 $ffmpegSdk = Read-FfmpegSdkIdentity $build $(if ($RefreshFfmpegRuntime) { 'local-sdk:ffmpeg' } else { [string]$manifest.ffmpeg.root })
@@ -447,7 +464,7 @@ foreach ($name in $requiredRuntimeFiles) {
         throw "Source package lacks the required inference runtime DLL: $name"
     }
 }
-$optionalPacks = @(Get-NativeOptionalRestorationPacks $manifest $source $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory $modelSelection)
+$optionalPacks = @(Get-NativeOptionalRestorationPacks $manifest $source $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory $modelSelection $DeblurModelDirectory)
 $additionalModelExpected = @{}
 foreach ($optional in @($optionalPacks | Where-Object { -not $_.inSource })) {
     foreach ($file in $optional.pack.files) {
@@ -548,7 +565,7 @@ try {
     $defaultsPath = Join-Path $source "config/defaults.json"
     if (-not (Test-Path -LiteralPath $defaultsPath -PathType Leaf)) { throw "Source package defaults are missing: $defaultsPath" }
     $defaults = Get-Content -Raw -LiteralPath $defaultsPath | ConvertFrom-Json -AsHashtable
-    Set-NativeRestorationDefaults $defaults (@($optionalPacks | Where-Object { $_.relative -ceq "models/stdf-r3-y7-sdr8-local-eval" }).Count -eq 1) (@($optionalPacks | Where-Object { $_.relative -ceq "models/fastdvdnet-clipped-five-frame-sdr8-eval" }).Count -eq 1)
+    Set-NativeRestorationDefaults $defaults (@($optionalPacks | Where-Object { $_.relative -ceq "models/stdf-r3-y7-sdr8-local-eval" }).Count -eq 1) (@($optionalPacks | Where-Object { $_.relative -ceq "models/fastdvdnet-clipped-five-frame-sdr8-eval" }).Count -eq 1) (@($optionalPacks | Where-Object { $_.relative -ceq "models/nafnet-gopro-deblur-sdr8-fp32-eval" }).Count -eq 1)
     $defaults['modelBundleMode'] = if ($BaseModelsOnly) { 'base' } else { 'compatible-source' }
     if ($BaseModelsOnly) {
         $defaults['defaultModelDirectory'] = 'models/rife-4.25-fp32-sdr8-v3'
@@ -602,6 +619,9 @@ try {
     $compressionDescription = if (@($optionalPacks | Where-Object { $_.relative -ceq 'models/stdf-r3-y7-sdr8-local-eval' }).Count -eq 1) {
         '包内 STDF-R3 七帧模型仅供本地压缩修复评估，默认关闭；输入/尺寸/分块契约以模型描述和开发验证记录为准，不代表通用压缩修复或 Topaz 级质量。'
     } else { '本包未捆绑 STDF-R3，相关默认路径为空。' }
+    $deblurDescription = if (@($optionalPacks | Where-Object { $_.relative -ceq 'models/nafnet-gopro-deblur-sdr8-fp32-eval' }).Count -eq 1) {
+        'NAFNet GoPro 去模糊仅供本机 SDR8 BT.709 实验评估，默认关闭，需在模型中心单独选择，可与超分独立启用。逐帧处理可能出现闪烁或细节伪影，且会增加耗时；与有意添加的曝光动态模糊同时使用可能互相抵消。图 SHA-256 已固定核验；原始链接权重的再分发许可尚未确认，本包及权重不得据此公开发布。独立许可与来源见 licenses/Model-nafnet-gopro-deblur-sdr8-fp32-eval-LICENSE、models/nafnet-gopro-deblur-sdr8-fp32-eval/source-manifest.json 和 PACKAGE-MANIFEST.json。'
+    } else { '本包未捆绑 NAFNet 去模糊，相关默认路径为空。' }
     @"
 RifeLove 原生 Windows 本机预览
 
@@ -615,6 +635,7 @@ FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-2
 实际打包模型：$includedModelsDescription。
 $temporalDescription
 $compressionDescription
+$deblurDescription
 此目录与旧本机预览使用 NTFS 硬链接复用不可变依赖，删除旧目录不会使本目录失效；直接修改共享依赖会同时影响两个目录。
 本次 FFmpeg 配置刷新：$($refreshedFfmpegFiles.Count) 个不同 DLL 独立复制（$($ffmpegRefreshPlan.replacementBytes) 字节）；旧包文件不被覆盖，模型和推理运行库保留校验后的硬链接。
 模型、视频和任务留在本机；阿里云 OSS 已停用。模型及 NVIDIA 运行库的公开再分发许可仍需审核。

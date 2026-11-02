@@ -10,11 +10,13 @@ param(
     [string]$SuperResolutionModelDirectory = "",
     [string]$TemporalRestorationModelDirectory = "",
     [string]$CompressionRestorationModelDirectory = "",
+    [string]$DeblurModelDirectory = "",
     [string]$OutputDirectory = "",
     # A fresh, data-free RIFE + SR package; experiments are explicit additions.
     [switch]$BaseModelsOnly,
     [switch]$IncludeTemporalRestoration,
     [switch]$IncludeCompressionRestoration,
+    [switch]$IncludeDeblurRestoration,
     [switch]$SkipStartupSmoke,
     [switch]$ValidateDependenciesOnly
 )
@@ -26,7 +28,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "native-package-options.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
-$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration
+$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration -IncludeDeblurRestoration:$IncludeDeblurRestoration
 
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) { $BuildDirectory = Join-Path $repositoryRoot "build/windows-release" }
 if ([string]::IsNullOrWhiteSpace($FfmpegRoot)) { $FfmpegRoot = Join-Path $repositoryRoot "work/codec-ffmpeg-build-x86asm/ffmpeg-install" }
@@ -36,6 +38,7 @@ if ([string]::IsNullOrWhiteSpace($LegacyRifeModelDirectory)) { $LegacyRifeModelD
 if ([string]::IsNullOrWhiteSpace($SuperResolutionModelDirectory)) { $SuperResolutionModelDirectory = Join-Path $repositoryRoot "models/cache/realesrgan-x2plus-sdr8-candidate-v2" }
 if ([string]::IsNullOrWhiteSpace($TemporalRestorationModelDirectory)) { $TemporalRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/fastdvdnet-clipped-five-frame-sdr8-eval" }
 if ([string]::IsNullOrWhiteSpace($CompressionRestorationModelDirectory)) { $CompressionRestorationModelDirectory = Join-Path $repositoryRoot "models/cache/stdf-r3-y7-sdr8-local-eval" }
+if ([string]::IsNullOrWhiteSpace($DeblurModelDirectory)) { $DeblurModelDirectory = Join-Path $repositoryRoot "models/cache/nafnet-gopro-deblur-sdr8-fp32-eval" }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $outputRoot "RifeLoveNative-local-nvenc" }
 
 function Resolve-ExistingDirectory([string]$Path, [string]$Label) {
@@ -285,6 +288,9 @@ function Validate-ModelPack([string]$Directory, [string]$DestinationName, [strin
             Resolve-ExistingFile (Join-Path $Directory $name) "旧模型侧车" | Out-Null
         }
     }
+    if ($DestinationName -ceq 'nafnet-gopro-deblur-sdr8-fp32-eval') {
+        Assert-NativeDeblurModelIdentity -Descriptor $descriptor -GraphHash $graphHash -Directory $Directory
+    }
     [pscustomobject]@{
         source = $Directory; destination = $DestinationName; descriptor = $descriptor; id = $id; family = [string]$descriptor.family;
         graphHash = $graphHash; licenseFile = $licenseFile; licensePath = $licensePath; legacy = $Legacy
@@ -293,7 +299,7 @@ function Validate-ModelPack([string]$Directory, [string]$DestinationName, [strin
 
 function Get-NativeFullModelPacks(
     [object]$Selection, [string]$RifeDirectory, [string]$SuperResolutionDirectory,
-    [string]$TemporalDirectory, [string]$CompressionDirectory) {
+    [string]$TemporalDirectory, [string]$CompressionDirectory, [string]$DeblurDirectory = '') {
     Validate-ModelPack (Resolve-ExistingDirectory $RifeDirectory "RIFE 4.25 v3") "rife-4.25-fp32-sdr8-v3" "rife" $false
     Validate-ModelPack (Resolve-ExistingDirectory $SuperResolutionDirectory "Real-ESRGAN x2plus v2") "realesrgan-x2plus-sdr8-v2" "video-restoration" $false
     if ($Selection.includeTemporalRestoration) {
@@ -301,6 +307,9 @@ function Get-NativeFullModelPacks(
     }
     if ($Selection.includeCompressionRestoration) {
         Validate-ModelPack (Resolve-ExistingDirectory $CompressionDirectory "STDF-R3 压缩修复评估包") "stdf-r3-y7-sdr8-local-eval" "video-restoration" $false
+    }
+    if ($Selection.includeDeblurRestoration) {
+        Validate-ModelPack (Resolve-ExistingDirectory $DeblurDirectory "NAFNet 去模糊本机评估包") "nafnet-gopro-deblur-sdr8-fp32-eval" "video-restoration" $false
     }
 }
 
@@ -548,7 +557,7 @@ $legacyReference = $legacyMigration.reference
 $includeLegacyModel = [bool]$legacyReference.referenced
 
 $packs = @(
-    Get-NativeFullModelPacks $modelSelection $RifeModelDirectory $SuperResolutionModelDirectory $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory
+    Get-NativeFullModelPacks $modelSelection $RifeModelDirectory $SuperResolutionModelDirectory $TemporalRestorationModelDirectory $CompressionRestorationModelDirectory $DeblurModelDirectory
     if ($includeLegacyModel) { $legacyMigration.pack }
 )
 $bundledModelDirectories = @($packs | ForEach-Object { $_.destination })
@@ -565,6 +574,10 @@ if (Test-Path -LiteralPath $target) {
     $targetItem = Get-Item -LiteralPath $target -Force
     if ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "拒绝替换链接形式的目标包：$target" }
     Assert-PackageNotRunning $target
+    if (-not $modelSelection.includeDeblurRestoration -and
+        (Test-Path -LiteralPath (Join-Path $target 'models/nafnet-gopro-deblur-sdr8-fp32-eval') -PathType Container)) {
+        throw 'Existing package contains NAFNet. Pass -IncludeDeblurRestoration to retain it, or choose a new output directory; existing task/model state will not be silently changed.'
+    }
 }
 if (Test-Path -LiteralPath $staging) { throw "随机 staging 路径已存在：$staging" }
 New-Item -ItemType Directory -Path $staging | Out-Null
@@ -612,7 +625,7 @@ try {
     $defaults = [ordered]@{
         schemaVersion = 1; product = "RifeLoveNative"; qt = $false; cliIncluded = $false; oss = $false
         defaultModelDirectory = "models/rife-4.25-fp32-sdr8-v3"; legacyModelDirectory = if ($includeLegacyModel) { "models/rife-4.25-fp32-sdr8-v2" } else { $null }
-        restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = if ($modelSelection.includeTemporalRestoration) { "models/fastdvdnet-clipped-five-frame-sdr8-eval" } else { $null }; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = if ($modelSelection.includeTemporalRestoration) { "experimental-optional" } else { "not-bundled" }; compressionRestorationModelDirectory = if ($modelSelection.includeCompressionRestoration) { "models/stdf-r3-y7-sdr8-local-eval" } else { $null }; compressionRestorationDefaultEnabled = $false; compressionRestorationTiled = $false; compressionRestorationStrength = 0.75; compressionRestorationMode = if ($modelSelection.includeCompressionRestoration) { "experimental-local-evaluation" } else { "not-bundled" }; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
+        restorationModelDirectory = "models/realesrgan-x2plus-sdr8-v2"; temporalRestorationModelDirectory = if ($modelSelection.includeTemporalRestoration) { "models/fastdvdnet-clipped-five-frame-sdr8-eval" } else { $null }; temporalRestorationDefaultEnabled = $false; temporalRestorationMode = if ($modelSelection.includeTemporalRestoration) { "experimental-optional" } else { "not-bundled" }; compressionRestorationModelDirectory = if ($modelSelection.includeCompressionRestoration) { "models/stdf-r3-y7-sdr8-local-eval" } else { $null }; compressionRestorationDefaultEnabled = $false; compressionRestorationTiled = $false; compressionRestorationStrength = 0.75; compressionRestorationMode = if ($modelSelection.includeCompressionRestoration) { "experimental-local-evaluation" } else { "not-bundled" }; deblurRestorationModelDirectory = if ($modelSelection.includeDeblurRestoration) { "models/nafnet-gopro-deblur-sdr8-fp32-eval" } else { $null }; deblurRestorationDefaultEnabled = $false; deblurRestorationMode = if ($modelSelection.includeDeblurRestoration) { "experimental-local-evaluation" } else { "not-bundled" }; targetRate = "60/1"; encoder = "auto-h264-nvenc-with-software-fallback"
         ffmpeg = "Isolated FFmpeg 8.1.3 with NVENC, OpenH264, Kvazaar and libaom; x86asm $ffmpegX86asmDescription"
         legacyModelIncluded = $includeLegacyModel
         modelBundleMode = $modelSelection.mode
@@ -674,7 +687,7 @@ try {
         modelBundleMode = $modelSelection.mode
         ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; runtimeSha256 = $ffmpegRuntimeHashes; configuration = $ffmpegSdk.configuration; linkInputs = $ffmpegSdk.linkInputs; nvenc = "integrated in isolated SDK; H.264 NVENC and software fallback require hardware/workload validation"; x86asm = $ffmpegX86asmDescription; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
         inferenceRuntime = [ordered]@{ source = "local TensorRT/ONNX Runtime CUDA SDK"; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = $versionLines[0]; sourceSha256 = $versionLines[1]; providers = @("TensorRT", "CUDA", "CPU-fallback") }
-        models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "stdf-r3-y7-sdr8-local-eval") { "experimental-optional-compression-repair" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
+        models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; licensePath = "licenses/Model-$($_.destination)-$($_.licenseFile)"; provenancePath = if ($_.legacy) { $null } else { "models/$($_.destination)/$($_.descriptor.provenance.manifestFile)" }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "stdf-r3-y7-sdr8-local-eval") { "experimental-optional-compression-repair" } elseif ($_.destination -eq "nafnet-gopro-deblur-sdr8-fp32-eval") { "experimental-optional-deblur" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
         migration = [ordered]@{ legacyModelIncluded = $includeLegacyModel; legacyModelPathToken = $legacyReference.token; legacyModelSha256 = $legacyModelHash; evidence = @($legacyReference.evidence); cleanPackageOmitsUnreferencedLegacy = $true }
         defaults = "config/defaults.json"; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"
     }
@@ -684,6 +697,9 @@ try {
     $experimentalModelsDescription = if ($modelSelection.includeTemporalRestoration -or $modelSelection.includeCompressionRestoration) {
         '本包选中的 FastDVDnet / STDF-R3 为本地实验评估模型，默认关闭；仅在用户明确选择且满足对应 model.json 输入/尺寸/色彩契约时启用，不代表通用压缩修复或 Topaz 级质量。'
     } else { '本基础包未捆绑 FastDVDnet 或 STDF-R3，不要求它们的权重、许可证或侧车文件。' }
+    $deblurDescription = if ($modelSelection.includeDeblurRestoration) {
+        'NAFNet GoPro 去模糊仅供本机 SDR8 BT.709 实验评估，默认关闭，需在模型中心单独选择，可与超分独立启用。逐帧处理可能出现闪烁或细节伪影，且会增加耗时；与有意添加的曝光动态模糊同时使用可能互相抵消。图 SHA-256 已固定核验；原始链接权重的再分发许可尚未确认，本包及权重不得据此公开发布。独立许可与来源见 licenses/Model-nafnet-gopro-deblur-sdr8-fp32-eval-LICENSE、models/nafnet-gopro-deblur-sdr8-fp32-eval/source-manifest.json 和 PACKAGE-MANIFEST.json。'
+    } else { '本包未捆绑 NAFNet 去模糊，相关默认路径为空。' }
     $stateRefreshDescription = if ($BaseModelsOnly) { '本次为全新基础模式目录，不复制历史队列、恢复记录或用户模型；原目录保持不变。' } else { '刷新本机包会保留旧 data 和用户添加的模型；SHA256SUMS.txt 不包含可变用户 data。' }
     $readme = @"
 RifeLove 原生 Windows 本机包
@@ -691,6 +707,7 @@ RifeLove 原生 Windows 本机包
 启动：双击 RifeLoveNative.exe。此目录是 Win32/Direct2D/DirectWrite 原生桌面包，不包含 Qt、QML 或 CLI。
 默认插帧模型：models/rife-4.25-fp32-sdr8-v3；Real-ESRGAN x2plus 超分可选且默认关闭。实际打包模型：$includedModelsDescription。
 $experimentalModelsDescription
+$deblurDescription
 任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写。视频输出位置由用户选择，原片不会被覆盖。
 只有在 EXE 同目录创建 portable-mode.txt 且第一行为 RifeLovePortable 1，才显式使用旁边的 data 目录。$stateRefreshDescription
 当前包使用隔离构建的 FFmpeg 运行库，包含 H.264 NVENC、OpenH264、Kvazaar 和 libaom；自动编码优先使用 H.264 NVENC，并在不可用时软件回退。x86asm：$ffmpegX86asmDescription。处理性能依赖硬件、模型、分辨率和编码配置；短片回归不代表所有素材已验收。
