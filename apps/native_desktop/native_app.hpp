@@ -69,12 +69,14 @@ public:
     HWND testShowComparison() { showComparison(); return comparisonWindow_ ? comparisonWindow_->window() : nullptr; }
     bool testSetAutomaticDenoise(bool enabled) { return setAutomaticDenoise(enabled); }
     bool testSetAutomaticCompression(bool enabled) { return setAutomaticCompression(enabled); }
+    bool testSetAutomaticDetail(bool enabled) { return setAutomaticDetail(enabled); }
     // Exercise the real busy-state control policy without starting a worker.
     void testSetQueueControlsBusy(bool busy) { queueSessionActive_.store(busy); updateView(); }
     bool testCaptureRestorationDescriptors(application::ProcessingJob& job,
         const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
-        const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false) {
-        return captureRestorationDescriptors(job, temporal, spatial, compression, strength, tiled);
+        const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false,
+        const restoration::ModelPack* deblur = nullptr) {
+        return captureRestorationDescriptors(job, temporal, spatial, compression, strength, tiled, deblur);
     }
     bool testCaptureSelectedRestoration(application::ProcessingJob& job) { return captureSelectedRestoration(job); }
     // Descriptor-only fixture injection. It never creates an inference session
@@ -86,6 +88,11 @@ public:
     }
     void testSetSpatialModels(std::vector<restoration::ModelPack> models) {
         spatialRestorationModels_ = std::move(models);
+        syncRestorationSelectors();
+        updateView();
+    }
+    void testSetDeblurModels(std::vector<restoration::ModelPack> models) {
+        deblurRestorationModels_ = std::move(models);
         syncRestorationSelectors();
         updateView();
     }
@@ -146,6 +153,10 @@ private:
     static constexpr int kCompressionAdjustmentEdit = 1033;
     static constexpr int kCompressionAdjustmentReset = 1034;
     static constexpr int kStatusDetails = 1035;
+    static constexpr int kDeblurRestorationCombo = 1036;
+    static constexpr int kAutomaticDetail = 1037;
+    static constexpr int kDetailAdjustmentEdit = 1038;
+    static constexpr int kDetailAdjustmentReset = 1039;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -248,7 +259,8 @@ private:
     void startQueuedProcessing(application::ProcessingJob job, std::vector<std::filesystem::path> inputs, int platformIndex, int outputTargetSelection);
     bool captureRestorationDescriptors(application::ProcessingJob& job,
         const restoration::ModelPack* temporal, const restoration::ModelPack* spatial,
-        const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false);
+        const restoration::ModelPack* compression = nullptr, float strength = 0.0F, bool tiled = false,
+        const restoration::ModelPack* deblur = nullptr);
     bool captureSelectedRestoration(application::ProcessingJob& job);
     void stopQueuedProcessing();
     void toggleQueuedPause();
@@ -290,6 +302,9 @@ private:
     void configureAutomaticCompression();
     bool setAutomaticCompression(bool enabled);
     [[nodiscard]] bool automaticCompressionAvailable() const;
+    void configureAutomaticDetail();
+    bool setAutomaticDetail(bool enabled);
+    [[nodiscard]] bool automaticDetailAvailable() const;
     void refreshTaskHistory();
     void handleHistoryResult(NativeHistoryResult result);
 #endif
@@ -310,6 +325,7 @@ private:
     HWND samplesEdit_ = nullptr;
     HWND advancedButton_ = nullptr;
     HWND temporalRestorationCombo_ = nullptr;
+    HWND deblurRestorationCombo_ = nullptr;
     HWND compressionRestorationCombo_ = nullptr;
     HWND compressionStrengthCombo_ = nullptr;
     HWND compressionTilingCheck_ = nullptr;
@@ -332,6 +348,9 @@ private:
     HWND automaticDenoiseButton_ = nullptr;
     HWND denoiseAdjustmentEdit_ = nullptr;
     HWND denoiseAdjustmentResetButton_ = nullptr;
+    HWND automaticDetailButton_ = nullptr;
+    HWND detailAdjustmentEdit_ = nullptr;
+    HWND detailAdjustmentResetButton_ = nullptr;
     HWND automaticCompressionButton_ = nullptr;
     HWND compressionAdjustmentEdit_ = nullptr;
     HWND compressionAdjustmentResetButton_ = nullptr;
@@ -363,6 +382,7 @@ private:
     std::atomic<bool> closing_{false};
     bool advancedExpanded_ = false;
     bool automaticTemporalDenoise_ = false;
+    bool automaticDetailRestoration_ = false;
     bool automaticCompressionRestoration_ = false;
     struct ExportPresetControls {
         int rateSelection = 1;
@@ -397,6 +417,7 @@ private:
     std::uint64_t historyGeneration_ = 0;
     std::vector<restoration::ModelPack> temporalRestorationModels_;
     std::vector<restoration::ModelPack> spatialRestorationModels_;
+    std::vector<restoration::ModelPack> deblurRestorationModels_;
     std::vector<restoration::ModelPack> compressionRestorationModels_;
     std::optional<restoration::ModelPack> restorationModelPack_;
     std::optional<restoration::ModelPack> temporalRestorationModelPack_;

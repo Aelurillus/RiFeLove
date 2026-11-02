@@ -40,14 +40,24 @@ void checkLocalModelPreferences(Check check) {
     preferences.registerDirectory(external / L".");
     preferences.defaults[0] = external;
     preferences.defaults[3] = external;
+    preferences.defaults[4] = external;
     saveNativeModelPreferences(file, preferences);
     auto loaded = loadNativeModelPreferences(file);
-    check(loaded.registered.size() == 1 && loaded.defaults[0] == external && loaded.defaults[3] == external,
+    check(loaded.registered.size() == 1 && loaded.defaults[0] == external && loaded.defaults[3] == external &&
+        loaded.defaults[4] == external,
         "Unicode paths and default models round-trip without duplicate registrations");
+    auto oldPreferences = loaded;
+    oldPreferences.defaults[4].clear();
+    saveNativeModelPreferences(file, oldPreferences);
+    const auto legacy = loadNativeModelPreferences(file);
+    check(legacy.defaults[3] == external && legacy.defaults[4].empty(),
+        "old four-category preferences load with independent deblur still disabled");
+    saveNativeModelPreferences(file, loaded);
     loaded.unregisterDirectory(external);
     saveNativeModelPreferences(file, loaded);
     loaded = loadNativeModelPreferences(file);
-    check(loaded.registered.empty() && loaded.defaults[0].empty() && loaded.defaults[3].empty() && loaded.isExcluded(external),
+    check(loaded.registered.empty() && loaded.defaults[0].empty() && loaded.defaults[3].empty() &&
+        loaded.defaults[4].empty() && loaded.isExcluded(external),
         "unregister persists a discovery exclusion and clears matching defaults");
     check(std::filesystem::file_size(external / L"original.onnx") == 14,
         "unregister leaves the original model bytes intact");
@@ -82,18 +92,19 @@ inline std::string modelCenterHash(const std::string& value) {
 inline void makeModelCenterPack(const std::filesystem::path& root, int kind, bool supported = true, int scale = 2) {
     std::filesystem::create_directories(root);
     const std::string graph = "abc", license = "MIT fixture";
-    const auto id = kind == 0 ? "rife-center-fixture" : kind == 1 ? "spatial-center-fixture" : "temporal-center-fixture";
+    const auto id = kind == 0 ? "rife-center-fixture" : kind == 1 ? "spatial-center-fixture" :
+        kind == 4 ? "deblur-center-fixture" : "temporal-center-fixture";
     const auto adapter = kind == 0 ? "rife-sdr-v1" : !supported ? "fixture-denoiser-v1" :
-        kind == 1 ? "image-sr-rgb-f32-nchw-v1" : "fastdvdnet-rgb-f32-nchw16-v1";
-    const auto numerical = kind == 0 ? "sdr8" : kind == 1 ? "sdr8-fp32-cpu-reference" : "sdr8-fp32-pytorch-reference";
+        kind == 1 ? "image-sr-rgb-f32-nchw-v1" : kind == 4 ? "nafnet-zoo-deblur-rgb-f32-nchw-v1" : "fastdvdnet-rgb-f32-nchw16-v1";
+    const auto numerical = kind == 0 ? "sdr8" : kind == 1 || kind == 4 ? "sdr8-fp32-cpu-reference" : "sdr8-fp32-pytorch-reference";
     const std::string profiles = R"(["bt709-sdr8"])";
     const std::string backends = kind == 0 ? R"(["pytorch_cpu","onnxruntime_cpu"])" :
-        kind == 1 ? R"(["onnxruntime_cpu_source","onnxruntime_cpu_derived"])" :
+        kind == 1 || kind == 4 ? R"(["onnxruntime_cpu_source","onnxruntime_cpu_derived"])" :
         R"(["pytorch_cpu_source","onnxruntime_cpu_derived"])";
     const std::string capabilities = kind == 0 ?
         R"({"inputLayout":"NCHW","dtype":"float32","batch":1,"channels":3,"inputRange":[0.0,1.0],"spatialMultiple":64,"timestepShape":[1,1,1,1],"dynamicTimestep":true,"dynamicSpatial":true,"supportedInputProfiles":["bt709-sdr8"],"hdrQualified":false})" :
-        std::string(R"({"tasks":[")") + (kind == 1 ? "super-resolution" : "denoise") +
-        R"("],"placements":[")" + (kind == 1 ? "output-rate-after-interpolation" : "source-rate-before-interpolation") +
+        std::string(R"({"tasks":[")") + (kind == 1 ? "super-resolution" : kind == 4 ? "deblur" : "denoise") +
+        R"("],"placements":[")" + (kind == 1 || kind == 4 ? "output-rate-after-interpolation" : "source-rate-before-interpolation") +
         R"("],"supportedInputProfiles":["bt709-sdr8"],"temporalFramesBefore":)" + (kind == 2 ? "2" : "0") +
         R"(,"temporalFramesAfter":)" + (kind == 2 ? "2" : "0") + R"(,"scaleNumerator":)" + std::to_string(kind == 1 ? scale : 1) +
         R"(,"scaleDenominator":1,"supportsBoundaryPadding":)" + (kind == 2 ? "true}" : "false}");
@@ -104,7 +115,7 @@ inline void makeModelCenterPack(const std::filesystem::path& root, int kind, boo
         R"(","model_adapter":)" + adapterJson + R"(,"numerical_profile":")" + numerical + R"(","validated_backends":)" + backends +
         (kind == 0 ? R"(,"supported_input_profiles":)" + profiles : R"(,"capabilities":)" + capabilities) + R"(,"cases":[{"passed":true}]})";
     const std::string descriptor = std::string(R"({"schemaVersion":)") + (kind == 0 ? "2" : "1") + R"(,"id":")" + id +
-        R"(","displayName":")" + (kind == 0 ? "RIFE Fixture" : kind == 1 ? "SR Fixture" : "Temporal Fixture") +
+        R"(","displayName":")" + (kind == 0 ? "RIFE Fixture" : kind == 1 ? "SR Fixture" : kind == 4 ? "Deblur Fixture" : "Temporal Fixture") +
         R"(","family":")" + (kind == 0 ? "rife" : "video-restoration") + R"(","version":"1.0","adapter":)" + adapterJson +
         R"(,"modelFile":"model.onnx","sha256":")" + modelCenterHash(graph) + R"(","license":{"id":"MIT","file":"LICENSE.txt","sha256":")" +
         modelCenterHash(license) + R"("},"provenance":{"manifestFile":"source-manifest.json","manifestSha256":")" + modelCenterHash(provenance) +
@@ -127,13 +138,17 @@ void checkLocalModelCenter(Check check) {
     const auto rife = temporary.root / L"外部 RIFE";
     const auto spatial = temporary.root / L"外部 SR";
     const auto temporal = temporary.root / L"外部 Temporal";
+    const auto deblur = temporary.root / L"外部 Deblur";
     const auto unsupported = temporary.root / L"外部 Unsupported";
+    const auto unsupportedDeblur = temporary.root / L"外部 Unsupported Deblur";
     const auto unsupportedScale = temporary.root / L"外部 SR4";
     makeModelCenterPack(bundled, 0);
     makeModelCenterPack(rife, 0);
     makeModelCenterPack(spatial, 1);
     makeModelCenterPack(temporal, 2);
+    makeModelCenterPack(deblur, 4);
     makeModelCenterPack(unsupported, 2, false);
+    makeModelCenterPack(unsupportedDeblur, 4, false);
     makeModelCenterPack(unsupportedScale, 1, true, 4);
     writeModelCenterText(appRoot / L"models" / L"default-model.txt", "\xEF\xBB\xBFrife-bundled\r\n");
     const auto find = [&](const auto& app, const auto& path) {
@@ -147,19 +162,28 @@ void checkLocalModelCenter(Check check) {
         check(app.testViewState().modelReady, "verified bundled marker model remains usable");
         check(app.create(GetModuleHandleW(nullptr), SW_SHOWNOACTIVATE), "create isolated model-center owner");
         const HWND main = app.testMainWindow();
-        check(app.testRegisterModel(rife) && app.testRegisterModel(spatial) && app.testRegisterModel(temporal),
-            "registers verified local RIFE, super-resolution and temporal packs");
-        check(app.testRegisterModel(unsupported) && app.testRegisterModel(unsupportedScale),
+        check(app.testRegisterModel(rife) && app.testRegisterModel(spatial) && app.testRegisterModel(temporal) &&
+            app.testRegisterModel(deblur),
+            "registers verified local RIFE, super-resolution, temporal and deblur packs");
+        check(app.testRegisterModel(unsupported) && app.testRegisterModel(unsupportedDeblur) &&
+            app.testRegisterModel(unsupportedScale),
             "unsupported verified packs remain inspectable in model center");
         const auto unsupportedIndex = find(app, unsupported);
+        const auto unsupportedDeblurIndex = find(app, unsupportedDeblur);
         const auto scaleIndex = find(app, unsupportedScale);
         check(unsupportedIndex < app.testLocalModels().size() && app.testLocalModels()[unsupportedIndex].verified &&
             !app.testLocalModels()[unsupportedIndex].usable && !app.testSetDefaultModel(unsupportedIndex),
             "verified unknown adapters are never advertised as usable defaults");
         check(scaleIndex < app.testLocalModels().size() && !app.testLocalModels()[scaleIndex].usable && !app.testSetDefaultModel(scaleIndex),
             "unsupported super-resolution scale cannot enter the native x2 selector");
+        check(unsupportedDeblurIndex < app.testLocalModels().size() &&
+            app.testLocalModels()[unsupportedDeblurIndex].kind == 4 &&
+            !app.testLocalModels()[unsupportedDeblurIndex].usable &&
+            !app.testSetDefaultModel(unsupportedDeblurIndex),
+            "unqualified deblur adapter remains inspectable but cannot become a processing default");
         check(app.testSetDefaultModel(find(app, rife)) && app.testSetDefaultModel(find(app, spatial)) &&
-            app.testSetDefaultModel(find(app, temporal)), "each model category has an independent persistent default");
+            app.testSetDefaultModel(find(app, temporal)) && app.testSetDefaultModel(find(app, deblur)),
+            "each model category has an independent persistent default");
         const HWND center = app.testShowModelCenter();
         check(center != nullptr && GetDlgItem(center, 1201) && GetDlgItem(center, 1202), "model center has a real native list and readable details");
         if (center) {
@@ -176,6 +200,12 @@ void checkLocalModelCenter(Check check) {
             GetWindowTextW(details, text.data(), static_cast<int>(text.size()));
             check(text.find(rife.wstring()) != std::wstring::npos && text.find(L"bt709-sdr8") != std::wstring::npos &&
                 text.find(L"哈希一致") != std::wstring::npos, "details expose full path, color/input profile and actual verification status");
+            select(deblur);
+            text.assign(static_cast<std::size_t>(GetWindowTextLengthW(details)) + 1, L'\0');
+            GetWindowTextW(details, text.data(), static_cast<int>(text.size()));
+            check(text.find(L"实验性独立去模糊") != std::wstring::npos && text.find(L"SDR8") != std::wstring::npos &&
+                text.find(L"显存") != std::wstring::npos && text.find(L"自然动态曝光") != std::wstring::npos,
+                "model center explains deblur qualification, artifact and exposure limitations");
             const UINT dpi = GetDpiForWindow(center);
             SetWindowPos(center, nullptr, 0, 0, MulDiv(500, dpi, 96), MulDiv(540, dpi, 96), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             RECT client{}, listRect{}, detailRect{};
@@ -197,6 +227,79 @@ void checkLocalModelCenter(Check check) {
         check(SendMessageW(GetDlgItem(main, 1017), CB_GETCURSEL, 0, 0) > 0 &&
             SendMessageW(GetDlgItem(main, 1024), CB_GETCURSEL, 0, 0) > 0,
             "saved restoration defaults are applied to the actual job selectors");
+        check(app.testModelPreferences().defaults[4] == deblur &&
+            SendMessageW(GetDlgItem(main, 1036), CB_GETCURSEL, 0, 0) == 0 &&
+            !app.testExportSettings().automaticDetailRestoration,
+            "saved preferred deblur pack never silently enables experimental processing");
+        const HWND deblurCombo = GetDlgItem(main, 1036);
+        const HWND detailButton = GetDlgItem(main, 1037);
+        const HWND detailAdjustment = GetDlgItem(main, 1038);
+        const HWND detailReset = GetDlgItem(main, 1039);
+        const HWND blur = GetDlgItem(main, 1013);
+        check(deblurCombo && detailButton && detailAdjustment && detailReset &&
+            SendMessageW(deblurCombo, CB_GETCOUNT, 0, 0) == 2 && !IsWindowEnabled(detailAdjustment),
+            "independent deblur selector and zero-default automatic adjustment are visible but off");
+        SendMessageW(deblurCombo, CB_SETCURSEL, 1, 0);
+        SendMessageW(main, WM_COMMAND, MAKEWPARAM(1036, CBN_SELCHANGE), reinterpret_cast<LPARAM>(deblurCombo));
+        check(app.testViewState().restorationSummary.find(L"去模糊：NAFNet 固定") != std::wstring::npos &&
+            app.testViewState().restorationSummary.find(L"超分：×2") != std::wstring::npos &&
+            !app.testExportSettings().automaticDetailRestoration,
+            "manual deblur and super-resolution remain independently selected with automatic detail off");
+        check(app.testSetAutomaticDetail(true) && app.testExportSettings().automaticDetailRestoration &&
+            app.testViewState().automaticDetailRestoration && IsWindowEnabled(detailAdjustment),
+            "explicit automatic-detail opt-in reaches the real export settings and enables its adjustment");
+        SetWindowTextW(detailAdjustment, L"-25.5");
+        check(app.testExportSettings().automaticDetailRestoration->relativeAdjustment == -0.255,
+            "signed relative detail adjustment is captured without affecting the super-resolution slot");
+        application::ProcessingJob dualImageJob;
+        dualImageJob.source = "C:/fixture/source.mp4";
+        dualImageJob.output = "C:/fixture/output.mkv";
+        dualImageJob.modelDirectory = rife;
+        dualImageJob.runtimeDirectory = temporary.root / L"runtime";
+        check(app.testCaptureSelectedRestoration(dualImageJob) && dualImageJob.deblurModelDirectory == deblur &&
+            dualImageJob.restorationModelDirectory == spatial &&
+            dualImageJob.expectedDeblurDescriptorSha256 == inference::sha256File(deblur / L"model.json", 256 * 1024) &&
+            dualImageJob.expectedRestorationDescriptorSha256 == inference::sha256File(spatial / L"model.json", 256 * 1024),
+            "actual selector capture pins independent deblur and super-resolution descriptor hashes");
+        dualImageJob.settings = app.testExportSettings();
+        const auto restoredDual = application::parseJob(dualImageJob.source, dualImageJob.output,
+            application::serializeJob(dualImageJob));
+        check(restoredDual.deblurModelDirectory == deblur && restoredDual.restorationModelDirectory == spatial &&
+            restoredDual.settings.automaticDetailRestoration &&
+            restoredDual.settings.automaticDetailRestoration->relativeAdjustment == -0.255,
+            "native dual-slot selection and automatic detail survive queue serialization");
+        app.testSetQueueControlsBusy(true);
+        check(!IsWindowEnabled(deblurCombo) && !IsWindowEnabled(detailButton) && !IsWindowEnabled(detailAdjustment) &&
+            !IsWindowEnabled(detailReset) && !app.testSetAutomaticDetail(false),
+            "running queue locks all independent deblur controls without mutating queued settings");
+        app.testSetQueueControlsBusy(false);
+        SendMessageW(detailReset, BM_CLICK, 0, 0);
+        wchar_t detailValue[32]{};
+        GetWindowTextW(detailAdjustment, detailValue, static_cast<int>(std::size(detailValue)));
+        check(std::wstring(detailValue) == L"0" &&
+            app.testExportSettings().automaticDetailRestoration->relativeAdjustment == 0.0,
+            "detail reset restores neutral automatic bias");
+        SendMessageW(blur, BM_SETCHECK, BST_CHECKED, 0);
+        SendMessageW(main, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
+        bool exposureRejected = false;
+        try { (void)app.testExportSettings(); } catch (const std::invalid_argument&) { exposureRejected = true; }
+        check(exposureRejected && app.testViewState().detailAdjustmentSummary.find(L"冲突") != std::wstring::npos,
+            "effective natural exposure visibly blocks experimental automatic detail");
+        check(app.testSetAutomaticDetail(false) && !app.testSetAutomaticDetail(true),
+            "automatic detail cannot be re-enabled while exposure synthesis is active");
+        SendMessageW(blur, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(main, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
+        check(app.testSetAutomaticDetail(true), "automatic detail can be re-enabled after exposure is disabled");
+        SendMessageW(deblurCombo, CB_SETCURSEL, 0, 0);
+        SendMessageW(main, WM_COMMAND, MAKEWPARAM(1036, CBN_SELCHANGE), reinterpret_cast<LPARAM>(deblurCombo));
+        GetWindowTextW(detailAdjustment, detailValue, static_cast<int>(std::size(detailValue)));
+        check(!app.testExportSettings().automaticDetailRestoration && !app.testViewState().automaticDetailRestoration &&
+            std::wstring(detailValue) == L"0" && !IsWindowEnabled(detailAdjustment),
+            "turning the deblur model off clears automatic opt-in and its adjustment");
+        application::ProcessingJob spatialOnlyJob;
+        check(app.testCaptureSelectedRestoration(spatialOnlyJob) && spatialOnlyJob.deblurModelDirectory.empty() &&
+            spatialOnlyJob.expectedDeblurDescriptorSha256.empty() && spatialOnlyJob.restorationModelDirectory == spatial,
+            "disabling deblur leaves the independent super-resolution job selection intact");
         check(!app.testExportSettings().automaticTemporalDenoise && !app.testViewState().automaticTemporalDenoise,
             "experimental automatic Gaussian denoise defaults off even when a temporal model is selected");
         const HWND adjustment = GetDlgItem(main, 1030), adjustmentReset = GetDlgItem(main, 1031);
@@ -313,11 +416,14 @@ void checkLocalModelCenter(Check check) {
         check(app.create(GetModuleHandleW(nullptr), SW_SHOWNOACTIVATE), "recreate model-center owner after restart");
         const HWND main = app.testMainWindow();
         check(app.testModelPreferences().defaults[0] == rife && app.testModelPreferences().defaults[1] == spatial &&
-            app.testModelPreferences().defaults[2] == temporal && app.testViewState().modelReady,
-            "RIFE and both restoration defaults survive a new application instance");
+            app.testModelPreferences().defaults[2] == temporal && app.testModelPreferences().defaults[4] == deblur &&
+            app.testViewState().modelReady,
+            "RIFE, super-resolution, denoise and deblur defaults survive a new application instance");
         check(SendMessageW(GetDlgItem(main, 1017), CB_GETCURSEL, 0, 0) > 0 &&
-            SendMessageW(GetDlgItem(main, 1024), CB_GETCURSEL, 0, 0) > 0,
-            "restoration defaults survive restart in the actual selectors");
+            SendMessageW(GetDlgItem(main, 1024), CB_GETCURSEL, 0, 0) > 0 &&
+            SendMessageW(GetDlgItem(main, 1036), CB_GETCURSEL, 0, 0) == 0 &&
+            !app.testExportSettings().automaticDetailRestoration,
+            "restoration defaults survive restart while experimental deblur remains off");
         writeModelCenterText(rife / L"LICENSE.txt", "tampered");
         app.testRefreshModels();
         const auto corrupt = find(app, rife);

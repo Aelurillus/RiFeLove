@@ -217,6 +217,29 @@ bool confirmAutomaticDenoise(HDESK desktop, DWORD processId, HWND parent) {
         std::chrono::seconds(5));
 }
 
+BOOL CALLBACK findAutomaticDetailDialog(HWND window, LPARAM parameter) {
+    auto& context = *reinterpret_cast<FindWindowContext*>(parameter);
+    DWORD processId = 0; GetWindowThreadProcessId(window, &processId);
+    wchar_t name[128]{}; GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    if (processId == context.processId && std::wstring(name) == L"#32770" &&
+        controlText(window) == L"实验性自动细节") { context.result = window; return FALSE; }
+    return TRUE;
+}
+
+bool confirmAutomaticDetail(HDESK desktop, DWORD processId, HWND parent) {
+    const HWND button = GetDlgItem(parent, 1037);
+    if (!button || !IsWindowEnabled(button) || controlText(button).find(L"关") == std::wstring::npos) return false;
+    if (!PostMessageW(parent, WM_COMMAND, MAKEWPARAM(1037, BN_CLICKED), reinterpret_cast<LPARAM>(button))) return false;
+    FindWindowContext dialog{processId};
+    if (!waitUntil([&] { EnumDesktopWindows(desktop, findAutomaticDetailDialog, reinterpret_cast<LPARAM>(&dialog));
+                         return dialog.result != nullptr; }, std::chrono::seconds(10))) return false;
+    const HWND yes = GetDlgItem(dialog.result, IDYES);
+    if (!yes) { PostMessageW(dialog.result, WM_COMMAND, IDCANCEL, 0); return false; }
+    PostMessageW(dialog.result, WM_COMMAND, MAKEWPARAM(IDYES, BN_CLICKED), reinterpret_cast<LPARAM>(yes));
+    return waitUntil([&] { return !IsWindow(dialog.result) && controlText(button).find(L"开*") != std::wstring::npos; },
+                     std::chrono::seconds(5));
+}
+
 BOOL CALLBACK findAutomaticCompressionDialog(HWND window, LPARAM parameter) {
     auto& context = *reinterpret_cast<FindWindowContext*>(parameter);
     DWORD processId = 0; GetWindowThreadProcessId(window, &processId);
@@ -330,7 +353,7 @@ bool freshPortableQa(const std::filesystem::path& executable) {
 
 bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem::path& source,
     const std::filesystem::path& output, bool automaticDenoise, bool compression = false, bool compressionTiled = false,
-    bool automaticCompression = false) {
+    bool automaticCompression = false, bool automaticDetailSr = false) {
     // Use the Windows SQLite API read-only; no new link/runtime dependency is
     // added to the product or to this standalone User32 test driver.
     HMODULE module = LoadLibraryExW(L"winsqlite3.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -447,6 +470,20 @@ bool verifyQaQueue(const std::filesystem::path& database, const std::filesystem:
     } else if (compression) {
         sql += " AND json_extract(d.configuration,'$.automaticCompressionRestoration') IS NULL "
             "AND COALESCE(json_extract(d.result,'$.automaticCompressionRestoration.active'),0)=0";
+    }
+    if (automaticDetailSr) {
+        sql += " AND json_extract(d.configuration,'$.schemaVersion')=14 "
+            "AND json_extract(d.configuration,'$.deblurModelDirectory')<>'' "
+            "AND length(json_extract(d.configuration,'$.expectedDeblurDescriptorSha256'))=64 "
+            "AND json_extract(d.configuration,'$.restorationModelDirectory')<>'' "
+            "AND length(json_extract(d.configuration,'$.expectedRestorationDescriptorSha256'))=64 "
+            "AND json_extract(d.configuration,'$.outputImageOrder')='deblur-before-super-resolution-v1' "
+            "AND json_extract(d.configuration,'$.automaticDetailRestoration.algorithmVersion')=2 "
+            "AND json_extract(d.result,'$.automaticDetailRestoration.active')=1 "
+            "AND json_extract(d.result,'$.automaticDetailRestoration.conditionedOutputFrames')>0 "
+            "AND json_extract(d.result,'$.deblurRestorationModelId')='nafnet-zoo-gopro-sdr8-local' "
+            "AND json_extract(d.result,'$.restorationModelId')='realesrgan-x2plus-sdr8-local' "
+            "AND json_extract(d.result,'$.sourceDecodeAcceleration')='software'";
     }
     const auto input = utf8(source.c_str()), destination = utf8(output.c_str());
     void* statementRaw = nullptr;
@@ -632,6 +669,7 @@ int wmain(int argc, wchar_t** argv) {
     const std::filesystem::path source = captureOnly ? std::filesystem::path{} : std::filesystem::absolute(argv[2]).lexically_normal();
     const std::filesystem::path output = std::filesystem::absolute(argv[3]).lexically_normal();
     const bool automaticDenoise = argc == 5 && std::wcscmp(argv[4], L"--auto-denoise") == 0;
+    const bool automaticDetailSr = argc == 5 && std::wcscmp(argv[4], L"--auto-detail-sr") == 0;
     const bool automaticCompression = argc == 5 &&
         (std::wcscmp(argv[4], L"--auto-compression") == 0 || std::wcscmp(argv[4], L"--auto-compression-tiled") == 0);
     const bool compressionTiled = argc == 5 &&
@@ -647,7 +685,7 @@ int wmain(int argc, wchar_t** argv) {
         std::cerr << "Comparison QA requires a packaged RifeLoveNative.exe with manifest/checksums and declared small synthetic fixtures inside its qa-fixtures directory; arbitrary videos, links and existing outputs are refused before launch.\n";
         return 2;
     }
-    if ((automaticDenoise || compression || captureOnly || comparison) && !freshPortableQa(executable)) {
+    if ((automaticDenoise || automaticDetailSr || compression || captureOnly || comparison) && !freshPortableQa(executable)) {
         std::cerr << "This EXE QA mode requires a local portable-mode.txt and absent/empty writable data directory; existing queues are never used.\n";
         return 2;
     }
@@ -724,6 +762,20 @@ int wmain(int argc, wchar_t** argv) {
                 const bool dual = option == L"--dual" || option == L"--dual-blur";
                 const bool denoise = argc == 5 && (std::wstring(argv[4]) == L"--denoise" || dual || automaticDenoise);
                 const bool highRate = argc == 5 && (std::wstring(argv[4]) == L"--300" || std::wstring(argv[4]) == L"--360" || std::wstring(argv[4]) == L"--480" || std::wstring(argv[4]) == L"--600");
+                if (automaticDetailSr) {
+                    const bool ready = selectComboItemByLabel(context.result, 1005, L"60 FPS") &&
+                        selectComboItemByLabel(context.result, 1036, L"NAFNet") &&
+                        selectComboItemByLabel(context.result, 1017, L"超分辨率") &&
+                        confirmAutomaticDetail(desktop, process.dwProcessId, context.result) && IsWindowEnabled(start);
+                    if (!ready) {
+                        std::cerr << "Independent deblur, super-resolution or automatic detail controls were unavailable.\n";
+                        PostMessageW(context.result, WM_CLOSE, 0, 0);
+                        if (WaitForSingleObject(process.hProcess, 10000) != WAIT_OBJECT_0) {
+                            TerminateProcess(process.hProcess, 1); WaitForSingleObject(process.hProcess, 5000);
+                        }
+                        CloseHandle(process.hProcess); CloseDesktop(desktop); return 1;
+                    }
+                }
                 if ((comparison || compression) && !selectComboItemByLabel(context.result, 1005, L"60 FPS")) {
                     std::cerr << "Comparison/compression QA requires an explicitly selected 60 FPS output.\n";
                     PostMessageW(context.result, WM_CLOSE, 0, 0);
@@ -849,7 +901,7 @@ int wmain(int argc, wchar_t** argv) {
                         return 1;
                     }
                 }
-                if (argc == 5 && !blur && !highRate && !denoise && !compression && !comparison && !captureTarget(context.result, std::filesystem::absolute(argv[4])))
+                if (argc == 5 && !blur && !highRate && !denoise && !compression && !comparison && !automaticDetailSr && !captureTarget(context.result, std::filesystem::absolute(argv[4])))
                     std::cerr << "Could not capture the target window on the isolated desktop.\n";
                 SendMessageW(start, BM_CLICK, 0, 0);
                 bool automaticControlsLocked = true;
@@ -866,7 +918,7 @@ int wmain(int argc, wchar_t** argv) {
                     else std::cout << "Actual EXE locks all independent compression controls while its queue is active and preserves the captured bias.\n";
                 }
                 if (waitUntil([&] { return std::filesystem::is_regular_file(output) && !IsWindowEnabled(cancel); },
-                              std::chrono::seconds(compressionTiled ? 600 : automaticDenoise || compression ? 300 : 120))) {
+                              std::chrono::seconds(compressionTiled ? 600 : automaticDenoise || automaticDetailSr || compression ? 300 : 120))) {
                     std::cout << "Actual native EXE published the test video through its start button.\n";
                     result = !automaticControlsLocked ? 1 : comparison ? (checkPackagedComparison(desktop, process.dwProcessId, context.result, source, output) ? 0 : 1) : 0;
                 } else std::cerr << "Target did not publish a completed test video.\n";
@@ -886,7 +938,7 @@ int wmain(int argc, wchar_t** argv) {
         WaitForSingleObject(process.hProcess, 5000);
         result = 1;
     }
-    if (result == 0 && (automaticDenoise || compression || comparison) && !verifyQaQueue(executable.parent_path() / L"data" / L"queue.sqlite", source, output, automaticDenoise, compression, compressionTiled, automaticCompression))
+    if (result == 0 && (automaticDenoise || automaticDetailSr || compression || comparison) && !verifyQaQueue(executable.parent_path() / L"data" / L"queue.sqlite", source, output, automaticDenoise, compression, compressionTiled, automaticCompression, automaticDetailSr))
         result = 1;
     CloseHandle(process.hProcess);
     CloseDesktop(desktop);

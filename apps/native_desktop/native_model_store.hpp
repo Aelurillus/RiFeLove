@@ -23,8 +23,9 @@ struct NativeModelPreferences {
     std::vector<std::filesystem::path> registered;
     std::vector<std::filesystem::path> excluded;
     // 0: RIFE, 1: output-rate super-resolution, 2: source-rate denoise,
-    // 3: compression restoration. Choosing its model never enables its strength.
-    std::array<std::filesystem::path, 4> defaults{};
+    // 3: compression restoration, 4: output-rate deblur. A saved deblur
+    // default identifies a preferred pack but never opts into processing.
+    std::array<std::filesystem::path, 5> defaults{};
 
     static std::wstring key(const std::filesystem::path& path) {
         auto normalized = std::filesystem::absolute(path).lexically_normal();

@@ -29,6 +29,8 @@ struct NativeRenderState {
     std::wstring restorationSummary;
     std::wstring denoiseModeSummary;
     std::wstring denoiseAdjustmentSummary;
+    std::wstring detailSummary;
+    std::wstring detailAdjustmentSummary;
     std::wstring compressionSummary;
     std::wstring compressionAdjustmentSummary;
     std::wstring outputSizeSummary;
@@ -42,6 +44,7 @@ struct NativeRenderState {
     bool runtimeReady = false;
     bool advancedExpanded = false;
     bool automaticTemporalDenoise = false;
+    bool automaticDetailRestoration = false;
     bool automaticCompressionRestoration = false;
     float scrollOffset = 0.0F;
 };
@@ -51,8 +54,9 @@ struct NativeRenderState {
 // the settings viewport scrolls on small screens or at increased display DPI.
 struct NativeLayout {
     static constexpr float denoiseAdjustmentHeight = 94.0F;
+    static constexpr float deblurAdjustmentHeight = 204.0F;
     static constexpr float compressionAdjustmentHeight = 140.0F;
-    static constexpr float qualityControlsHeight = denoiseAdjustmentHeight + compressionAdjustmentHeight;
+    static constexpr float qualityControlsHeight = denoiseAdjustmentHeight + deblurAdjustmentHeight + compressionAdjustmentHeight;
     float width = 1366;
     float height = 768;
     float side = 188;

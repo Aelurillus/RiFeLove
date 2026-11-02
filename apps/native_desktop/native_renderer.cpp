@@ -222,8 +222,8 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     cardAt(l.left, y + 296, lw, 482 + NativeLayout::qualityControlsHeight);
     text(L"02", l.left + 20, y + 311, 28, 22, 10, blue, true);
     text(L"画质与运动", l.left + 53, y + 309, lw - 84, 26, 14, white, true);
-    // The native controls are separate so temporal denoise and spatial
-    // super-resolution can be enabled independently. Keep their labels close
+    // The native controls are separate so denoise, deblur and super-resolution
+    // can be enabled independently. Keep their labels close
     // to the corresponding fields so long model names remain understandable.
     text(state.denoiseModeSummary.empty() ? L"可选降噪 · 默认项见模型中心" : state.denoiseModeSummary,
         l.left + 20, y + 331, lw - 40, 20, 11, state.automaticTemporalDenoise ? warning : muted);
@@ -231,16 +231,25 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     cardAt(l.left + 20, y + 420, lw - 130, 30, D2D1::ColorF(0x141922), 7);
     text(state.denoiseAdjustmentSummary.empty() ? L"自动模式关闭：选择降噪模型后可启用。" : state.denoiseAdjustmentSummary,
         l.left + 20, y + 456, lw - 40, 32, 10, state.automaticTemporalDenoise ? warning : muted, false, true);
-    text(L"超分辨率 · 默认项见模型中心", l.left + 20, y + 397 + NativeLayout::denoiseAdjustmentHeight, lw - 40, 20, 11, muted);
-    text(L"输出尺寸 · 仅超分模型可用", l.left + 20, y + 463 + NativeLayout::denoiseAdjustmentHeight, lw - 40, 20, 11, muted);
-    text(L"压缩修复 · STDF 本机评估", l.left + 20, y + 529 + NativeLayout::denoiseAdjustmentHeight, (lw - 48) * 0.68F, 20, 11, muted);
+    const float deblurTop = 397 + NativeLayout::denoiseAdjustmentHeight;
+    text(L"去模糊 · 实验性，默认关闭", l.left + 20, y + deblurTop, lw - 40, 20, 11, muted);
+    text(L"动态细节", l.left + 20, y + deblurTop + 66, lw - 160, 20, 11, muted);
+    text(L"细节相对自动值（%）", l.left + 20, y + deblurTop + 104, lw - 40, 20, 11, muted);
+    cardAt(l.left + 20, y + deblurTop + 127, lw - 130, 30, D2D1::ColorF(0x141922), 7);
+    text(state.detailAdjustmentSummary.empty() ? L"自动模式关闭；选中模型仍使用固定去模糊。" : state.detailAdjustmentSummary,
+        l.left + 20, y + deblurTop + 163, lw - 40, 34, 10,
+        state.automaticDetailRestoration ? warning : muted, false, true);
+    const float outputImageOffset = NativeLayout::denoiseAdjustmentHeight + NativeLayout::deblurAdjustmentHeight;
+    text(L"超分辨率 · 默认项见模型中心", l.left + 20, y + 397 + outputImageOffset, lw - 40, 20, 11, muted);
+    text(L"输出尺寸 · 仅超分模型可用", l.left + 20, y + 463 + outputImageOffset, lw - 40, 20, 11, muted);
+    text(L"压缩修复 · STDF 本机评估", l.left + 20, y + 529 + outputImageOffset, (lw - 48) * 0.68F, 20, 11, muted);
     text(state.automaticCompressionRestoration ? L"手动值（停用）" : L"强度 / 开关", l.left + 28 + (lw - 48) * 0.68F,
-        y + 529 + NativeLayout::denoiseAdjustmentHeight, (lw - 48) * 0.32F, 20, 11, muted);
-    text(L"动态压缩修复", l.left + 20, y + 635 + NativeLayout::denoiseAdjustmentHeight, lw - 170, 20, 11, muted);
-    text(L"压缩修复相对自动值（%）", l.left + 20, y + 670 + NativeLayout::denoiseAdjustmentHeight, lw - 40, 20, 11, muted);
-    cardAt(l.left + 20, y + 693 + NativeLayout::denoiseAdjustmentHeight, lw - 130, 30, D2D1::ColorF(0x141922), 7);
+        y + 529 + outputImageOffset, (lw - 48) * 0.32F, 20, 11, muted);
+    text(L"动态压缩修复", l.left + 20, y + 635 + outputImageOffset, lw - 170, 20, 11, muted);
+    text(L"压缩修复相对自动值（%）", l.left + 20, y + 670 + outputImageOffset, lw - 40, 20, 11, muted);
+    cardAt(l.left + 20, y + 693 + outputImageOffset, lw - 130, 30, D2D1::ColorF(0x141922), 7);
     text(state.compressionAdjustmentSummary.empty() ? L"自动模式关闭；手动强度保持独立。" : state.compressionAdjustmentSummary,
-        l.left + 20, y + 729 + NativeLayout::denoiseAdjustmentHeight, lw - 40, 36, 10,
+        l.left + 20, y + 729 + outputImageOffset, lw - 40, 36, 10,
         state.automaticCompressionRestoration ? warning : muted, false, true);
     text(state.compressionSummary.empty() ? L"默认关闭 · CUDA / SDR8 · 仅验证至 384 × 256" : state.compressionSummary,
         l.left + 20, y + 634 + NativeLayout::qualityControlsHeight, lw - 40, 34, 10, warning, false, true);

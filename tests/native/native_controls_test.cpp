@@ -532,9 +532,11 @@ void checkOutputFieldAlignment(HWND window);
 void checkQualityFieldSpacing(HWND window) {
     const UINT dpi = GetDpiForWindow(window);
     const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
-    const int offset = static_cast<int>(NativeLayout::denoiseAdjustmentHeight);
-    const std::array<int, 7> controls{1024, 1030, 1031, 1017, 1018, 1027, 1028};
-    const std::array<int, 7> labelTops{331, 397, 397, 397 + offset, 463 + offset, 529 + offset, 529 + offset};
+    const int denoiseOffset = static_cast<int>(NativeLayout::denoiseAdjustmentHeight);
+    const int outputOffset = static_cast<int>(NativeLayout::denoiseAdjustmentHeight + NativeLayout::deblurAdjustmentHeight);
+    const std::array<int, 10> controls{1024, 1030, 1031, 1036, 1038, 1039, 1017, 1018, 1027, 1028};
+    const std::array<int, 10> labelTops{331, 397, 397, 397 + denoiseOffset, 501 + denoiseOffset,
+        501 + denoiseOffset, 397 + outputOffset, 463 + outputOffset, 529 + outputOffset, 529 + outputOffset};
     for (std::size_t index = 0; index < controls.size(); ++index) {
         const HWND control = GetDlgItem(window, controls[index]);
         check(control != nullptr, "find restoration field for label spacing");
@@ -547,6 +549,12 @@ void checkQualityFieldSpacing(HWND window) {
         check(rect.bottom <= px(labelTops[index] + 64),
             "restoration selector does not cover the following label or section divider");
     }
+    RECT combo{}, button{}, adjustment{};
+    GetWindowRect(GetDlgItem(window, 1036), &combo);
+    GetWindowRect(GetDlgItem(window, 1037), &button);
+    GetWindowRect(GetDlgItem(window, 1038), &adjustment);
+    check(combo.bottom <= button.top && button.bottom <= adjustment.top,
+        "deblur model, automatic-detail toggle and adjustment do not overlap");
 }
 
 void checkAutomaticAdjustmentContract() {
@@ -943,7 +951,7 @@ void checkMissingRestorationDescriptor(NativeApp& app, HWND window) {
     check(!app.testCaptureRestorationDescriptors(job, &temporal, nullptr),
         "missing selected temporal descriptor is converted to a startup failure without throwing");
     check(IsWindow(window) && app.testViewState().processing == wasProcessing && app.testViewState().stage == L"failed" &&
-        app.testViewState().status.find(L"恢复所选降噪/超分模型的 model.json") != std::wstring::npos &&
+        app.testViewState().status.find(L"恢复所选降噪/去模糊/超分模型的 model.json") != std::wstring::npos &&
         app.testViewState().status.find(L"重新选择模型") != std::wstring::npos,
         "missing selected model keeps the desktop alive and provides recovery or reselection guidance");
     std::ofstream(temporal.directory / L"model.json", std::ios::binary) << "{}";
@@ -953,6 +961,14 @@ void checkMissingRestorationDescriptor(NativeApp& app, HWND window) {
         job.expectedRestorationDescriptorSha256 == "unchanged-spatial" &&
         job.temporalRestorationModelDirectory.empty() && job.restorationModelDirectory.empty(),
         "descriptor read failure does not leave a partially captured job for enqueueing");
+    const auto deblurDirectory = fixture.root / L"deblur";
+    native_test::makeModelCenterPack(deblurDirectory, 4);
+    const auto deblur = restoration::loadModelPack(deblurDirectory);
+    std::filesystem::remove(deblurDirectory / L"model.json");
+    job.expectedDeblurDescriptorSha256 = "unchanged-deblur";
+    check(!app.testCaptureRestorationDescriptors(job, nullptr, nullptr, nullptr, 0.0F, false, &deblur) &&
+        job.expectedDeblurDescriptorSha256 == "unchanged-deblur" && job.deblurModelDirectory.empty(),
+        "removed independent deblur descriptor blocks submission without a partially pinned job");
     check(app.testCaptureRestorationDescriptors(job, nullptr, nullptr),
         "startup descriptor validation remains usable after a failed selection");
 }
