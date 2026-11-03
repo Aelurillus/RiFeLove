@@ -129,7 +129,7 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     RECT client{};
     GetClientRect(window, &client);
     const auto l = NativeLayout::from(static_cast<float>(client.right) / scale_,
-        static_cast<float>(client.bottom) / scale_, state.scrollOffset);
+        static_cast<float>(client.bottom) / scale_, state.scrollOffset, state.qualityExpanded);
     const auto px = [&](float n) { return dip(n, scale_); };
     const auto text = [&](const std::wstring& value, float x, float y, float w, float h,
         float size = 11, D2D1::ColorF color = muted, bool bold = false, bool wrap = false) {
@@ -219,9 +219,20 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
     text(state.mediaSummary.empty() ? L"MP4 / MKV / MOV  ·  精确时间轴" : state.mediaSummary,
         l.left + 20, y + l.sourceInputTop + 66, lw - 40, 18, 10, muted);
 
-    cardAt(l.left, y + 296, lw, 482 + NativeLayout::qualityControlsHeight);
+    cardAt(l.left, y + 296, lw, state.qualityExpanded ?
+        482 + NativeLayout::qualityControlsHeight + NativeLayout::qualityDisclosureHeight :
+        NativeLayout::collapsedQualityHeight);
     text(L"02", l.left + 20, y + 311, 28, 22, 10, blue, true);
     text(L"画质与运动", l.left + 53, y + 309, lw - 84, 26, 14, white, true);
+    if (!state.qualityExpanded) {
+        text(L"可选增强：降噪 · 去模糊 · 超分 · 压缩修复",
+            l.left + 20, y + 421, lw - 40, 22, 10, muted);
+    } else {
+    // The model controls begin immediately after the disclosure row.
+    D2D1::Matrix3x2F qualityTransform;
+    renderTarget_->GetTransform(&qualityTransform);
+    renderTarget_->SetTransform(qualityTransform *
+        D2D1::Matrix3x2F::Translation(0, px(NativeLayout::qualityDisclosureHeight)));
     // The native controls are separate so denoise, deblur and super-resolution
     // can be enabled independently. Keep their labels close
     // to the corresponding fields so long model names remain understandable.
@@ -261,6 +272,8 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
         text(state.motionBlurSummary, l.left + 20, y + 729 + NativeLayout::qualityControlsHeight, lw - 40, 38, 11, muted, false, true);
     }
     line(l.left + 20, y + 776 + NativeLayout::qualityControlsHeight, lw - 40);
+    renderTarget_->SetTransform(qualityTransform);
+    }
 
     cardAt(second, ey + 104, rw, 522);
     text(L"03", exportLeft, ey + 118, 28, 22, 10, accent, true);

@@ -152,6 +152,7 @@ struct DecodedFrame {
     std::optional<Rational> duration;
     bool timestampRecovered = false;
     ColorInfo color;
+    std::optional<Rational> sampleAspectRatio;
     std::array<FramePlane, 4> planes;
     // Owns reference-counted decoder storage, including original pixel precision and side data.
     std::shared_ptr<const void> storage;
@@ -178,6 +179,7 @@ struct DecodedPreviewFrame {
     int height = 0;
     Rational timestamp;
     std::optional<Rational> duration;
+    bool timestampRecovered = false;
     std::optional<Rational> previousTimestamp;
     std::optional<Rational> nextTimestamp;
     ColorInfo color;
@@ -239,7 +241,21 @@ public:
     [[nodiscard]] static MediaInfo probe(const std::string& utf8Path, std::stop_token stop = {});
     [[nodiscard]] static DecodeSummary decodeVideo(const std::string& utf8Path,
         const std::function<void(const DecodedFrame&)>& onFrame = {}, int streamIndex = -1,
-        std::stop_token stop = {}, DecodeOptions options = {});
+        std::stop_token stop = {}, DecodeOptions options = {}, std::optional<Rational> startTimestamp = {});
+    // Convert one owned decoded SDR frame for display, optionally scaling it
+    // down to fit a bounded preview surface. The decoded storage must remain
+    // alive for the duration of this call.
+    [[nodiscard]] static DecodedPreviewFrame previewFrame(const DecodedFrame& frame,
+        int maximumWidth = 8192, int maximumHeight = 8192, std::stop_token stop = {});
+    // Sequentially decode and convert each frame for streaming consumers. An
+    // optional absolute timestamp seeks to a preceding keyframe, so callbacks
+    // may include pre-roll frames before that timestamp. One-frame lookahead
+    // supplies exact adjacent presentation timestamps. The callback may move
+    // frames into a bounded queue; cancellation uses the same stop token.
+    [[nodiscard]] static DecodeSummary decodePreviewVideo(const std::string& utf8Path,
+        const std::function<void(DecodedPreviewFrame&&)>& onFrame, int maximumWidth = 1280,
+        int maximumHeight = 720, int streamIndex = -1, std::stop_token stop = {}, DecodeOptions options = {},
+        std::optional<Rational> startTimestamp = {});
     // Seeks and decodes the nearest presentation frame to an exact rational
     // timestamp. The preview conversion accepts only the validated tagged SDR path.
     [[nodiscard]] static DecodedPreviewFrame decodeFrameNearTime(const std::string& utf8Path,

@@ -157,6 +157,7 @@ private:
     static constexpr int kAutomaticDetail = 1037;
     static constexpr int kDetailAdjustmentEdit = 1038;
     static constexpr int kDetailAdjustmentReset = 1039;
+    static constexpr int kQualityDisclosure = 1040;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -169,6 +170,10 @@ private:
     static constexpr int kModelUnregister = 1205;
     static constexpr int kModelRefresh = 1206;
     static constexpr int kModelClose = 1207;
+    static constexpr int kHistoryList = 1208;
+    static constexpr int kHistoryRetry = 1209;
+    static constexpr int kHistoryResume = 1210;
+    static constexpr int kHistoryRestart = 1211;
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     struct NativeEvent final {
@@ -244,11 +249,15 @@ private:
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     struct NativeHistoryResult final {
         std::uint64_t generation = 0;
-        std::wstring text{};
         std::wstring status{};
+        std::string checkpointInspectionError{};
+        std::vector<std::string> checkpointCandidateTaskIds{};
+        std::vector<ConfiguredTask> tasks{};
     };
+    enum class HistoryAction { retry, resumeCheckpoint, restartFromZero };
 
     static LRESULT CALLBACK historyWindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+    void setHistoryFont(HWND window);
     void inspectSource();
     void handleProcessingEvent(application::ProcessingEvent event);
     void postProcessingEvent(application::ProcessingEvent event, std::uint64_t generation);
@@ -296,6 +305,8 @@ private:
     void updateModelDetails();
     void showTaskHistory();
     void showComparison();
+    void updateTaskHistorySelection();
+    void operateOnHistoryTask(HistoryAction action);
     void configureAutomaticDenoise();
     bool setAutomaticDenoise(bool enabled);
     [[nodiscard]] bool automaticDenoiseAvailable() const;
@@ -324,6 +335,7 @@ private:
     HWND shutterEdit_ = nullptr;
     HWND samplesEdit_ = nullptr;
     HWND advancedButton_ = nullptr;
+    HWND qualityDisclosureButton_ = nullptr;
     HWND temporalRestorationCombo_ = nullptr;
     HWND deblurRestorationCombo_ = nullptr;
     HWND compressionRestorationCombo_ = nullptr;
@@ -381,6 +393,7 @@ private:
     std::atomic<HWND> callbackWindow_{nullptr};
     std::atomic<bool> closing_{false};
     bool advancedExpanded_ = false;
+    bool qualityExpanded_ = false;
     bool automaticTemporalDenoise_ = false;
     bool automaticDetailRestoration_ = false;
     bool automaticCompressionRestoration_ = false;
@@ -409,9 +422,17 @@ private:
     HFONT modelCenterFont_ = nullptr;
     std::filesystem::path modelCenterSelectedPath_;
     HWND historyWindow_ = nullptr;
+    HWND historyList_ = nullptr;
     HWND historyText_ = nullptr;
     HWND historyStatus_ = nullptr;
     HWND historyRefreshButton_ = nullptr;
+    HWND historyRetryButton_ = nullptr;
+    HWND historyResumeButton_ = nullptr;
+    HWND historyRestartButton_ = nullptr;
+    HFONT historyFont_ = nullptr;
+    std::vector<ConfiguredTask> historyRows_;
+    std::vector<std::string> historyCheckpointCandidateTaskIds_;
+    std::string historyCheckpointInspectionError_;
     std::jthread historyThread_;
     std::atomic<bool> historyLoading_{false};
     std::uint64_t historyGeneration_ = 0;

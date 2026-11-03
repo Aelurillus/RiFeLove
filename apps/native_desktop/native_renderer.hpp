@@ -12,8 +12,19 @@
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 namespace rifelove::native_desktop {
+
+[[nodiscard]] inline std::wstring compactClosedSelectorLabel(std::wstring_view label) {
+    if (label.starts_with(L"关闭（默认：")) return L"关闭";
+    if (label == L"自动（NVENC 优先）") return L"自动 · NVENC";
+    if (label == L"本机高帧率母版 / 自定义") return L"本机母版 · 自定义";
+    if (label == L"默认：原尺寸 / 超分 ×2") return L"默认尺寸";
+    if (label == L"未选择压缩修复模型") return L"未选择模型";
+    if (label.ends_with(L" 本地副本")) label.remove_suffix(std::wstring_view(L" 本地副本").size());
+    return std::wstring(label);
+}
 
 struct NativeRenderState {
     std::wstring sourcePath;
@@ -43,6 +54,7 @@ struct NativeRenderState {
     bool modelReady = false;
     bool runtimeReady = false;
     bool advancedExpanded = false;
+    bool qualityExpanded = false;
     bool automaticTemporalDenoise = false;
     bool automaticDetailRestoration = false;
     bool automaticCompressionRestoration = false;
@@ -56,6 +68,9 @@ struct NativeLayout {
     static constexpr float denoiseAdjustmentHeight = 94.0F;
     static constexpr float deblurAdjustmentHeight = 204.0F;
     static constexpr float compressionAdjustmentHeight = 140.0F;
+    // Room for the disclosure row and its separation from optional controls.
+    static constexpr float qualityDisclosureHeight = 130.0F;
+    static constexpr float collapsedQualityHeight = 166.0F;
     static constexpr float qualityControlsHeight = denoiseAdjustmentHeight + deblurAdjustmentHeight + compressionAdjustmentHeight;
     float width = 1366;
     float height = 768;
@@ -68,6 +83,7 @@ struct NativeLayout {
     float contentBottom = 626;
     float resourceButtonsTop = 410;
     bool singleColumn = false;
+    bool qualityExpanded = false;
     float exportOffset = 0;
     float contentEnd = 778 + qualityControlsHeight;
     bool compactImport = false;
@@ -81,16 +97,21 @@ struct NativeLayout {
     [[nodiscard]] float exportContentWidth() const { return std::max(0.0F, exportCardWidth() - 40.0F); }
     [[nodiscard]] float outputBrowseWidth() const { return std::min(120.0F, exportContentWidth()); }
     [[nodiscard]] float outputBrowseLeft() const { return right - 20.0F - outputBrowseWidth(); }
-    [[nodiscard]] static NativeLayout from(float width, float height, float scroll = 0) {
+    [[nodiscard]] static NativeLayout from(float width, float height, float scroll = 0,
+                                           bool qualityExpanded = false) {
         NativeLayout value;
         value.width = width; value.height = height;
+        value.qualityExpanded = qualityExpanded;
         value.singleColumn = width < 760.0F;
         value.side = value.singleColumn ? 64.0F : width < 1100 ? 164.0F : 188.0F;
         value.left = value.side + (value.singleColumn ? 16.0F : 24.0F);
         value.right = width - (value.singleColumn ? 16.0F : 24.0F);
         value.split = value.singleColumn ? value.right : value.left + (value.right - value.left - 20.0F) * 0.55F;
-        value.exportOffset = value.singleColumn ? 690.0F + qualityControlsHeight : 0.0F;
-        value.contentEnd = std::max(778.0F + qualityControlsHeight, 626.0F + value.exportOffset);
+        value.exportOffset = value.singleColumn ?
+            (qualityExpanded ? 690.0F + qualityControlsHeight + qualityDisclosureHeight : 406.0F) : 0.0F;
+        value.contentEnd = std::max(qualityExpanded ?
+            778.0F + qualityControlsHeight + qualityDisclosureHeight : 296.0F + collapsedQualityHeight,
+            626.0F + value.exportOffset);
         // Two import actions share their own row when the source card is too
         // narrow to hold both its title and the file/folder buttons.
         value.compactImport = value.split - value.left < 440.0F;

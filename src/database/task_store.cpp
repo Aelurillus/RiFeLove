@@ -399,6 +399,14 @@ std::string TaskStore::checkpointManifest(const std::string& id) const {
     throw std::runtime_error(sqlite3_errmsg(db_));
 }
 
+bool TaskStore::hasCommittedCheckpointSegments(const std::string& id) const {
+    std::lock_guard lock(mutex_);
+    Statement statement(db_,"SELECT EXISTS(SELECT 1 FROM task_checkpoint_manifests m JOIN task_checkpoint_segments s ON s.task_id=m.task_id WHERE m.task_id=?)");
+    bindText(db_,statement.get(),1,id);
+    if (sqlite3_step(statement.get()) != SQLITE_ROW) throw std::runtime_error(sqlite3_errmsg(db_));
+    return sqlite3_column_int(statement.get(),0) != 0;
+}
+
 void TaskStore::recordCheckpointSegment(const std::string& id, const TaskCheckpointSegment& segment) {
     if (segment.firstOutputFrame >= segment.endOutputFrame || segment.artifactPath.empty() ||
         segment.artifactPath.size() > 32767 || segment.artifactPath.find('\0') != std::string::npos ||
