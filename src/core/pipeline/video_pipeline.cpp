@@ -757,8 +757,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             if (leftDelta <= outputTickTolerance && leftDelta <= rightDelta) coincident = &firstFrame.source;
             else if (rightDelta <= outputTickTolerance) coincident = &secondFrame.source;
             if (checkpointMode && clock->index() < completedOutputFrames) {
-                if (analysis.action != quality::PairAction::interpolate) ++result.heldFrames;
-                else if (coincident != nullptr) ++result.originalFrames;
+                if (coincident != nullptr) ++result.originalFrames;
+                else if (analysis.action != quality::PairAction::interpolate) ++result.heldFrames;
                 else ++result.aiFrames;
                 if (result.reusedFrames == std::numeric_limits<std::size_t>::max())
                     throw std::overflow_error("Reused output frame counter exceeds the supported range");
@@ -768,10 +768,18 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 notify("resuming",timestamp,"Reusing a verified checkpoint segment");
                 continue;
             }
-            if (analysis.action != quality::PairAction::interpolate) { ++result.heldFrames; emit(firstFrame.source); }
-            else if (coincident) {
+            if (coincident) {
                 ++result.originalFrames;
                 emit(*coincident,coincident == &firstFrame.source ? firstFrame.detail.deblurStrength : secondFrame.detail.deblurStrength);
+            }
+            else if (analysis.action != quality::PairAction::interpolate) {
+                ++result.heldFrames;
+                // Place a detected cut at the nearest source timestamp. When
+                // the cut falls exactly between output ticks, prefer the newer
+                // frame so the new shot does not begin one output frame late.
+                const auto& held = analysis.action == quality::PairAction::sceneCutHold && rightDelta <= leftDelta
+                    ? secondFrame : firstFrame;
+                emit(held.source,held.detail.deblurStrength);
             }
             else {
                 ++result.aiFrames;
