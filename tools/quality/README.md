@@ -18,7 +18,7 @@ Sintel/Durian 原始帧按 CC BY 3.0 发布，可在署名 `© copyright Blender
 
 ## 已授权的 UVG-VCM 实拍高帧率试点
 
-[UVG-VCM 官方数据页](https://ultravideo.fi/UVG-VCM/index.html)将数据集标记为 CC BY 4.0，并说明只分发已取得必要权限、个人信息已按需匿名化的内容；使用时需按页面引用数据集论文。试点选 `Karting Time`：3840×2160、60 fps、70 帧、YUV444 16-bit。上游没有发布此文件的 SHA-256 或色彩范围、矩阵、传递函数信息；准备报告会记录本机计算的原始摘要和显式色彩假设。原始视频不提交到 Git。
+[UVG-VCM 官方数据页](https://ultravideo.fi/UVG-VCM/index.html)将数据集标记为 CC BY 4.0，并说明只分发已取得必要权限、个人信息已按需匿名化的内容；使用时需按页面引用数据集论文。初始试点选 `Karting Time`：3840×2160、60 fps、70 帧、YUV444 16-bit。准备器也支持从 4K60 序列中选取连续偶数帧数的字节范围片段，报告完整原始序列帧范围、本机摘要和显式色彩假设。上游没有发布这些片段的 SHA-256 或色彩范围、矩阵、传递函数信息；原始视频不提交到 Git。
 
 ```powershell
 $data = 'out/datasets/uvg-vcm'
@@ -34,6 +34,31 @@ py -3 tools/quality/prepare_uvg_vcm_pilot.py `
 ```
 
 `1080p` 是默认配置；要准备较低分辨率对照时，设置 `--output-profile 720p` 并使用独立的输出目录。
+
+例如可以下载 `Floorball Game` 的原始帧 140–209，建立第二个 70 帧场景。UVG-VCM 原始 4K60 YUV444 16-bit 每帧 49,766,400 字节，下面按帧号计算 HTTP Range 字节偏移，下载结果仍只落在本机忽略目录：
+
+```powershell
+$data = 'out/datasets/uvg-vcm'
+New-Item -ItemType Directory -Force $data | Out-Null
+$frameBytes = [long]3840 * 2160 * 3 * 2
+$firstFrame = 140
+$frameCount = 70
+$byteStart = [long]$firstFrame * $frameBytes
+$byteEnd = $byteStart + [long]$frameCount * $frameBytes - 1
+$raw = "$data/floorball-game-140-209.yuv"
+curl.exe --location --fail --range "$byteStart-$byteEnd" `
+  --output $raw `
+  'https://ultravideo.fi/UVG-VCM/FloorballGame/FloorballGame_3840x2160_60fps_yuv444_16bits_420.yuv'
+
+py -3 tools/quality/prepare_uvg_vcm_pilot.py `
+  --raw $raw --sequence 'Floorball Game' `
+  --raw-url 'https://ultravideo.fi/UVG-VCM/FloorballGame/FloorballGame_3840x2160_60fps_yuv444_16bits_420.yuv' `
+  --source-start-frame-index $firstFrame --frame-count $frameCount `
+  --sequence-total-frame-count 420 --output-profile 1080p `
+  --output-directory "$data/floorball-game-140-209-1080p" `
+  --ffmpeg 'C:/path/to/ffmpeg.exe' --ffprobe 'C:/path/to/ffprobe.exe' `
+  --source-range tv
+```
 
 准备器用偶数帧 `0,2,…,68` 生成 35 帧、30 fps 原片，以原始索引 `0…68` 生成 69 帧、60 fps 参考；34 个奇数索引 `1,3,…,67` 是有效中点。原始索引 69 没有右侧输入帧，RifeLove 端到端输出的末尾保持帧也不纳入质量候选。运行插帧后，将结果限制到与 69 帧参考相同的 PTS，再使用本节的多候选评估器比较。只有明确固定、记录的色彩假设下的分数可复现；原始网页没有为此序列公布色彩元数据。该试点约 1.17 秒且偏机读车牌场景，不构成通用真实视频排名。
 
