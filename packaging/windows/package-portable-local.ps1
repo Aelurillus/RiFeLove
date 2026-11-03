@@ -3,10 +3,14 @@ param(
     [string]$SourcePackage = "",
     [string]$OutputDirectory = "",
     [string]$ArchivePath = "",
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+    [switch]$AllowLegacyPreview
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $AllowLegacyPreview) {
+    throw "Legacy Qt/CLI preview packaging is disabled by default. Use package-native-local.ps1 for native-only bundles; pass -AllowLegacyPreview for an intentional legacy development preview."
+}
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot "../.."))
 $outRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "out"))

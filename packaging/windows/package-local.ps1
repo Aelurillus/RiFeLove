@@ -8,10 +8,14 @@ param(
     [string]$ModelPackRoot = "",
     [string[]]$AdditionalModelPackRoots = @(),
     [string]$ReuseQualificationEvidencePath = "",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [switch]$AllowLegacyPreview
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $AllowLegacyPreview) {
+    throw "Legacy Qt/CLI preview packaging is disabled by default. Use package-native-local.ps1 for native-only bundles; pass -AllowLegacyPreview for an intentional legacy development preview."
+}
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) { $BuildDirectory = Join-Path $scriptRoot "../../build/windows-qt-release" }
 if ([string]::IsNullOrWhiteSpace($QtRoot)) { $QtRoot = "C:/itzming/dependences/qt-6.12.0-local" }

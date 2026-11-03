@@ -6,10 +6,14 @@ param(
     [string]$RifeModelDirectory = "",
     [string]$DeblurModelDirectory = "",
     [string]$SuperResolutionModelDirectory = "",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [switch]$AllowLegacyPreview
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $AllowLegacyPreview) {
+    throw "Legacy Qt/CLI preview packaging is disabled by default. Use package-native-local.ps1 for native-only bundles; pass -AllowLegacyPreview for an intentional legacy development preview."
+}
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
 $outRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "out"))
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $repoRoot "build/windows-qt-release" }
