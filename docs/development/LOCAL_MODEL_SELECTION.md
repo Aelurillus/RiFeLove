@@ -61,14 +61,15 @@ STDF-R3 已从纯研究候选推进到可选本机评估实现：七帧、Y 通�
 
 完整的一手来源、代码/权重许可分别核验结果、实现依赖及待执行的视觉/性能/恢复验收矩阵见 [视频修复架构的本机候选决策](../architecture/VIDEO_RESTORATION.md#local-candidate-decision--2026-10-31)。架构候选说明需结合上述后续 STDF 本机证据阅读；本次文档修订没有新增权重或运行时功能。
 
-## 新一代补帧候选观察（2026-11-03）
+## 新一代补帧候选观察（更新于 2026-11-04）
 
 当前 RIFE 4.25 仍是唯一已接入产品流程的补帧基线；新论文的作者指标不能代替在同一真实素材、硬件和输出策略下的复测。
 
 | 候选 | 当前证据 | 集成决定 |
 | --- | --- | --- |
 | RDVFI（ICLR 2026） | [作者项目仓库](https://github.com/Mayongrui/RDVFI)提出用低分辨率稀疏运动关键帧生成连续像素轨迹，再把高分辨率输入帧 warp 到目标时间；作者报告 1024×576 下 17 FPS 和主观偏好结果。仓库当前只有项目页、论文和静态资源；README 的 Code 链接回到该项目仓库，没有可复核的推理源码、权重或许可材料。 | 观察名单。不能据论文速度或作者盲评声称可在本机 GTX 1660 SUPER 运行；先等待有效一手实现、模型文件和各自的许可，再评估显存、长序列和输出质量。 |
-| SPEED（ACM MM 2026） | [作者项目页](https://bbldcver.github.io/SPEED/)链接到[官方 PyTorch 仓库](https://github.com/bbldCVer/SPEED)与[469 MB 模型卡](https://huggingface.co/bbldCVer-hf/SPEED)。模型卡标记 Apache-2.0；截至本次核对，代码仓库根目录没有 LICENSE 文件，代码使用权仍未确认。推理文档依赖 CUDA、xformers 和 CuPy，示例使用 BF16；本机 GTX 1660 SUPER 的兼容性和峰值显存未知。 | 当前优先做来源/许可与受限本机可行性核查的候选；未确认代码许可前不复制或集成其代码。即使权重许可标记可用，也不能据此推断代码许可、运行时适配、FP32 质量或本机速度已通过。官方说明 PyTorch checkpoint 是 pickle 格式，应仅在隔离评估环境加载可信来源文件。 |
+| SPEED（ACM MM 2026） | [作者项目页](https://bbldcver.github.io/SPEED/)链接到[官方 PyTorch 仓库](https://github.com/bbldCVer/SPEED)和 Hugging Face 权重页。本次核对的默认分支 `main` 最近可见提交为 `40fadbe85c88cc6e4015062389da464fd7e85ab9`；根目录没有 LICENSE 文件，GitHub 文件 API 对 `LICENSE` 返回 404，因此代码许可仍未确认。[权重页](https://huggingface.co/bbldCVer-hf/SPEED)标注 Apache-2.0，但该标记不覆盖 GitHub 代码。官方 README 建议 Python 3.10、注明 CUDA 11.8 tested，并依赖 xFormers、CuPy 和 CUDA correlation kernel；官方 `inference.py` 支持 FP32/FP16/BF16，checkpoint 是 `.pt` pickle。论文报告的 SNU-FILM 和 4K 指标仍是作者结果，没有在本机复现。 | 暂停本机执行与集成，直到代码使用许可明确。本机 `nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv,noheader` 返回 GTX 1660 SUPER、CC 7.5、6144 MiB；驱动报告 CUDA 12.6。[NVIDIA CUDA 文档](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/mathematical-functions.html)要求 BF16 至少 CC 8.0，因此不能把官方 BF16 示例当成本机可用路径。FP16/FP32 的实际显存、速度、稳定性和质量仍未测；即使之后取得代码许可，也须先做受控低分辨率显存冒烟，再用本机已有可信参考执行盲评与端到端对照。权重许可、代码许可和依赖许可须分别审查。 |
+| LDF-VFI（CVPR 2026） | [作者官方仓库](https://github.com/xypeng9903/LDF-VFI)标示 Apache-2.0，[作者链接的模型页](https://huggingface.co/onecat-ai/LDF-VFI)也标示 Apache-2.0，显示约 1B 参数、F32 权重。官方 README 的 8× quick start 说明需要约 20 GB GPU 显存；模型面向 2×–16×片段插值与长序列上下文。 | 研究观察项，不进入当前 GTX 1660 SUPER 6 GB 的候选执行队列。长序列建模方向值得后续关注，但作者给出的约 20 GB 需求已超过本机显存；只有官方发布更小权重/明确低显存配置，或换用足够显存设备后再评估。 |
 | SpeedVFI（ICML 2026） | [PMLR 论文页](https://proceedings.mlr.press/v306/ding26t.html)描述整段序列一次前向、一步去噪和时序 RoPE；这与现有相邻帧 RIFE adapter 的调用契约不同。此次核对没有找到可审计的公开权重、实现和许可组合。 | 研究观察项，不接入当前模型中心或默认工作流。若后续发布，必须先设计有界片段/上下文和恢复身份，再做同集盲评及设备测量。 |
 | MoG（2025） | [官方代码仓库](https://github.com/MCG-NJU/MoG-VFI)与[作者模型卡](https://huggingface.co/MCG-NJU/MoG)均标示 Apache-2.0，提供实拍/动画两类扩散式补帧权重；模型仓库约 21 GB。官方流程指定 CUDA 12.1，建议可启用 FP16 降低显存，并说明采样结果可能因随机性变化；推理工作流含文本提示。依赖的 DynamiCrafter 与 ToonCrafter 上游项目也各有许可和致谢要求。 | 仅作为高显存生成式对照候选。当前 GTX 1660 SUPER 的显存峰值、速度、提示敏感度、逐帧保真和可重复性均未资格验证；不替代 RIFE，也不进入默认工作流。 |
 | AMT（CVPR 2023） | [作者官方仓库](https://github.com/MCG-NKU/AMT)提供 AMT-S/L/G 权重入口，但代码仓库明确采用 CC BY-NC 4.0，并说明商业使用需取得正式许可。权重许可需单独核验。 | 非商业研究参考；在取得适用于目标发行方式的书面许可前，不复制其代码或把其模型纳入可发布产品。 |
