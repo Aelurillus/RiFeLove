@@ -345,6 +345,12 @@ void checkLocalModelCenter(Check check) {
             RECT original{}; GetWindowRect(main, &original);
             const UINT dpi = GetDpiForWindow(main);
             const float scale = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+            const bool priorQuality = app.testViewState().qualityExpanded;
+            const HWND disclosure = GetDlgItem(main, 1040);
+            check(disclosure != nullptr, "find quality disclosure for automatic-denoise navigation");
+            SendMessageW(main, WM_VSCROLL, SB_TOP, 0);
+            if (!priorQuality && disclosure) SendMessageW(disclosure, BM_CLICK, 0, 0);
+            check(app.testViewState().qualityExpanded, "expand quality settings before navigating automatic denoise");
             for (const int width : {480, 600, 700, 790, 800, 850}) {
                 SetWindowPos(main, nullptr, original.left, original.top, MulDiv(width, dpi, 96), MulDiv(600, dpi, 96), SWP_NOZORDER | SWP_NOACTIVATE);
                 SendMessageW(main, WM_VSCROLL, SB_TOP, 0);
@@ -356,7 +362,8 @@ void checkLocalModelCenter(Check check) {
                     if (focused != adjustment && focused != adjustmentReset) continue;
                     RECT client{}, field{}; GetClientRect(main, &client); GetWindowRect(focused, &field);
                     MapWindowPoints(nullptr, main, reinterpret_cast<POINT*>(&field), 2);
-                    const auto layout = native_desktop::NativeLayout::from(client.right / scale, client.bottom / scale, app.testViewState().scrollOffset);
+                    const auto layout = native_desktop::NativeLayout::from(client.right / scale, client.bottom / scale,
+                        app.testViewState().scrollOffset, app.testViewState().qualityExpanded);
                     check(IsWindowVisible(focused) && field.top >= static_cast<LONG>(layout.contentTop * scale) &&
                         field.bottom <= static_cast<LONG>(layout.contentBottom * scale) + 1 &&
                         field.left >= static_cast<LONG>(layout.left * scale) && field.right <= static_cast<LONG>(layout.right * scale) + 1,
@@ -370,6 +377,7 @@ void checkLocalModelCenter(Check check) {
             }
             SetWindowPos(main, nullptr, original.left, original.top, original.right - original.left, original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
             SendMessageW(main, WM_VSCROLL, SB_TOP, 0);
+            if (!priorQuality && disclosure) SendMessageW(disclosure, BM_CLICK, 0, 0);
         }
         check(app.testViewState().restorationSummary.find(L"自动高斯") != std::wstring::npos &&
             app.testViewState().restorationSummary.find(L"固定 σ25") == std::wstring::npos &&
