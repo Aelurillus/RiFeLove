@@ -10,6 +10,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -88,10 +89,93 @@ std::unique_ptr<AVCodecContext, decltype(&freeCodecContext)> makeDecoderContext(
     context->pkt_timebase = stream->time_base;
     return context;
 }
+
+struct PreviewScalerCache final {
+    SwsContext* context = nullptr;
+    ~PreviewScalerCache() { sws_freeContext(context); }
+};
+
+DecodedPreviewFrame convertPreviewPixels(int width, int height, const std::uint8_t* const source[4],
+    const int sourceStride[4], const ColorInfo& color, Rational timestamp, std::optional<Rational> duration,
+    bool timestampRecovered,
+    std::optional<Rational> sampleAspectRatio, std::optional<Rational> previousTimestamp,
+    std::optional<Rational> nextTimestamp, int maximumWidth, int maximumHeight, std::stop_token stop,
+    PreviewScalerCache* scalerCache = nullptr) {
+    if (width <= 0 || height <= 0 || width > 8192 || height > 8192 || maximumWidth <= 0 || maximumHeight <= 0)
+        throw std::invalid_argument("Preview frame dimensions are outside the supported range");
+    const auto pixels = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
+    if (pixels > (128ULL * 1024ULL * 1024ULL) / 4ULL)
+        throw std::invalid_argument("Preview frame exceeds the 128 MiB decoded-image limit");
+    detail::checkStopped(stop);
+    validateRifeSdrColor(color);
+    const auto sourceFormat = av_get_pix_fmt(color.pixelFormat.c_str());
+    const auto* description = av_pix_fmt_desc_get(sourceFormat);
+    if (!description) throw std::invalid_argument("Preview pixel format is unavailable");
+    for (int component = 0; component < description->nb_components; ++component) {
+        const int plane = description->comp[component].plane;
+        if (plane < 0 || plane >= 4 || !source[plane] || sourceStride[plane] == 0)
+            throw std::invalid_argument("Preview frame is missing a required pixel plane");
+    }
+    const double scale = std::min({1.0, static_cast<double>(maximumWidth) / width,
+        static_cast<double>(maximumHeight) / height});
+    const int previewWidth = std::clamp(static_cast<int>(std::lround(width * scale)), 1, maximumWidth);
+    const int previewHeight = std::clamp(static_cast<int>(std::lround(height * scale)), 1, maximumHeight);
+    const int matrix = color.matrix == "bt709" ? SWS_CS_ITU709 : SWS_CS_ITU601;
+    const int* coefficients = sws_getCoefficients(matrix);
+    auto freeScaler = +[](SwsContext* value) { sws_freeContext(value); };
+    std::unique_ptr<SwsContext, decltype(freeScaler)> ownedScaler(nullptr, freeScaler);
+    SwsContext* scaler = nullptr;
+    if (scalerCache) {
+        scalerCache->context = sws_getCachedContext(scalerCache->context, width, height, sourceFormat,
+            previewWidth, previewHeight, AV_PIX_FMT_RGBA, SWS_BILINEAR | SWS_ACCURATE_RND,
+            nullptr, nullptr, nullptr);
+        scaler = scalerCache->context;
+    } else {
+        ownedScaler.reset(sws_getContext(width, height, sourceFormat, previewWidth, previewHeight, AV_PIX_FMT_RGBA,
+            SWS_BILINEAR | SWS_ACCURATE_RND, nullptr, nullptr, nullptr));
+        scaler = ownedScaler.get();
+    }
+    if (!scaler) throw std::runtime_error("Could not create tagged SDR preview converter");
+    detail::check(sws_setColorspaceDetails(scaler, coefficients, color.range == "pc", coefficients, 1,
+        0, 1 << 16, 1 << 16), "configure exact preview color conversion");
+    DecodedPreviewFrame output;
+    output.width = previewWidth;
+    output.height = previewHeight;
+    output.timestamp = timestamp;
+    output.duration = duration;
+    output.timestampRecovered = timestampRecovered;
+    output.previousTimestamp = previousTimestamp;
+    output.nextTimestamp = nextTimestamp;
+    output.color = color;
+    output.sampleAspectRatio = sampleAspectRatio;
+    output.rgba.resize(static_cast<std::size_t>(previewWidth) * static_cast<std::size_t>(previewHeight) * 4U);
+    std::uint8_t* destination[4] = {output.rgba.data()};
+    const int destinationStride[4] = {previewWidth * 4};
+    if (sws_scale(scaler, source, sourceStride, 0, height, destination, destinationStride) != previewHeight)
+        throw std::runtime_error("Preview color conversion returned incomplete rows");
+    detail::checkStopped(stop);
+    return output;
+}
+
+DecodedPreviewFrame convertOwnedPreview(const DecodedFrame& frame, int maximumWidth, int maximumHeight,
+    std::stop_token stop, PreviewScalerCache* scalerCache = nullptr) {
+    if (!frame.storage) throw std::invalid_argument("Preview conversion requires owned decoded frame storage");
+    if (!frame.timestamp) throw std::invalid_argument("Preview conversion requires an exact presentation timestamp");
+    const std::uint8_t* source[4]{};
+    int sourceStride[4]{};
+    for (std::size_t plane = 0; plane < frame.planes.size(); ++plane) {
+        source[plane] = frame.planes[plane].data;
+        sourceStride[plane] = frame.planes[plane].stride;
+    }
+    return convertPreviewPixels(frame.width, frame.height, source, sourceStride, frame.color, *frame.timestamp,
+        frame.duration, frame.timestampRecovered, frame.sampleAspectRatio, {}, {}, maximumWidth, maximumHeight,
+        stop, scalerCache);
+}
 }
 
 DecodeSummary MediaEngine::decodeVideo(const std::string& path,
-    const std::function<void(const DecodedFrame&)>& onFrame, int streamIndex, std::stop_token stop, DecodeOptions options) {
+    const std::function<void(const DecodedFrame&)>& onFrame, int streamIndex, std::stop_token stop,
+    DecodeOptions options, std::optional<Rational> startTimestamp) {
     detail::Input input(path, stop);
     if (streamIndex < 0) streamIndex = av_find_best_stream(input.context, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     detail::check(streamIndex, "find video stream");
@@ -160,6 +244,20 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
         detail::check(avcodec_open2(context.get(),decoder,nullptr),"open video decoder");
     }
 
+    if (startTimestamp) {
+        if (startTimestamp->denominator() > std::numeric_limits<int>::max())
+            throw std::invalid_argument("sequential preview timestamp denominator exceeds FFmpeg's supported range");
+        const auto targetPts = av_rescale_q_rnd(startTimestamp->numerator(),
+            AVRational{1,static_cast<int>(startTimestamp->denominator())}, stream->time_base,
+            static_cast<AVRounding>(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+        detail::checkStopped(stop);
+        int seek = av_seek_frame(input.context,streamIndex,targetPts,AVSEEK_FLAG_BACKWARD);
+        if (seek < 0)
+            seek = avformat_seek_file(input.context,streamIndex,INT64_MIN,targetPts,INT64_MAX,AVSEEK_FLAG_BACKWARD);
+        detail::check(seek,"seek sequential preview video");
+        avcodec_flush_buffers(context.get());
+    }
+
     DecodeSummary summary;
     summary.decoder = decoder->name ? decoder->name : "unknown";
     std::optional<Rational> previous;
@@ -226,6 +324,9 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
                 output.duration = duration;
                 output.timestampRecovered = resolution.recovered;
                 output.color = normalizeDecodedSdrColor(detail::color(retained.get()), streamColor);
+                const auto sampleAspectRatio = av_guess_sample_aspect_ratio(input.context, stream, decodedFrame);
+                if (sampleAspectRatio.num > 0 && sampleAspectRatio.den > 0)
+                    output.sampleAspectRatio = detail::rational(sampleAspectRatio);
                 for (std::size_t i = 0; i < output.planes.size(); ++i)
                     output.planes[i] = {retained->data[i], retained->linesize[i], extentFor(retained.get(),static_cast<int>(i))};
                 output.storage = std::move(retained);
@@ -264,6 +365,31 @@ DecodeSummary MediaEngine::decodeVideo(const std::string& path,
     summary.accelerationFallbackReason = accelerationFallbackReason;
     if (summary.missingTimestamps || summary.nonIncreasingTimestamps) summary.cadence = "invalid_timestamps";
     else if (delta) summary.cadence = variable && !matchesQuantizedConstantRate ? "variable" : "constant";
+    return summary;
+}
+
+DecodedPreviewFrame MediaEngine::previewFrame(const DecodedFrame& frame, int maximumWidth, int maximumHeight, std::stop_token stop) {
+    return convertOwnedPreview(frame, maximumWidth, maximumHeight, stop);
+}
+
+DecodeSummary MediaEngine::decodePreviewVideo(const std::string& path,
+    const std::function<void(DecodedPreviewFrame&&)>& onFrame, int maximumWidth, int maximumHeight,
+    int streamIndex, std::stop_token stop, DecodeOptions options, std::optional<Rational> startTimestamp) {
+    if (!onFrame) throw std::invalid_argument("Sequential preview decoding requires a frame callback");
+    if (maximumWidth <= 0 || maximumHeight <= 0)
+        throw std::invalid_argument("Sequential preview dimensions must be positive");
+    std::optional<DecodedPreviewFrame> pending;
+    PreviewScalerCache scalerCache;
+    const auto summary = decodeVideo(path, [&](const DecodedFrame& frame) {
+        auto preview = convertOwnedPreview(frame, maximumWidth, maximumHeight, stop, &scalerCache);
+        if (pending) {
+            pending->nextTimestamp = preview.timestamp;
+            preview.previousTimestamp = pending->timestamp;
+            onFrame(std::move(*pending));
+        }
+        pending = std::move(preview);
+    }, streamIndex, stop, options, startTimestamp);
+    if (pending) onFrame(std::move(*pending));
     return summary;
 }
 
@@ -392,53 +518,31 @@ DecodedPreviewFrame MediaEngine::decodeFrameNearTime(const std::string& path, Ra
     if (!selected) throw std::runtime_error("no timestamped decoded frame was found near the requested preview time");
 
     const int width = selected->width, height = selected->height;
-    if (width <= 0 || height <= 0 || width > 8192 || height > 8192)
-        throw std::invalid_argument("preview frame dimensions are outside the supported range");
-    const auto pixels = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
-    if (pixels > (128ULL * 1024ULL * 1024ULL) / 4ULL)
-        throw std::invalid_argument("preview frame exceeds the 128 MiB decoded-image limit");
     auto color = normalizeDecodedSdrColor(detail::color(selected.get()),streamColor);
     try { validateRifeSdrColor(color); }
     catch (const std::invalid_argument&) {
         throw std::invalid_argument("exact frame preview requires explicitly tagged supported SDR color; HDR or unknown color is not yet supported");
     }
-    const auto sourceFormat = av_get_pix_fmt(color.pixelFormat.c_str());
-    const auto* description = av_pix_fmt_desc_get(sourceFormat);
-    if (!description) throw std::invalid_argument("preview pixel format is unavailable");
-    const int matrix = color.matrix == "bt709" ? SWS_CS_ITU709 : SWS_CS_ITU601;
-    const int* coefficients = sws_getCoefficients(matrix);
-    auto freeScaler = +[](SwsContext* value) { sws_freeContext(value); };
-    std::unique_ptr<SwsContext,decltype(freeScaler)> scaler(
-        sws_getContext(width,height,sourceFormat,width,height,AV_PIX_FMT_RGBA,SWS_BILINEAR | SWS_ACCURATE_RND,nullptr,nullptr,nullptr),freeScaler);
-    if (!scaler) throw std::runtime_error("could not create exact SDR preview converter");
-    detail::check(sws_setColorspaceDetails(scaler.get(),coefficients,color.range == "pc",coefficients,1,0,1 << 16,1 << 16),
-        "configure exact preview color conversion");
-    DecodedPreviewFrame output;
-    output.width = width;
-    output.height = height;
-    output.timestamp = detail::rational(stream->time_base) * Rational(selectedPts);
-    output.duration = selected->duration > 0 ? detail::timestamp(selected->duration,stream->time_base) : std::optional<Rational>{};
+    std::optional<Rational> previousTimestamp, nextTimestamp;
     if (selectedPreviousPts != AV_NOPTS_VALUE)
-        output.previousTimestamp = detail::rational(stream->time_base) * Rational(selectedPreviousPts);
+        previousTimestamp = detail::rational(stream->time_base) * Rational(selectedPreviousPts);
     if (selectedNextPts != AV_NOPTS_VALUE)
-        output.nextTimestamp = detail::rational(stream->time_base) * Rational(selectedNextPts);
-    output.color = std::move(color);
-    const auto sampleAspectRatio = av_guess_sample_aspect_ratio(input.context, stream, selected.get());
-    if (sampleAspectRatio.num > 0 && sampleAspectRatio.den > 0)
-        output.sampleAspectRatio = detail::rational(sampleAspectRatio);
-    output.rgba.resize(static_cast<std::size_t>(pixels) * 4U);
+        nextTimestamp = detail::rational(stream->time_base) * Rational(selectedNextPts);
+    std::optional<Rational> duration;
+    if (selected->duration > 0) duration = detail::timestamp(selected->duration,stream->time_base);
+    std::optional<Rational> sampleAspectRatio;
+    const auto sampleAspect = av_guess_sample_aspect_ratio(input.context, stream, selected.get());
+    if (sampleAspect.num > 0 && sampleAspect.den > 0)
+        sampleAspectRatio = detail::rational(sampleAspect);
     const std::uint8_t* source[4]{};
     int sourceStride[4]{};
     for (std::size_t plane = 0; plane < 4; ++plane) {
         source[plane] = selected->data[plane];
         sourceStride[plane] = selected->linesize[plane];
     }
-    std::uint8_t* destination[4] = {output.rgba.data()};
-    const int destinationStride[4] = {width * 4};
-    if (sws_scale(scaler.get(),source,sourceStride,0,height,destination,destinationStride) != height)
-        throw std::runtime_error("exact preview color conversion returned incomplete rows");
-    detail::checkStopped(stop);
-    return output;
+    return convertPreviewPixels(width, height, source, sourceStride, color,
+        detail::rational(stream->time_base) * Rational(selectedPts), duration, false, sampleAspectRatio,
+        previousTimestamp, nextTimestamp, width, height, stop);
 }
 
 } // namespace rifelove::media

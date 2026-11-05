@@ -21,6 +21,8 @@ public:
     ~SourceLease();
     SourceLease(const SourceLease&) = delete;
     SourceLease& operator=(const SourceLease&) = delete;
+    // Return file identity from the protected handle without reading its bytes.
+    [[nodiscard]] FileIdentity metadata() const;
     [[nodiscard]] FileIdentity fingerprint(std::stop_token stop, const std::function<void(std::uint64_t,std::uint64_t)>& progress = {});
 private:
     void* handle_ = nullptr;

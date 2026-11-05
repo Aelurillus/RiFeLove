@@ -346,14 +346,16 @@ if(RIFELOVE_BUILD_NATIVE_DESKTOP AND WIN32)
     apps/native_desktop/main.cpp
     apps/native_desktop/native_app.cpp
     apps/native_desktop/native_app.hpp
+    apps/native_desktop/native_review_resume.hpp
     apps/native_desktop/native_renderer.cpp
     apps/native_desktop/native_renderer.hpp)
   set_target_properties(rifelove-native-desktop PROPERTIES OUTPUT_NAME "RifeLoveNative")
   target_include_directories(rifelove-native-desktop PRIVATE src apps/native_desktop)
   target_compile_definitions(rifelove-native-desktop PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_link_libraries(rifelove-native-desktop PRIVATE
-    rifelove_core d2d1 dwrite comdlg32 gdi32 ole32 shell32 user32 dwmapi version)
+    rifelove_core bcrypt crypt32 d2d1 dwrite comdlg32 gdi32 ole32 shell32 user32 dwmapi version)
   if(TARGET rifelove_application)
+    target_include_directories(rifelove-native-desktop SYSTEM PRIVATE "${RIFELOVE_JSON_INCLUDE}")
     target_link_libraries(rifelove-native-desktop PRIVATE rifelove_application)
     target_compile_definitions(rifelove-native-desktop PRIVATE RIFELOVE_NATIVE_HAS_PROCESSING=1)
   endif()

@@ -534,6 +534,7 @@ void checkQualityFieldSpacing(HWND window) {
     const auto px = [&](int value) { return MulDiv(value, static_cast<int>(dpi ? dpi : 96U), 96); };
     const int denoiseOffset = static_cast<int>(NativeLayout::denoiseAdjustmentHeight);
     const int outputOffset = static_cast<int>(NativeLayout::denoiseAdjustmentHeight + NativeLayout::deblurAdjustmentHeight);
+    const int disclosureOffset = static_cast<int>(NativeLayout::qualityDisclosureHeight);
     const std::array<int, 10> controls{1024, 1030, 1031, 1036, 1038, 1039, 1017, 1018, 1027, 1028};
     const std::array<int, 10> labelTops{331, 397, 397, 397 + denoiseOffset, 501 + denoiseOffset,
         501 + denoiseOffset, 397 + outputOffset, 463 + outputOffset, 529 + outputOffset, 529 + outputOffset};
@@ -544,9 +545,9 @@ void checkQualityFieldSpacing(HWND window) {
         RECT rect{};
         GetWindowRect(control, &rect);
         MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&rect), 2);
-        check(rect.top >= px(labelTops[index] + 22),
+        check(rect.top >= px(labelTops[index] + disclosureOffset + 22),
             "restoration selector leaves the entire painted label and spacing visible");
-        check(rect.bottom <= px(labelTops[index] + 64),
+        check(rect.bottom <= px(labelTops[index] + disclosureOffset + 64),
             "restoration selector does not cover the following label or section divider");
     }
     RECT combo{}, button{}, adjustment{};
@@ -687,7 +688,8 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
     };
     const auto withinViewport = [&](HWND control) {
         RECT client{}; GetClientRect(window, &client);
-        const auto layout = NativeLayout::from(client.right / scale, client.bottom / scale, app.testViewState().scrollOffset);
+        const auto layout = NativeLayout::from(client.right / scale, client.bottom / scale,
+            app.testViewState().scrollOffset, app.testViewState().qualityExpanded);
         const RECT field = rect(control);
         return IsWindowVisible(control) && field.top >= px(static_cast<int>(layout.contentTop)) &&
             field.bottom <= px(static_cast<int>(layout.contentBottom)) + 1 &&
@@ -695,15 +697,34 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
     };
     const HWND source = GetDlgItem(window, 1002), sourceEdit = GetDlgItem(window, 1001), rate = GetDlgItem(window, 1005);
     const HWND blur = GetDlgItem(window, 1013), advanced = GetDlgItem(window, 1016);
+    const HWND quality = GetDlgItem(window, 1040);
     const bool priorBlur = SendMessageW(blur, BM_GETCHECK, 0, 0) == BST_CHECKED;
     const bool priorAdvanced = app.testViewState().advancedExpanded;
+    const bool priorQuality = app.testViewState().qualityExpanded;
     const auto priorRate = SendMessageW(rate, CB_GETCURSEL, 0, 0);
     const auto scrollTop = [&] { SendMessageW(window, WM_VSCROLL, SB_TOP, 0); };
+    check(quality != nullptr, "find quality settings disclosure");
+    if (!quality) return;
+    if (!priorQuality) {
+        SetFocus(source);
+        bool sawDisclosure = false, reachedCollapsedControl = false;
+        for (int count = 0; count < 39; ++count) {
+            check(app.testNavigateSettings(), "Tab navigation works with quality settings collapsed");
+            const int id = GetDlgCtrlID(GetFocus());
+            sawDisclosure |= id == 1040;
+            reachedCollapsedControl |= id == 1016 || id == 1017 || id == 1018 || id == 1014 || id == 1015;
+        }
+        check(sawDisclosure && !reachedCollapsedControl,
+            "collapsed quality settings expose their disclosure but skip hidden controls");
+        scrollTop();
+    }
+    if (!priorQuality) SendMessageW(window, WM_COMMAND, MAKEWPARAM(1040, BN_CLICKED), reinterpret_cast<LPARAM>(quality));
+    check(app.testViewState().qualityExpanded, "quality settings expand before navigating optional controls");
     for (const int width : {480, 600, 700, 790, 800, 850}) {
         SetWindowPos(window, nullptr, original.left, original.top, px(width), px(600), SWP_NOZORDER | SWP_NOACTIVATE);
         scrollTop();
         RECT client{}; GetClientRect(window, &client);
-        const auto layout = NativeLayout::from(client.right / scale, client.bottom / scale);
+        const auto layout = NativeLayout::from(client.right / scale, client.bottom / scale, 0, app.testViewState().qualityExpanded);
         if (width == 480 && !screenshot.empty()) {
             auto top = screenshot; top.replace_filename(top.stem().wstring() + L"-480-top" + top.extension().wstring());
             check(captureClient(window, top), "capture real 480-DIP HWND at the top of its settings viewport");
@@ -762,7 +783,7 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
                 sawSize |= id == 1018;
             }
             check(id != 1014 && id != 1015 && id != 1011, "Tab skips collapsed exposure and inactive custom-rate inputs");
-            if (sawOutput && sawBrowse && sawRate) break;
+            if (sawOutput && sawBrowse && sawRate && (!sizeEnabled || sawSize)) break;
         }
         check(sawOutput && sawBrowse && sawRate, "Tab reaches target FPS, output path and output browse in small windows");
         check(!sizeEnabled || sawSize, "Tab reaches the output-size selector when it is enabled");
@@ -794,7 +815,9 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
 
         SendMessageW(blur, BM_SETCHECK, BST_CHECKED, 0);
         SendMessageW(window, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
-        if (!app.testViewState().advancedExpanded) SendMessageW(advanced, BM_CLICK, 0, 0);
+        if (!app.testViewState().advancedExpanded)
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(1016, BN_CLICKED), reinterpret_cast<LPARAM>(advanced));
+        check(app.testViewState().advancedExpanded, "advanced settings expand within quality settings");
         SetFocus(source); bool sawShutter = false, sawSamples = false;
         for (int count = 0; count < 32; ++count) {
             app.testNavigateSettings(); const int id = GetDlgCtrlID(GetFocus());
@@ -813,6 +836,7 @@ void checkResponsiveInteraction(NativeApp& app, HWND window, const std::filesyst
         SendMessageW(window, WM_COMMAND, MAKEWPARAM(1013, BN_CLICKED), reinterpret_cast<LPARAM>(blur));
         scrollTop();
     }
+    if (!priorQuality) SendMessageW(window, WM_COMMAND, MAKEWPARAM(1040, BN_CLICKED), reinterpret_cast<LPARAM>(quality));
     SetWindowPos(window, nullptr, original.left, original.top, original.right - original.left,
         original.bottom - original.top, SWP_NOZORDER | SWP_NOACTIVATE);
     scrollTop(); SetFocus(source);

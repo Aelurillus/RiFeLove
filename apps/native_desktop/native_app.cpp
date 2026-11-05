@@ -3,10 +3,12 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <cmath>
+#include <cstdint>
 #include <cwchar>
 #include <cstring>
 #include <cstdlib>
@@ -15,13 +17,16 @@
 #include <iomanip>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+#include <nlohmann/json.hpp>
 #include "media/encoder_policy.hpp"
 #include "media/media_engine.hpp"
 #include "media/rife_color.hpp"
@@ -55,7 +60,9 @@ bool ensureTooltipControls() {
         const HMODULE module = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!module) return false;
         using Initialize = BOOL(WINAPI*)(const INITCOMMONCONTROLSEX*);
-        const auto initialize = reinterpret_cast<Initialize>(GetProcAddress(module, "InitCommonControlsEx"));
+        const auto entryPoint = GetProcAddress(module, "InitCommonControlsEx");
+        static_assert(sizeof(Initialize) == sizeof(entryPoint));
+        const auto initialize = std::bit_cast<Initialize>(entryPoint);
         INITCOMMONCONTROLSEX controls{sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES};
         if (initialize && initialize(&controls)) return true;
         FreeLibrary(module);
@@ -151,6 +158,7 @@ std::wstring processingStageLabel(std::string_view stage) {
     if (stage == "quality") return L"质量保护检查";
     if (stage == "resuming") return L"恢复已验证片段";
     if (stage == "validating") return L"验证输出文件";
+    if (stage == "verifying_output") return L"校验最终输出";
     if (stage == "encoder_fallback") return L"编码器回退";
     if (stage == "paused") return L"已暂停";
     if (stage == "resumed") return L"继续处理";
@@ -187,24 +195,153 @@ std::wstring taskStateLabel(TaskState state) {
     return L"未知";
 }
 
-std::wstring taskHistoryText(const std::vector<ConfiguredTask>& tasks) {
-    if (tasks.empty()) return L"暂无本地任务记录\r\n\r\n完成一次插帧后，任务会自动出现在这里。";
+std::wstring taskHistoryText(const ConfiguredTask& configured, bool checkpointInspectionAvailable,
+                             bool hasCommittedCheckpointSegments) {
+    const auto& task = configured.task;
     std::wstring text;
-    text.reserve(tasks.size() * 320);
-    text += L"本地 SQLite 任务记录（只读）\r\n";
-    text += L"任务数：" + std::to_wstring(tasks.size()) + L"\r\n\r\n";
-    for (std::size_t index = 0; index < tasks.size(); ++index) {
-        const auto& task = tasks[index].task;
-        text += L"任务 " + std::to_wstring(index + 1) + L"  ·  " + taskStateLabel(task.state) + L"\r\n";
-        text += L"ID：" + wideFromUtf8(task.id) + L"\r\n";
-        text += L"源文件：" + wideFromUtf8(task.sourcePath) + L"\r\n";
-        text += L"输出文件：" + wideFromUtf8(task.outputPath) + L"\r\n";
-        if (!task.createdAt.empty()) text += L"创建：" + wideFromUtf8(task.createdAt) + L"\r\n";
-        if (!task.updatedAt.empty()) text += L"更新：" + wideFromUtf8(task.updatedAt) + L"\r\n";
-        if (!task.error.empty()) text += L"失败原因：" + wideFromUtf8(task.error) + L"\r\n";
-        text += L"\r\n";
+    text.reserve(1800);
+    text += L"任务状态：" + taskStateLabel(task.state) + L"\r\n";
+    text += L"ID：" + wideFromUtf8(task.id) + L"\r\n";
+    text += L"源文件：" + wideFromUtf8(task.sourcePath) + L"\r\n";
+    text += L"输出文件：" + wideFromUtf8(task.outputPath) + L"\r\n";
+    if (!task.createdAt.empty()) text += L"创建：" + wideFromUtf8(task.createdAt) + L"\r\n";
+    if (!task.updatedAt.empty()) text += L"更新：" + wideFromUtf8(task.updatedAt) + L"\r\n";
+    if (!task.error.empty()) text += L"失败原因：" + wideFromUtf8(task.error) + L"\r\n";
+    if (task.state == TaskState::interrupted) {
+        if (!checkpointInspectionAvailable)
+            text += L"断点状态无法读取；刷新后重试，或使用“从头另存重做”。\r\n";
+        else
+            text += hasCommittedCheckpointSegments
+                ? L"断点候选：已提交片段存在；继续时仍会校验文件和任务身份。\r\n"
+                : L"断点候选：没有已提交片段；请使用“从头另存重做”。\r\n";
+    }
+
+    const bool completed = task.state == TaskState::completed;
+    const auto& serialized = completed ? configured.result : configured.progress;
+    if (serialized.empty()) {
+        if (completed) text += L"\r\n没有可显示的输出摘要（可能是旧版任务记录）。\r\n";
+        return text;
+    }
+    if (serialized.size() > 64U * 1024U) {
+        text += L"\r\n任务摘要超过支持的大小限制；基础任务记录仍可用。\r\n";
+        return text;
+    }
+
+    try {
+        const auto summary = nlohmann::json::parse(serialized);
+        if (!summary.is_object()) throw std::invalid_argument("task summary is not an object");
+        const auto count = [](const nlohmann::json& object, const char* key) -> std::optional<std::uint64_t> {
+            const auto found = object.find(key);
+            if (found == object.end()) return {};
+            if (found->is_number_unsigned()) return found->get<std::uint64_t>();
+            if (found->is_number_integer()) {
+                const auto value = found->get<std::int64_t>();
+                if (value >= 0) return static_cast<std::uint64_t>(value);
+            }
+            return {};
+        };
+        const auto number = [&](const char* key) -> std::optional<double> {
+            const auto found = summary.find(key);
+            if (found == summary.end() || !found->is_number()) return {};
+            const double value = found->get<double>();
+            return std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+        };
+        const auto string = [&](const char* key) -> std::optional<std::string> {
+            const auto found = summary.find(key);
+            if (found == summary.end() || !found->is_string()) return {};
+            return found->get<std::string>();
+        };
+        const auto appendCount = [&](const char* key, const wchar_t* label) {
+            if (const auto value = count(summary, key)) text += std::wstring(label) + std::to_wstring(*value) + L"\r\n";
+        };
+        const auto appendNumber = [&](const char* key, const wchar_t* label, int precision) {
+            const auto value = number(key);
+            if (!value) return;
+            std::wostringstream formatted;
+            formatted << std::fixed << std::setprecision(precision) << *value;
+            text += std::wstring(label) + formatted.str() + L"\r\n";
+        };
+        const auto appendString = [&](const char* key, const wchar_t* label) {
+            if (const auto value = string(key); value && !value->empty())
+                text += std::wstring(label) + wideFromUtf8(*value) + L"\r\n";
+        };
+
+        text += completed ? L"\r\n处理结果摘要：\r\n" : L"\r\n最近进度摘要：\r\n";
+        if (completed) {
+            appendCount("sourceFrames", L"源视频帧数：");
+            appendCount("outputFrames", L"输出帧数：");
+            appendCount("aiFrames", L"RIFE 生成帧数：");
+            appendCount("originalFrames", L"原片保留帧数：");
+            appendCount("heldFrames", L"质量保护保持帧数：");
+            appendCount("processedFrames", L"本次实际处理帧数：");
+            appendCount("reusedFrames", L"断点复用帧数：");
+            appendCount("inferenceCalls", L"RIFE 推理调用次数：");
+            appendCount("sceneCuts", L"镜头切换数：");
+            appendNumber("elapsedSeconds", L"总耗时：", 1);
+            appendNumber("processingFps", L"本次处理速度：", 1);
+            appendString("modelId", L"插帧模型：");
+            appendString("backend", L"推理后端：");
+            appendString("encoder", L"编码器：");
+            if (const auto validation = summary.find("validation"); validation != summary.end() && validation->is_object()) {
+                const auto width = count(*validation, "width");
+                const auto height = count(*validation, "height");
+                if (width && height) text += L"输出尺寸：" + std::to_wstring(*width) + L" × " + std::to_wstring(*height) + L"\r\n";
+            }
+        } else {
+            if (const auto stage = string("stage")) text += L"最近阶段：" + processingStageLabel(*stage) + L"\r\n";
+            appendCount("frames", L"目标时间轴帧数：");
+            appendCount("processedFrames", L"本次已处理帧数：");
+            appendCount("reusedFrames", L"断点复用帧数：");
+            appendCount("aiFrames", L"RIFE 生成帧数：");
+            appendNumber("processingFps", L"本次处理速度：", 1);
+            appendString("timestamp", L"最近媒体时间点：");
+            const auto frames = count(summary, "frames");
+            if (frames && *frames != 0) {
+                const double processed = static_cast<double>(count(summary, "processedFrames").value_or(0));
+                const double reused = static_cast<double>(count(summary, "reusedFrames").value_or(0));
+                const double percent = std::clamp((processed + reused) * 100.0 / static_cast<double>(*frames), 0.0, 100.0);
+                std::wostringstream formatted;
+                formatted << std::fixed << std::setprecision(1) << percent;
+                text += L"估算进度：" + formatted.str() + L"%\r\n";
+            }
+        }
+    } catch (const std::exception&) {
+        text += L"\r\n任务摘要无法读取；基础任务记录仍可用。\r\n";
     }
     return text;
+}
+
+std::wstring taskHistoryRowLabel(const ConfiguredTask& configured) {
+    const auto& task = configured.task;
+    const auto source = std::filesystem::path(wideFromUtf8(task.sourcePath)).filename().wstring();
+    const auto output = std::filesystem::path(wideFromUtf8(task.outputPath)).filename().wstring();
+    return L"[" + taskStateLabel(task.state) + L"]  " + (source.empty() ? L"(无源文件名)" : source) +
+        L"  →  " + (output.empty() ? L"(无输出文件名)" : output);
+}
+
+std::filesystem::path restartedOutputPath(const ConfiguredTask& selected,
+                                          const std::vector<ConfiguredTask>& tasks) {
+    const std::filesystem::path original(wideFromUtf8(selected.task.outputPath));
+    if (original.empty() || original.filename().empty())
+        throw std::invalid_argument("Interrupted task has no usable output path");
+    const auto normalizedAbsolute = [](const std::filesystem::path& value) {
+        return std::filesystem::absolute(value).lexically_normal().wstring();
+    };
+    for (std::uint32_t index = 1; index <= 10000; ++index) {
+        const std::wstring suffix = index == 1 ? L" - 重做" : L" - 重做 (" + std::to_wstring(index) + L")";
+        const auto candidate = original.parent_path() /
+            (original.stem().wstring() + suffix + original.extension().wstring());
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error)) continue;
+        if (error) throw std::filesystem::filesystem_error("Could not inspect restart output", candidate, error);
+        const auto absoluteCandidate = normalizedAbsolute(candidate);
+        const bool alreadyAssigned = std::any_of(tasks.begin(), tasks.end(), [&](const ConfiguredTask& task) {
+            const auto other = normalizedAbsolute(std::filesystem::path(wideFromUtf8(task.task.outputPath)));
+            return CompareStringOrdinal(absoluteCandidate.c_str(), -1, other.c_str(), -1, TRUE) == CSTR_EQUAL;
+        });
+        if (!alreadyAssigned) return candidate;
+    }
+    throw std::runtime_error("Could not find an unused output path for restarting this task");
 }
 #endif
 
@@ -843,6 +980,7 @@ void NativeApp::createControls() {
         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOutputSizeCombo)), instance_, nullptr);
     for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, deblurRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) styleCombo(combo);
     advancedButton_ = createButton(L"参数  ˅", kAdvancedToggle);
+    qualityDisclosureButton_ = createButton(L"展开画质设置  ▾", kQualityDisclosure);
     startButton_ = createButton(L"开始插帧", kStart);
     pauseResumeButton_ = createButton(L"暂停", kPauseResume);
     cancelButton_ = createButton(L"取消", kCancel);
@@ -947,7 +1085,7 @@ void NativeApp::createControls() {
     ShowWindow(outputSizeLabel_, SW_HIDE);
     ShowWindow(outputSizeCombo_, SW_HIDE);
     setFonts();
-    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) {
+    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, qualityDisclosureButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) {
         if (!control) continue;
         const auto original = SetWindowLongPtrW(control, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::scrollChildProcedure));
         SetPropW(control, L"RifeLoveScrollChildProc", reinterpret_cast<HANDLE>(original));
@@ -963,7 +1101,7 @@ void NativeApp::setFonts() {
     font_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         L"Microsoft YaHei UI");
-    const std::array<HWND, 49> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, statusDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 50> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, qualityDisclosureButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, statusDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
         sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_, platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_};
     for (const auto control : controls) if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
     for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, deblurRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) {
@@ -985,7 +1123,7 @@ void NativeApp::layoutControls() {
     GetClientRect(window_, &client);
     const float s = dpiScale();
     const auto layout = NativeLayout::from(static_cast<float>(client.right) / s,
-        static_cast<float>(client.bottom) / s, state_.scrollOffset);
+        static_cast<float>(client.bottom) / s, state_.scrollOffset, qualityExpanded_);
     state_.scrollOffset = layout.scroll;
     const float left = layout.left + 20;
     const float leftWidth = layout.split - layout.left - 40;
@@ -1003,13 +1141,13 @@ void NativeApp::layoutControls() {
             scaled(static_cast<int>(width), s), scaled(static_cast<int>(height), s), TRUE);
         ShowWindow(control, visible && inViewport ? SW_SHOW : SW_HIDE);
     };
-    const auto moveCombo = [&](HWND control, float x, float y, float width, float height) {
+    const auto moveCombo = [&](HWND control, float x, float y, float width, float height, bool visible = true) {
         if (!control) return;
         const auto count = static_cast<int>(SendMessageW(control, CB_GETCOUNT, 0, 0));
         // The combo HWND is only the closed field. Its list is a separate
         // popup, so sizing the HWND to include the list makes it cover the
         // controls below it and breaks hit testing.
-        move(control, x, y, width, height);
+        move(control, x, y, width, height, visible);
         resizeComboPopup(control);
         // Keep the closed field aligned with its column, but let the popup
         // show complete model/preset names in narrow or high-DPI windows.
@@ -1047,33 +1185,35 @@ void NativeApp::layoutControls() {
 #endif
     move(sourceButton_, layout.compactImport ? left : layout.split - 126, layout.sourceActionsTop, 106, 34);
     move(sourceEdit_, left + 10, layout.sourceInputTop, leftWidth - 20, 42);
-    move(automaticDenoiseButton_, layout.split - 130, 300, 110, 30);
+    const float qualityY = NativeLayout::qualityDisclosureHeight;
+    move(motionBlurCheck_, left, 342, leftWidth, 34);
+    move(qualityDisclosureButton_, left, 384, leftWidth, 34);
+    move(automaticDenoiseButton_, layout.split - 130, 300 + qualityY, 110, 30, qualityExpanded_);
     // Each field leaves its painted label unobstructed. Automatic adjustment
     // owns a separate row rather than squeezing a signed value into a model
     // selector or changing the unrelated spatial/compression controls.
-    moveCombo(temporalRestorationCombo_, left, 354, leftWidth, 36);
-    move(denoiseAdjustmentEdit_, left + 10, 420, leftWidth - 110, 30);
-    move(denoiseAdjustmentResetButton_, layout.split - 100, 420, 80, 30);
+    moveCombo(temporalRestorationCombo_, left, 354 + qualityY, leftWidth, 36, qualityExpanded_);
+    move(denoiseAdjustmentEdit_, left + 10, 420 + qualityY, leftWidth - 110, 30, qualityExpanded_);
+    move(denoiseAdjustmentResetButton_, layout.split - 100, 420 + qualityY, 80, 30, qualityExpanded_);
     const float qualityOffset = NativeLayout::denoiseAdjustmentHeight;
-    moveCombo(deblurRestorationCombo_, left, 420 + qualityOffset, leftWidth, 36);
-    move(automaticDetailButton_, layout.split - 140, 459 + qualityOffset, 120, 30);
-    move(detailAdjustmentEdit_, left + 10, 524 + qualityOffset, leftWidth - 110, 30);
-    move(detailAdjustmentResetButton_, layout.split - 100, 524 + qualityOffset, 80, 30);
+    moveCombo(deblurRestorationCombo_, left, 420 + qualityOffset + qualityY, leftWidth, 36, qualityExpanded_);
+    move(automaticDetailButton_, layout.split - 140, 459 + qualityOffset + qualityY, 120, 30, qualityExpanded_);
+    move(detailAdjustmentEdit_, left + 10, 524 + qualityOffset + qualityY, leftWidth - 110, 30, qualityExpanded_);
+    move(detailAdjustmentResetButton_, layout.split - 100, 524 + qualityOffset + qualityY, 80, 30, qualityExpanded_);
     const float outputImageOffset = qualityOffset + NativeLayout::deblurAdjustmentHeight;
-    moveCombo(restorationCombo_, left, 420 + outputImageOffset, leftWidth, 36);
-    moveCombo(outputSizeCombo_, left, 486 + outputImageOffset, leftWidth, 36);
-    moveCombo(compressionRestorationCombo_, left, 552 + outputImageOffset, (leftWidth - 8) * 0.68F, 36);
-    moveCombo(compressionStrengthCombo_, left + (leftWidth - 8) * 0.68F + 8, 552 + outputImageOffset, (leftWidth - 8) * 0.32F, 36);
-    move(compressionTilingCheck_, left, 590 + outputImageOffset, leftWidth, 30);
-    move(automaticCompressionButton_, layout.split - 140, 630 + outputImageOffset, 120, 30);
-    move(compressionAdjustmentEdit_, left + 10, 693 + outputImageOffset, leftWidth - 110, 30);
-    move(compressionAdjustmentResetButton_, layout.split - 100, 693 + outputImageOffset, 80, 30);
-    const float finalQualityOffset = NativeLayout::qualityControlsHeight;
-    move(motionBlurCheck_, left, 684 + finalQualityOffset, leftWidth - 100, 32);
-    move(advancedButton_, layout.split - 110, 684 + finalQualityOffset, 90, 32);
+    moveCombo(restorationCombo_, left, 420 + outputImageOffset + qualityY, leftWidth, 36, qualityExpanded_);
+    moveCombo(outputSizeCombo_, left, 486 + outputImageOffset + qualityY, leftWidth, 36, qualityExpanded_);
+    moveCombo(compressionRestorationCombo_, left, 552 + outputImageOffset + qualityY, (leftWidth - 8) * 0.68F, 36, qualityExpanded_);
+    moveCombo(compressionStrengthCombo_, left + (leftWidth - 8) * 0.68F + 8, 552 + outputImageOffset + qualityY, (leftWidth - 8) * 0.32F, 36, qualityExpanded_);
+    move(compressionTilingCheck_, left, 590 + outputImageOffset + qualityY, leftWidth, 30, qualityExpanded_);
+    move(automaticCompressionButton_, layout.split - 140, 630 + outputImageOffset + qualityY, 120, 30, qualityExpanded_);
+    move(compressionAdjustmentEdit_, left + 10, 693 + outputImageOffset + qualityY, leftWidth - 110, 30, qualityExpanded_);
+    move(compressionAdjustmentResetButton_, layout.split - 100, 693 + outputImageOffset + qualityY, 80, 30, qualityExpanded_);
+    const float finalQualityOffset = NativeLayout::qualityControlsHeight + qualityY;
+    move(advancedButton_, layout.split - 110, 684 + finalQualityOffset, 90, 32, qualityExpanded_);
     const bool blurEnabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    move(shutterEdit_, left + 68, 732 + finalQualityOffset, 64, 30, advancedExpanded_);
-    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 732 + finalQualityOffset, leftWidth < 280 ? 50 : 54, 30, advancedExpanded_);
+    move(shutterEdit_, left + 68, 732 + finalQualityOffset, 64, 30, qualityExpanded_ && advancedExpanded_);
+    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 732 + finalQualityOffset, leftWidth < 280 ? 50 : 54, 30, qualityExpanded_ && advancedExpanded_);
     EnableWindow(shutterEdit_, blurEnabled);
     EnableWindow(samplesEdit_, blurEnabled);
     const float exportY = layout.exportOffset;
@@ -1176,17 +1316,17 @@ void NativeApp::ensureControlVisible(HWND control) {
     const float y = static_cast<float>(encoded - 1);
     const float height = static_cast<float>(reinterpret_cast<INT_PTR>(GetPropW(control, L"RifeLoveScrollHeight")));
     RECT client{}; GetClientRect(window_, &client);
-    const auto layout = NativeLayout::from(static_cast<float>(client.right) / dpiScale(), static_cast<float>(client.bottom) / dpiScale(), state_.scrollOffset);
+    const auto layout = NativeLayout::from(static_cast<float>(client.right) / dpiScale(), static_cast<float>(client.bottom) / dpiScale(), state_.scrollOffset, qualityExpanded_);
     float desired = layout.scroll;
     if (y < layout.scroll + layout.contentTop + 8) desired = y - layout.contentTop - 8;
     else if (y + height > layout.scroll + layout.contentBottom - 8) desired = y + height - layout.contentBottom + 8;
-    desired = NativeLayout::from(layout.width, layout.height, desired).scroll;
+    desired = NativeLayout::from(layout.width, layout.height, desired, qualityExpanded_).scroll;
     if (desired != state_.scrollOffset) { state_.scrollOffset = desired; layoutControls(); InvalidateRect(window_, nullptr, FALSE); }
 }
 
 bool NativeApp::focusNextControl(bool reverse) {
-    const std::array<HWND, 38> order{sourceButton_, sourceFolderButton_, sourceEdit_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
-        motionBlurCheck_, advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
+    const std::array<HWND, 39> order{sourceButton_, sourceFolderButton_, sourceEdit_, motionBlurCheck_, qualityDisclosureButton_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
+        advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
         modelButton_, runtimeButton_, comparisonButton_, historyButton_, statusDetailsButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
     const auto found = std::find(order.begin(), order.end(), GetFocus());
     const int initial = found == order.end() ? (reverse ? 0 : -1) : static_cast<int>(found - order.begin());
@@ -1331,6 +1471,7 @@ void NativeApp::updateView() {
     if (outputSizeIndex > 0) state_.outputSizeSummary = outputTargetLabel(outputSizeIndex);
 #endif
     state_.advancedExpanded = advancedExpanded_;
+    state_.qualityExpanded = qualityExpanded_;
     state_.automaticTemporalDenoise = automaticTemporalDenoise_;
     state_.automaticDetailRestoration = automaticDetailRestoration_;
     state_.automaticCompressionRestoration = automaticCompressionRestoration_;
@@ -1774,6 +1915,19 @@ void NativeApp::updateModelDetails() {
     if (controlText(modelDetails_) != details) SetWindowTextW(modelDetails_, details.c_str());
 }
 
+void NativeApp::setHistoryFont(HWND window) {
+    if (historyFont_) DeleteObject(historyFont_);
+    const UINT rawDpi = GetDpiForWindow(window);
+    const int dpi = static_cast<int>(rawDpi ? rawDpi : 96U);
+    historyFont_ = CreateFontW(-MulDiv(11, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    for (const auto control : {historyStatus_, historyRefreshButton_, historyList_, historyText_,
+                               historyRetryButton_, historyResumeButton_, historyRestartButton_}) {
+        if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(historyFont_), TRUE);
+    }
+}
+
 LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto* app = reinterpret_cast<NativeApp*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
@@ -1782,7 +1936,8 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
     }
     if (!app) return DefWindowProcW(window, message, wParam, lParam);
-    const float scale = app->dpiScale();
+    const UINT rawDpi = GetDpiForWindow(window);
+    const float scale = static_cast<float>(rawDpi ? rawDpi : 96U) / 96.0F;
     const auto px = [&](int value) { return scaled(value, scale); };
     switch (message) {
     case WM_CREATE:
@@ -1791,16 +1946,28 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
         app->historyRefreshButton_ = CreateWindowExW(0, L"BUTTON", L"刷新",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, px(600), px(10), px(110), px(34), window,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHistoryRefresh)), app->instance_, nullptr);
+        app->historyList_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT,
+            px(16), px(50), px(694), px(145), window,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHistoryList)), app->instance_, nullptr);
         app->historyText_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
                 ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-            px(16), px(50), px(694), px(430), window, nullptr, app->instance_, nullptr);
-        if (app->historyStatus_) SendMessageW(app->historyStatus_, WM_SETFONT, reinterpret_cast<WPARAM>(app->font_), TRUE);
-        if (app->historyRefreshButton_) SendMessageW(app->historyRefreshButton_, WM_SETFONT, reinterpret_cast<WPARAM>(app->font_), TRUE);
+            px(16), px(205), px(694), px(255), window, nullptr, app->instance_, nullptr);
+        app->historyRetryButton_ = CreateWindowExW(0, L"BUTTON", L"重试失败任务",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, px(16), px(472), px(140), px(34), window,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHistoryRetry)), app->instance_, nullptr);
+        app->historyResumeButton_ = CreateWindowExW(0, L"BUTTON", L"断点继续",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, px(166), px(472), px(140), px(34), window,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHistoryResume)), app->instance_, nullptr);
+        app->historyRestartButton_ = CreateWindowExW(0, L"BUTTON", L"从头另存重做",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, px(316), px(472), px(160), px(34), window,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHistoryRestart)), app->instance_, nullptr);
         if (app->historyText_) {
-            SendMessageW(app->historyText_, WM_SETFONT, reinterpret_cast<WPARAM>(app->font_), TRUE);
             SendMessageW(app->historyText_, EM_SETLIMITTEXT, static_cast<WPARAM>(8U * 1024U * 1024U), 0);
         }
+        app->setHistoryFont(window);
+        app->updateTaskHistorySelection();
         return 0;
     case WM_SIZE: {
         const int width = LOWORD(lParam);
@@ -1809,16 +1976,46 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
             std::max(px(120), width - px(150)), px(24), SWP_NOZORDER | SWP_NOACTIVATE);
         if (app->historyRefreshButton_) SetWindowPos(app->historyRefreshButton_, nullptr,
             std::max(px(16), width - px(126)), px(10), px(110), px(34), SWP_NOZORDER | SWP_NOACTIVATE);
-        if (app->historyText_) SetWindowPos(app->historyText_, nullptr, px(16), px(50),
-            std::max(px(180), width - px(32)), std::max(px(100), height - px(66)), SWP_NOZORDER | SWP_NOACTIVATE);
+        if (app->historyList_) SetWindowPos(app->historyList_, nullptr, px(16), px(50),
+            std::max(px(180), width - px(32)), px(145), SWP_NOZORDER | SWP_NOACTIVATE);
+        if (app->historyText_) SetWindowPos(app->historyText_, nullptr, px(16), px(205),
+            std::max(px(180), width - px(32)), std::max(px(60), height - px(265)), SWP_NOZORDER | SWP_NOACTIVATE);
+        const int actionTop = std::max(px(274), height - px(46));
+        for (const auto& [button, left, buttonWidth] : std::array{
+                 std::tuple{app->historyRetryButton_, 16, 140},
+                 std::tuple{app->historyResumeButton_, 166, 140},
+                 std::tuple{app->historyRestartButton_, 316, 160}}) {
+            if (button) SetWindowPos(button, nullptr, px(left), actionTop, px(buttonWidth), px(34),
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
         return 0;
     }
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
         if (info) {
-            info->ptMinTrackSize.x = px(560);
-            info->ptMinTrackSize.y = px(320);
+            RECT minimum{0, 0, px(560), px(320)};
+            const auto style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+            const auto extendedStyle = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+            if (AdjustWindowRectExForDpi(&minimum, style, FALSE, extendedStyle, rawDpi ? rawDpi : 96U)) {
+                const RECT work = monitorWorkArea(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST));
+                info->ptMinTrackSize.x = std::min<LONG>(minimum.right - minimum.left, work.right - work.left);
+                info->ptMinTrackSize.y = std::min<LONG>(minimum.bottom - minimum.top, work.bottom - work.top);
+            } else {
+                info->ptMinTrackSize.x = px(560);
+                info->ptMinTrackSize.y = px(352);
+            }
         }
+        return 0;
+    }
+    case WM_DPICHANGED: {
+        const auto* suggested = reinterpret_cast<const RECT*>(lParam);
+        if (suggested) {
+            const RECT work = monitorWorkArea(MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST));
+            const RECT fitted = fitWindowToWorkArea(*suggested, work);
+            SetWindowPos(window, nullptr, fitted.left, fitted.top, fitted.right - fitted.left,
+                fitted.bottom - fitted.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        app->setHistoryFont(window);
         return 0;
     }
     case WM_COMMAND:
@@ -1826,10 +2023,22 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
             app->refreshTaskHistory();
             return 0;
         }
+        if (LOWORD(wParam) == kHistoryList && HIWORD(wParam) == LBN_SELCHANGE) {
+            app->updateTaskHistorySelection();
+            return 0;
+        }
+        if (HIWORD(wParam) == BN_CLICKED) {
+            if (LOWORD(wParam) == kHistoryRetry) app->operateOnHistoryTask(HistoryAction::retry);
+            else if (LOWORD(wParam) == kHistoryResume) app->operateOnHistoryTask(HistoryAction::resumeCheckpoint);
+            else if (LOWORD(wParam) == kHistoryRestart) app->operateOnHistoryTask(HistoryAction::restartFromZero);
+            else break;
+            return 0;
+        }
         break;
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
-        if (!item || item->CtlID != kHistoryRefresh) break;
+        if (!item || (item->CtlID != kHistoryRefresh && item->CtlID != kHistoryRetry &&
+                      item->CtlID != kHistoryResume && item->CtlID != kHistoryRestart)) break;
         const ScopedDcState saved(item->hDC);
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
@@ -1847,7 +2056,7 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
         DeleteObject(brush);
         SetBkMode(item->hDC, TRANSPARENT);
         SetTextColor(item->hDC, disabled ? RGB(125, 140, 157) : RGB(242, 247, 255));
-        if (app->font_) SelectObject(item->hDC, app->font_);
+        if (app->historyFont_) SelectObject(item->hDC, app->historyFont_);
         std::wstring label = app->controlText(item->hwndItem);
         DrawTextW(item->hDC, label.c_str(), static_cast<int>(label.size()), &rect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -1862,6 +2071,10 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
         SetTextColor(reinterpret_cast<HDC>(wParam), RGB(159, 178, 201));
         SetBkColor(reinterpret_cast<HDC>(wParam), RGB(12, 15, 21));
         return reinterpret_cast<LRESULT>(app->backgroundBrush_);
+    case WM_CTLCOLORLISTBOX:
+        SetTextColor(reinterpret_cast<HDC>(wParam), RGB(242, 247, 255));
+        SetBkColor(reinterpret_cast<HDC>(wParam), RGB(14, 23, 34));
+        return reinterpret_cast<LRESULT>(app->editBrush_);
     case WM_CTLCOLOREDIT:
         SetTextColor(reinterpret_cast<HDC>(wParam), RGB(242, 247, 255));
         SetBkColor(reinterpret_cast<HDC>(wParam), RGB(14, 23, 34));
@@ -1881,9 +2094,14 @@ LRESULT CALLBACK NativeApp::historyWindowProcedure(HWND window, UINT message, WP
         return 0;
     case WM_NCDESTROY:
         if (app->historyWindow_ == window) app->historyWindow_ = nullptr;
+        app->historyList_ = nullptr;
         app->historyText_ = nullptr;
         app->historyStatus_ = nullptr;
         app->historyRefreshButton_ = nullptr;
+        app->historyRetryButton_ = nullptr;
+        app->historyResumeButton_ = nullptr;
+        app->historyRestartButton_ = nullptr;
+        if (app->historyFont_) { DeleteObject(app->historyFont_); app->historyFont_ = nullptr; }
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         break;
     default:
@@ -1935,7 +2153,8 @@ void NativeApp::showTaskHistory() {
 }
 
 void NativeApp::showComparison() {
-    if (!comparisonWindow_) comparisonWindow_ = std::make_unique<NativeComparisonWindow>();
+    if (!comparisonWindow_) comparisonWindow_ = std::make_unique<NativeComparisonWindow>(NativeComparisonWindow::Loader{},
+        dataDirectory_.writable ? dataDirectory_.directory : std::filesystem::path{});
     if (!comparisonWindow_->open(window_, currentSource(), currentOutput()))
         MessageBoxW(window_, L"无法创建本地逐帧比较窗口。", L"RifeLove", MB_OK | MB_ICONERROR);
 }
@@ -2050,7 +2269,12 @@ void NativeApp::refreshTaskHistory() {
     const auto generation = ++historyGeneration_;
     historyLoading_.store(true);
     if (historyStatus_) SetWindowTextW(historyStatus_, L"正在读取本地 SQLite 任务记录…");
+    historyCheckpointCandidateTaskIds_.clear();
+    historyCheckpointInspectionError_.clear();
+    historyRows_.clear();
+    if (historyList_) SendMessageW(historyList_, LB_RESETCONTENT, 0, 0);
     if (historyText_) SetWindowTextW(historyText_, L"正在读取…");
+    updateTaskHistorySelection();
     historyThread_.request_stop();
     if (historyThread_.joinable()) historyThread_.join();
     const auto callback = callbackWindow_.load();
@@ -2060,13 +2284,25 @@ void NativeApp::refreshTaskHistory() {
         try {
             if (stop.stop_requested() || closing_) { delete result; return; }
             if (!taskQueue_) throw std::runtime_error("本地任务队列不可用");
-            const auto rows = taskQueue_->list();
+            result->tasks = taskQueue_->list();
+            for (auto& task : result->tasks) {
+                if (stop.stop_requested() || closing_) { delete result; return; }
+                if (task.task.state != TaskState::interrupted) continue;
+                try {
+                    if (taskQueue_->hasCommittedCheckpointSegments(task.task.id))
+                        result->checkpointCandidateTaskIds.push_back(task.task.id);
+                } catch (const std::exception& error) {
+                    result->checkpointInspectionError = error.what();
+                    break;
+                }
+            }
             if (stop.stop_requested() || closing_) { delete result; return; }
-            result->text = taskHistoryText(rows);
-            result->status = rows.empty() ? L"没有任务记录" : L"已读取 " + std::to_wstring(rows.size()) + L" 条记录";
+            result->status = result->tasks.empty() ? L"没有任务记录" :
+                L"已读取 " + std::to_wstring(result->tasks.size()) + L" 条记录；最新任务已选中，可查看详情与可用操作";
+            if (!result->checkpointInspectionError.empty())
+                result->status += L"；检查点状态读取失败，断点继续暂不可用";
         } catch (const std::exception& error) {
-            result->text = L"无法读取本地任务记录。\r\n\r\n" + wideFromUtf8(error.what());
-            result->status = L"读取失败";
+            result->status = L"无法读取本地任务记录：" + wideFromUtf8(error.what());
         }
         const auto target = callbackWindow_.load();
         if (!target || closing_ || !PostMessageW(target, kHistoryLoadedMessage, 0, reinterpret_cast<LPARAM>(result)))
@@ -2077,8 +2313,145 @@ void NativeApp::refreshTaskHistory() {
 void NativeApp::handleHistoryResult(NativeHistoryResult result) {
     if (result.generation != historyGeneration_) return;
     historyLoading_.store(false);
-    if (historyText_ && IsWindow(historyText_)) SetWindowTextW(historyText_, result.text.c_str());
+    // The queue snapshot is FIFO because the worker consumes it in sequence
+    // order. Present its separate history view by recency, retaining the later
+    // enqueue order when SQLite's second-resolution timestamps tie.
+    std::reverse(result.tasks.begin(), result.tasks.end());
+    std::stable_sort(result.tasks.begin(), result.tasks.end(), [](const ConfiguredTask& left, const ConfiguredTask& right) {
+        return left.task.updatedAt > right.task.updatedAt;
+    });
+    historyRows_ = std::move(result.tasks);
+    historyCheckpointCandidateTaskIds_ = std::move(result.checkpointCandidateTaskIds);
+    historyCheckpointInspectionError_ = std::move(result.checkpointInspectionError);
+    if (historyList_ && IsWindow(historyList_)) {
+        SendMessageW(historyList_, LB_RESETCONTENT, 0, 0);
+        for (const auto& row : historyRows_) {
+            const auto label = taskHistoryRowLabel(row);
+            SendMessageW(historyList_, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        }
+        if (!historyRows_.empty()) SendMessageW(historyList_, LB_SETCURSEL, 0, 0);
+    }
     if (historyStatus_ && IsWindow(historyStatus_)) SetWindowTextW(historyStatus_, result.status.c_str());
+    updateTaskHistorySelection();
+}
+
+void NativeApp::updateTaskHistorySelection() {
+    const LRESULT selection = historyList_ ? SendMessageW(historyList_, LB_GETCURSEL, 0, 0) : LB_ERR;
+    const bool selected = selection != LB_ERR && selection >= 0 &&
+        static_cast<std::size_t>(selection) < historyRows_.size();
+    const ConfiguredTask* selectedTask = selected ? &historyRows_[static_cast<std::size_t>(selection)] : nullptr;
+    const bool hasCheckpoint = selectedTask && historyCheckpointInspectionError_.empty() &&
+        std::find(historyCheckpointCandidateTaskIds_.begin(), historyCheckpointCandidateTaskIds_.end(),
+            selectedTask->task.id) != historyCheckpointCandidateTaskIds_.end();
+    if (historyText_ && IsWindow(historyText_)) {
+        const std::wstring details = selected
+            ? taskHistoryText(*selectedTask, historyCheckpointInspectionError_.empty(), hasCheckpoint)
+            : historyRows_.empty() ? L"暂无任务记录。完成或提交一次插帧后，记录会显示在上方列表。"
+                                   : L"选择上方任务可查看源文件、输出文件、时间和错误详情。";
+        SetWindowTextW(historyText_, details.c_str());
+    }
+    const bool idle = !historyLoading_.load() && !queueSessionActive_.load();
+    const auto state = selected ? historyRows_[static_cast<std::size_t>(selection)].task.state : TaskState::queued;
+    if (historyRetryButton_) EnableWindow(historyRetryButton_, idle && selected && state == TaskState::failed);
+    if (historyResumeButton_) EnableWindow(historyResumeButton_, idle && selected && state == TaskState::interrupted && hasCheckpoint);
+    if (historyRestartButton_) EnableWindow(historyRestartButton_, idle && selected && state == TaskState::interrupted);
+    if (historyRefreshButton_) EnableWindow(historyRefreshButton_, !historyLoading_.load());
+}
+
+void NativeApp::operateOnHistoryTask(HistoryAction action) {
+    if (!taskQueue_ || queueSessionActive_.load() || historyLoading_.load()) return;
+    const LRESULT selection = historyList_ ? SendMessageW(historyList_, LB_GETCURSEL, 0, 0) : LB_ERR;
+    if (selection == LB_ERR || selection < 0 || static_cast<std::size_t>(selection) >= historyRows_.size()) return;
+    const std::string taskId = historyRows_[static_cast<std::size_t>(selection)].task.id;
+
+    std::vector<ConfiguredTask> rows;
+    try {
+        rows = taskQueue_->list();
+    } catch (const std::exception& error) {
+        MessageBoxW(historyWindow_, (L"无法读取当前队列状态：" + wideFromUtf8(error.what())).c_str(),
+            L"RifeLove 任务历史", MB_OK | MB_ICONERROR);
+        return;
+    }
+    const auto current = std::find_if(rows.begin(), rows.end(), [&](const ConfiguredTask& row) {
+        return row.task.id == taskId;
+    });
+    if (current == rows.end()) {
+        refreshTaskHistory();
+        return;
+    }
+    const auto expectedState = action == HistoryAction::retry ? TaskState::failed : TaskState::interrupted;
+    if (current->task.state != expectedState) {
+        refreshTaskHistory();
+        MessageBoxW(historyWindow_, L"该任务状态已变化，请刷新记录后重试。", L"RifeLove 任务历史",
+            MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    std::filesystem::path restartOutput;
+    if (action == HistoryAction::restartFromZero) {
+        try {
+            restartOutput = restartedOutputPath(*current, rows);
+        } catch (const std::exception& error) {
+            MessageBoxW(historyWindow_, (L"无法为重做任务准备新输出：\r\n" + wideFromUtf8(error.what())).c_str(),
+                L"RifeLove 任务历史", MB_OK | MB_ICONERROR);
+            return;
+        }
+        const auto prompt = L"这会保留原任务记录，并从头处理到新的输出文件：\r\n\r\n" + restartOutput.wstring() +
+            L"\r\n\r\n是否继续？";
+        if (MessageBoxW(historyWindow_, prompt.c_str(), L"从头重做任务", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+            return;
+    }
+
+    const auto queued = static_cast<std::size_t>(std::count_if(rows.begin(), rows.end(), [](const ConfiguredTask& row) {
+        return row.task.state == TaskState::queued;
+    }));
+    if (queued != 0) {
+        const auto prompt = L"队列中已有 " + std::to_wstring(queued) +
+            L" 个待处理任务。此操作会按顺序处理队列中的任务。\r\n\r\n是否继续？";
+        if (MessageBoxW(historyWindow_, prompt.c_str(), L"运行本地任务队列",
+                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    }
+
+    if (queueOwnerThread_.joinable()) queueOwnerThread_.join();
+    queueImportStop_ = std::stop_source{};
+    queueAccepted_ = 0;
+    queueRejected_ = 0;
+    queueHadFailures_ = false;
+    queuePaused_ = false;
+    queuePauseTransitionPending_ = false;
+    queueFirstRejection_.clear();
+    queueRejections_.clear();
+    queueSessionActive_.store(true);
+    const std::wstring actionLabel = action == HistoryAction::retry ? L"重试失败任务" :
+        action == HistoryAction::resumeCheckpoint ? L"校验并继续断点任务" : L"创建从头重做任务";
+    queueOwnerThread_ = std::jthread([this, taskId, action, restartOutput, actionLabel](std::stop_token ownerStop) {
+        std::stop_callback stopBridge(ownerStop, [this] {
+            queueImportStop_.request_stop();
+            if (taskQueue_) taskQueue_->stop();
+        });
+        try {
+            if (!taskQueue_) throw std::runtime_error("本地任务队列不可用");
+            if (ownerStop.stop_requested()) throw std::runtime_error("Queue cancelled");
+            if (action == HistoryAction::retry) taskQueue_->retry(taskId);
+            else if (action == HistoryAction::resumeCheckpoint) taskQueue_->resumeCheckpoint(taskId);
+            else (void)taskQueue_->restart(taskId, utf8(restartOutput));
+            if (ownerStop.stop_requested()) throw std::runtime_error("Queue cancelled");
+            postQueueNotice({L"任务已加入本地队列，正在按顺序处理", 1, 0, true, false, false});
+            if (!taskQueue_->start([this](application::QueueEvent event) {
+                    postQueueEvent(std::move(event));
+                })) throw std::runtime_error("本地任务队列已经在运行");
+            taskQueue_->wait();
+            postQueueNotice({L"", 1, 0, false, true, false});
+        } catch (const std::exception& error) {
+            const bool cancelled = ownerStop.stop_requested() || queueImportStop_.stop_requested();
+            postQueueNotice({cancelled ? L"队列操作已取消；未完成任务保留在本地队列中" :
+                    actionLabel + L"失败：" + wideFromUtf8(error.what()),
+                0, 0, false, true, !cancelled});
+        }
+    });
+    if (historyStatus_) SetWindowTextW(historyStatus_, actionLabel.c_str());
+    updateTaskHistorySelection();
+    updateView();
 }
 #endif
 
@@ -2569,6 +2942,7 @@ void NativeApp::handleQueueNotice(NativeQueueNotice notice) {
                 state_.status += L"；无法读取剩余任务状态";
             }
         }
+        if (!closing_ && historyWindow_ && IsWindow(historyWindow_)) refreshTaskHistory();
     }
     updateView();
 }
@@ -3125,6 +3499,7 @@ LRESULT CALLBACK NativeApp::comboProcedure(HWND window, UINT message, WPARAM wPa
                 SendMessageW(window, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label.data()));
             }
         }
+        label = compactClosedSelectorLabel(label);
         RECT textRect = rect;
         textRect.left += scaled(12, scale);
         textRect.right -= scaled(30, scale);
@@ -3432,6 +3807,17 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
 #endif
             case kStatusDetails: showStatusDetails(); return 0;
             case kAdvancedToggle: toggleAdvancedSettings(); return 0;
+            case kQualityDisclosure:
+                qualityExpanded_ = !qualityExpanded_;
+                SetWindowTextW(qualityDisclosureButton_, qualityExpanded_ ? L"收起画质设置  ▴" : L"展开画质设置  ▾");
+                if (!qualityExpanded_) {
+                    for (HWND combo : {temporalRestorationCombo_, deblurRestorationCombo_, restorationCombo_,
+                            outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_})
+                        SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+                }
+                layoutControls();
+                updateView();
+                return 0;
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             case kPauseResume: toggleQueuedPause(); return 0;
 #endif

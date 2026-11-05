@@ -38,14 +38,18 @@ SourceLease::SourceLease(const std::filesystem::path& path) {
     handle_ = handle;
 }
 SourceLease::~SourceLease() { if (handle_) CloseHandle(handle_); }
-FileIdentity SourceLease::fingerprint(std::stop_token stop, const std::function<void(std::uint64_t,std::uint64_t)>& progress) {
-    checkStop(stop);
+FileIdentity SourceLease::metadata() const {
     BY_HANDLE_FILE_INFORMATION info{};
     if (!GetFileInformationByHandle(handle_,&info)) throw std::runtime_error("Could not read source file identity");
     FileIdentity identity;
     identity.size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
     identity.modified = (static_cast<std::uint64_t>(info.ftLastWriteTime.dwHighDateTime) << 32) | info.ftLastWriteTime.dwLowDateTime;
     identity.fileId = std::to_string(info.dwVolumeSerialNumber) + ":" + std::to_string((static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow);
+    return identity;
+}
+FileIdentity SourceLease::fingerprint(std::stop_token stop, const std::function<void(std::uint64_t,std::uint64_t)>& progress) {
+    checkStop(stop);
+    FileIdentity identity = metadata();
     LARGE_INTEGER zero{};
     if (!SetFilePointerEx(handle_,zero,nullptr,FILE_BEGIN)) throw std::runtime_error("Could not rewind source verification handle");
     Hash hash; hash.initialize();
@@ -63,6 +67,7 @@ FileIdentity SourceLease::fingerprint(std::stop_token stop, const std::function<
     if (processed != identity.size) throw std::runtime_error("Source size changed during verification");
     std::array<UCHAR,32> digest{};
     checkHash(BCryptFinishHash(hash.value,digest.data(),static_cast<ULONG>(digest.size()),0));
+    checkStop(stop);
     constexpr char hex[] = "0123456789abcdef";
     for (const auto byte : digest) { identity.sha256 += hex[byte >> 4]; identity.sha256 += hex[byte & 15]; }
     return identity;

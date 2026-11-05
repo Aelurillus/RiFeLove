@@ -36,6 +36,11 @@ public:
     [[nodiscard]] std::size_t recoveredCount() const { return recovered_; }
     // Number of byte-identical, previously validated outputs adopted at startup.
     [[nodiscard]] std::size_t recoveredPublishedOutputCount() const { return recoveredPublishedOutputs_; }
+    // Fast metadata check for UI affordances. resumeCheckpoint still verifies
+    // task identity and hashes every committed artifact before accepting it.
+    [[nodiscard]] bool hasCommittedCheckpointSegments(const std::string& id) const {
+        return store_.hasCommittedCheckpointSegments(id);
+    }
 private:
     void reconcilePublishedOutputs();
     void run(std::stop_token stop, const Callback& callback);
