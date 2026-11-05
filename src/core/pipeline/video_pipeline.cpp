@@ -193,6 +193,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     }
     const auto video = std::find_if(info.streams.begin(),info.streams.end(),[&](const media::StreamInfo& stream) { return stream.index == encoding.videoStreamIndex && stream.type == "video"; });
     if (video == info.streams.end()) throw std::invalid_argument("Input has no selected video stream");
+    if (encoding.encoder != "auto" && encoding.pixelFormat.empty()) {
+        const auto hardwareFormat = media::automaticHardwareEncoderPixelFormat(encoding.encoder,video->color.pixelFormat);
+        if (!hardwareFormat.empty()) encoding.pixelFormat = hardwareFormat;
+    }
     if (video->width <= 0 || video->height <= 0 || video->width > 8192 || video->height > 8192)
         throw std::invalid_argument("Input dimensions need a separately supported normalization/tiling profile");
     const auto paddedWidth = static_cast<std::size_t>(((video->width + 63) / 64) * 64);
@@ -360,6 +364,10 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                 throw std::invalid_argument("Selected encoder differs from the encoder used by committed checkpoint segments");
             encoding.encoder = *savedEncoder;
         }
+        if (encoding.pixelFormat.empty()) {
+            const auto hardwareFormat = media::automaticHardwareEncoderPixelFormat(encoding.encoder,video->color.pixelFormat);
+            if (!hardwareFormat.empty()) encoding.pixelFormat = hardwareFormat;
+        }
         encoding.copyAuxiliaryStreams = false;
         encoding.requireFirstPacketKeyframe = true;
     }
@@ -383,11 +391,15 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
         } else fallback = "h264_nvenc is not registered in this FFmpeg build";
         if (!writer) {
             auto attempts = fallback;
-            for (const auto candidate : media::automaticSoftwareEncoderFallbacks(destination)) {
+            for (const auto candidate : media::automaticEncoderFallbacks(destination)) {
                 checkStop(stop);
                 const auto candidateName = std::string(candidate);
+                auto candidateEncoding = encoding;
+                candidateEncoding.encoder = candidateName;
+                candidateEncoding.pixelFormat = media::effectiveOutputPixelFormat(destination,candidateName,
+                    video->color.pixelFormat,candidateEncoding.pixelFormat);
                 media::EncoderProbeSettings probeSettings;
-                probeSettings.pixelFormat = encoding.pixelFormat;
+                probeSettings.pixelFormat = candidateEncoding.pixelFormat;
                 probeSettings.frameRate = settings.targetRate;
                 probeSettings.bitRate = encoding.bitRate;
                 probeSettings.gopSize = encoding.gopSize;
@@ -400,19 +412,19 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
                     attempts += capability.encoder + ": " + capability.reason;
                     continue;
                 }
-                encoding.encoder = candidateName;
-                try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop); }
+                try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,candidateEncoding,stop); }
                 catch (const media::MediaError& error) {
-                    if (error.operation() != "open video encoder " + encoding.encoder || stop.stop_requested()) throw;
+                    if (error.operation() != "open video encoder " + candidateName || stop.stop_requested()) throw;
                     if (!attempts.empty()) attempts += "; ";
                     attempts += error.what();
                     continue;
                 } catch (const std::invalid_argument& error) {
                     if (std::string(error.what()).find("encoder does not support the requested pixel format") == std::string::npos) throw;
                     if (!attempts.empty()) attempts += "; ";
-                    attempts += encoding.encoder + ": " + error.what();
+                    attempts += candidateName + ": " + error.what();
                     continue;
                 }
+                encoding = std::move(candidateEncoding);
                 fallback = attempts;
                 break;
             }
@@ -1055,6 +1067,8 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     notify("validating",pendingTime.value_or(end));
     const auto finishStarted = std::chrono::steady_clock::now();
     const auto validateTemporary = [&](const std::string& temporary) {
+        const auto expectedPixelFormat = media::expectedDecodedOutputPixelFormat(encoding.encoder,
+            video->color.pixelFormat,encoding.pixelFormat);
         result.validation = measure(result.timings.outputValidationSeconds,[&] {
             const auto validationStarted = std::chrono::steady_clock::now();
             const auto validationProgress = [&](const PipelineProgress& sourceProgress) {
@@ -1069,7 +1083,7 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             };
             return detail::validatePipelineOutput(temporary,encoding.videoStreamIndex,encoding.outputWidth > 0 ? encoding.outputWidth : video->width,
                 encoding.outputHeight > 0 ? encoding.outputHeight : video->height,*origin,end,settings.targetRate,clock->index(),info,
-                validationProgress,stop,encoding.pixelFormat);
+                validationProgress,stop,expectedPixelFormat);
         });
     };
     if (checkpointMode) {

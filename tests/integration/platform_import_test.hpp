@@ -5,7 +5,9 @@
 #include "inference/model_pack.hpp"
 #include "media/ffmpeg_helpers.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <span>
@@ -59,7 +61,7 @@ struct Fixture {
     }
 };
 
-inline void writeSource(const std::filesystem::path& path, int width, int height) {
+inline void writeSource(const std::filesystem::path& path, int width, int height, bool yuv444 = false, bool tenBit = false) {
     using media::detail::check;
     struct Resources {
         AVFormatContext* output = nullptr;
@@ -77,7 +79,9 @@ inline void writeSource(const std::filesystem::path& path, int width, int height
     resources.codec = avcodec_alloc_context3(encoder);
     if (!resources.output || !resources.codec || !resources.frame || !resources.packet) throw std::bad_alloc();
     auto* codec = resources.codec;
-    codec->width = width; codec->height = height; codec->pix_fmt = AV_PIX_FMT_YUV420P;
+    if (tenBit && !yuv444) throw std::invalid_argument("10-bit fixture requires 4:4:4");
+    codec->width = width; codec->height = height;
+    codec->pix_fmt = tenBit ? AV_PIX_FMT_YUV444P10LE : yuv444 ? AV_PIX_FMT_YUV444P : AV_PIX_FMT_YUV420P;
     codec->time_base = {1,30}; codec->framerate = {30,1}; codec->thread_count = 1;
     codec->color_primaries = AVCOL_PRI_BT709; codec->color_trc = AVCOL_TRC_BT709;
     codec->colorspace = AVCOL_SPC_BT709; codec->color_range = AVCOL_RANGE_MPEG;
@@ -93,8 +97,12 @@ inline void writeSource(const std::filesystem::path& path, int width, int height
     frame->format = codec->pix_fmt; frame->width = width; frame->height = height;
     frame->pts = 0; frame->duration = 1;
     check(av_frame_get_buffer(frame,32),"platform fixture pixels");
-    for (int p = 0; p < 3; ++p) for (int y = 0; y < (p ? height / 2 : height); ++y)
-        std::memset(frame->data[p] + y * frame->linesize[p],p ? 128 : 64,p ? width / 2 : width);
+    for (int p = 0; p < 3; ++p) for (int y = 0; y < (p && !yuv444 ? height / 2 : height); ++y) {
+        auto* row = frame->data[p] + y * frame->linesize[p];
+        const int samples = p && !yuv444 ? width / 2 : width;
+        if (tenBit) std::fill_n(reinterpret_cast<std::uint16_t*>(row),samples,static_cast<std::uint16_t>(p ? 512 : 256));
+        else std::memset(row,p ? 128 : 64,static_cast<std::size_t>(samples));
+    }
     const auto drain = [&] {
         for (;;) {
             const int status = avcodec_receive_packet(codec,resources.packet);

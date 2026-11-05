@@ -5,6 +5,7 @@
 #include "native_compression_test.hpp"
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 #include "native_comparison_test.hpp"
+#include "media/encoder_policy.hpp"
 #include <nlohmann/json.hpp>
 #endif
 
@@ -1229,10 +1230,48 @@ void checkPauseResume(NativeApp& app, HWND window, const std::filesystem::path& 
     check(completed, "continued task publishes a completed output");
 }
 
+void checkTenBitFormatReadiness(NativeApp& app, HWND window, const std::filesystem::path& source,
+                                const std::filesystem::path& mp4Output, const std::filesystem::path& screenshot) {
+    const auto info = rifelove::media::MediaEngine::probe(utf8(source.wstring()));
+    const auto stream = std::find_if(info.streams.begin(), info.streams.end(), [&](const auto& item) {
+        return item.index == info.preferredVideoStream && item.type == "video";
+    });
+    if (stream == info.streams.end() || stream->color.bitDepth != 10 ||
+        rifelove::media::automaticOutputPixelFormat(utf8(mp4Output.wstring())) != "yuv420p") {
+        check(false, "format-readiness fixture requires a 10-bit source and MP4-family destination");
+        return;
+    }
+    const HWND sourceEdit = GetDlgItem(window, 1001), outputEdit = GetDlgItem(window, 1003);
+    const HWND encoder = GetDlgItem(window, 1006), platform = GetDlgItem(window, 1012), start = GetDlgItem(window, 1009);
+    if (!sourceEdit || !outputEdit || !encoder || !platform || !start) { check(false, "find format-readiness controls"); return; }
+    // The earlier control test intentionally changes combo-box selections.
+    // Restore the normal platform preset and let the app process its change
+    // before checking the precision warning and taking a screenshot.
+    SendMessageW(platform, CB_SETCURSEL, 0, 0);
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(1012, CBN_SELCHANGE), reinterpret_cast<LPARAM>(platform));
+    SendMessageW(encoder, CB_SETCURSEL, 0, 0);
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(1006, CBN_SELCHANGE), reinterpret_cast<LPARAM>(encoder));
+    SetWindowTextW(sourceEdit, source.c_str());
+    SetWindowTextW(outputEdit, mp4Output.c_str());
+    const auto describesDepth = [&] {
+        return app.testViewState().status.find(L"10 位源片") != std::wstring::npos;
+    };
+    check(pumpUntil(describesDepth, std::chrono::seconds(30)) && !IsWindowEnabled(start),
+          "10-bit MP4 output is blocked with an actionable precision message");
+    if (!screenshot.empty()) check(captureClient(window, screenshot), "capture the 10-bit MP4 precision message");
+    auto mkvOutput = mp4Output; mkvOutput.replace_extension(L".mkv");
+    SetWindowTextW(outputEdit, mkvOutput.c_str());
+    check(pumpUntil([&] { return IsWindowEnabled(start) != FALSE; }, std::chrono::seconds(10)),
+          "switching to source-preserving MKV reuses compatible encoder probes");
+    SetWindowTextW(outputEdit, mp4Output.c_str());
+    check(pumpUntil(describesDepth, std::chrono::seconds(10)) && !IsWindowEnabled(start),
+          "switching back to MP4 restores the 10-bit precision restriction");
+}
+
 void checkProcessing(NativeApp& app, HWND window, const std::filesystem::path& source,
                      const std::filesystem::path& output, const std::filesystem::path& screenshot, bool cancelRun = false,
                      bool upscaleYoutube = false, bool temporalDenoise = false, bool dual = false,
-                     bool motionBlur = false) {
+                     bool motionBlur = false, bool automaticEncoder = false) {
     if (!std::filesystem::is_regular_file(source) || std::filesystem::exists(output)) {
         check(false, "processing fixture must exist and output must be new");
         return;
@@ -1280,7 +1319,7 @@ void checkProcessing(NativeApp& app, HWND window, const std::filesystem::path& s
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1017, CBN_SELCHANGE), reinterpret_cast<LPARAM>(restoration));
     SendMessageW(rate, CB_SETCURSEL, 1, 0); // 60 FPS.
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1005, CBN_SELCHANGE), reinterpret_cast<LPARAM>(rate));
-    SendMessageW(encoder, CB_SETCURSEL, 1, 0); // Explicit H.264 NVENC on the test GPU.
+    SendMessageW(encoder, CB_SETCURSEL, automaticEncoder ? 0 : 1, 0);
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(1006, CBN_SELCHANGE), reinterpret_cast<LPARAM>(encoder));
     SetWindowTextW(sourceEdit, source.c_str());
     SetWindowTextW(outputEdit, output.c_str());
@@ -1292,6 +1331,15 @@ void checkProcessing(NativeApp& app, HWND window, const std::filesystem::path& s
                   << "; sourceReady=" << state.sourceReady << '\n';
         check(false, "native UI did not become ready after inspecting the test video");
         return;
+    }
+    if (rifelove::media::automaticOutputPixelFormat(utf8(output.wstring())) == "yuv420p") {
+        const auto info = rifelove::media::MediaEngine::probe(utf8(source.wstring()));
+        const auto stream = std::find_if(info.streams.begin(), info.streams.end(), [&](const auto& item) {
+            return item.index == info.preferredVideoStream && item.type == "video";
+        });
+        if (stream != info.streams.end() && stream->color.pixelFormat != "yuv420p")
+            check(app.testViewState().status.find(L"8 位 4:2:0") != std::wstring::npos,
+                  "native readiness explains MP4-family chroma conversion");
     }
     if (motionBlur) {
         check(blur != nullptr, "find motion blur control for dual-blur processing");
@@ -1317,11 +1365,25 @@ void checkProcessing(NativeApp& app, HWND window, const std::filesystem::path& s
         if (stopped) check(app.testViewState().stage == L"cancelled", "cancel reports cancelled state");
         return;
     }
-    const bool published = pumpUntil([&] {
-        return std::filesystem::is_regular_file(output) && IsWindowEnabled(cancel) == FALSE;
+    const bool settled = pumpUntil([&] {
+        return app.testViewState().stage == L"failed" || app.testViewState().stage == L"cancelled" ||
+            (std::filesystem::is_regular_file(output) && IsWindowEnabled(cancel) == FALSE);
     }, std::chrono::seconds(120));
     const auto& finalState = app.testViewState();
-    if (!published) std::cerr << "UI status: " << utf8(finalState.status) << '\n';
+    const bool published = settled && std::filesystem::is_regular_file(output) && finalState.stage == L"completed";
+    if (!published) {
+        std::cerr << "UI status: " << utf8(finalState.status) << "; stage=" << utf8(finalState.stage)
+                  << "; outputFrames=" << finalState.outputFrames << '\n';
+        try {
+            const auto database = app.testDataDirectory().directory / L"queue.sqlite";
+            rifelove::TaskStore store(utf8(database.wstring()), rifelove::TaskStore::OpenMode::readOnly);
+            for (const auto& row : store.configured())
+                std::cerr << "Task state=" << rifelove::toString(row.task.state)
+                          << "; error=" << row.task.error << '\n';
+        } catch (const std::exception& error) {
+            std::cerr << "Task failure readback: " << error.what() << '\n';
+        }
+    }
     check(published, "native start button publishes a completed output");
     if (published) {
         check(finalState.stage == L"completed", "native UI reports completed state");
@@ -1692,7 +1754,7 @@ int wmain(int argc, wchar_t** argv) {
                 check(openedByMouse, "mouse press opens combo list");
             }
             checkPostedComboInteraction(window, combo, GetDlgItem(window, 1004));
-            const bool processingRun = (argc == 4 || argc == 5) && (std::wstring(argv[1]) == L"--processing" || std::wstring(argv[1]) == L"--cancel" || std::wstring(argv[1]) == L"--upscale-youtube" || std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" || std::wstring(argv[1]) == L"--pause-resume" || std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");
+            const bool processingRun = (argc == 4 || argc == 5) && (std::wstring(argv[1]) == L"--processing" || std::wstring(argv[1]) == L"--processing-auto" || std::wstring(argv[1]) == L"--format-readiness" || std::wstring(argv[1]) == L"--cancel" || std::wstring(argv[1]) == L"--upscale-youtube" || std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--denoise-reject" || std::wstring(argv[1]) == L"--pause-resume" || std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur");
             const bool batchRun = argc == 3 && (std::wstring(argv[1]) == L"--batch" || std::wstring(argv[1]) == L"--batch-reject" || std::wstring(argv[1]) == L"--batch-cancel" || std::wstring(argv[1]) == L"--batch-all-rejected" || std::wstring(argv[1]) == L"--batch-youtube");
             const bool switchRun = argc == 4 && std::wstring(argv[1]) == L"--switch";
             if (combo && source && start)
@@ -1717,8 +1779,9 @@ int wmain(int argc, wchar_t** argv) {
             if (switchRun) checkRapidSourceSwitch(app, window, std::filesystem::path(argv[2]), std::filesystem::path(argv[3]));
             if (processingRun && std::wstring(argv[1]) == L"--denoise-reject") checkDenoiseColorRejection(app, window, std::filesystem::path(argv[2]), std::filesystem::path(argv[3]));
             else if (processingRun && std::wstring(argv[1]) == L"--pause-resume") checkPauseResume(app, window, std::filesystem::path(argv[2]), std::filesystem::path(argv[3]));
+            else if (processingRun && std::wstring(argv[1]) == L"--format-readiness") checkTenBitFormatReadiness(app, window, std::filesystem::path(argv[2]), std::filesystem::path(argv[3]), argc == 5 ? std::filesystem::path(argv[4]) : std::filesystem::path{});
             else if (processingRun) checkProcessing(app, window, std::filesystem::path(argv[2]),
-                std::filesystem::path(argv[3]), argc == 5 ? std::filesystem::path(argv[4]) : std::filesystem::path{}, std::wstring(argv[1]) == L"--cancel", std::wstring(argv[1]) == L"--upscale-youtube", std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur", std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur", std::wstring(argv[1]) == L"--dual-blur");
+                std::filesystem::path(argv[3]), argc == 5 ? std::filesystem::path(argv[4]) : std::filesystem::path{}, std::wstring(argv[1]) == L"--cancel", std::wstring(argv[1]) == L"--upscale-youtube", std::wstring(argv[1]) == L"--denoise" || std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur", std::wstring(argv[1]) == L"--dual" || std::wstring(argv[1]) == L"--dual-blur", std::wstring(argv[1]) == L"--dual-blur", std::wstring(argv[1]) == L"--processing-auto");
             if (batchRun) checkBatchProcessing(app, window, std::filesystem::path(argv[2]), std::wstring(argv[1]) == L"--batch-reject", std::wstring(argv[1]) == L"--batch-cancel", std::wstring(argv[1]) == L"--batch-all-rejected", std::wstring(argv[1]) == L"--batch-youtube");
 #else
             if (processingRun) check(false, "processing test requires the media/ONNX application service");

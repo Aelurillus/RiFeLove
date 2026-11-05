@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -35,13 +36,42 @@ inline std::vector<std::string_view> automaticSoftwareEncoderFallbacks(std::stri
     return {"libopenh264", "libkvazaar", "libaom-av1"};
 }
 
+inline std::vector<std::string_view> automaticEncoderFallbacks(std::string_view destination) {
+    if (automaticEncodingRequiresH264(destination)) return {"libopenh264"};
+    return {"hevc_nvenc", "av1_nvenc", "libopenh264", "libkvazaar", "libaom-av1"};
+}
+
 inline std::string_view automaticOutputPixelFormat(std::string_view destination) noexcept {
     return automaticEncodingRequiresH264(destination) ? std::string_view("yuv420p") : std::string_view{};
 }
 
+inline std::string automaticHardwareEncoderPixelFormat(std::string_view encoder, std::string_view sourcePixelFormat) {
+    if (encoder != "hevc_nvenc" && encoder != "av1_nvenc") return {};
+    if (sourcePixelFormat == "yuv420p10le" || sourcePixelFormat == "p010le") return "p010le";
+    if (sourcePixelFormat == "yuv444p10le" || sourcePixelFormat == "yuv444p10msble") return "yuv444p10msble";
+    return {};
+}
+
+inline std::string effectiveOutputPixelFormat(std::string_view destination, std::string_view encoder,
+                                               std::string_view sourcePixelFormat,
+                                               std::string_view requestedPixelFormat = {}) {
+    if (!requestedPixelFormat.empty()) return std::string(requestedPixelFormat);
+    const auto containerFormat = automaticOutputPixelFormat(destination);
+    if (!containerFormat.empty()) return std::string(containerFormat);
+    const auto hardwareFormat = automaticHardwareEncoderPixelFormat(encoder, sourcePixelFormat);
+    return hardwareFormat.empty() ? std::string(sourcePixelFormat) : hardwareFormat;
+}
+
+inline std::string expectedDecodedOutputPixelFormat(std::string_view encoder, std::string_view sourcePixelFormat,
+                                                     std::string_view encoderPixelFormat) {
+    if (!encoderPixelFormat.empty() && automaticHardwareEncoderPixelFormat(encoder, sourcePixelFormat) == encoderPixelFormat)
+        return std::string(sourcePixelFormat);
+    return encoderPixelFormat.empty() ? std::string(sourcePixelFormat) : std::string(encoderPixelFormat);
+}
+
 inline bool isAutomaticEncoderCandidate(std::string_view destination, std::string_view encoder) {
     if (encoder == "h264_nvenc") return true;
-    const auto fallbacks = automaticSoftwareEncoderFallbacks(destination);
+    const auto fallbacks = automaticEncoderFallbacks(destination);
     return std::find(fallbacks.begin(), fallbacks.end(), encoder) != fallbacks.end();
 }
 

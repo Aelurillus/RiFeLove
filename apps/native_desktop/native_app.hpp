@@ -466,6 +466,7 @@ private:
     media::ColorInfo sourceColor_;
     bool encoderAvailable_ = false;
     std::vector<media::EncoderCapability> encoderCapabilities_;
+    std::vector<media::EncoderCapability> encoderCapabilitiesYuv420p_;
     bool deviceAvailable_ = false;
     std::wstring inspectedSource_;
     std::uint64_t sourceGeneration_ = 0;

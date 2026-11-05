@@ -79,6 +79,10 @@ struct ProcessingEvent {
     std::optional<media::MediaInfo> media;
     std::optional<gpu::DeviceInfo> device;
     std::vector<media::EncoderCapability> encoderCapabilities;
+    // MP4/MOV export defaults to yuv420p when no explicit format was set.
+    // Keep this probe separate from source-format capabilities so the UI can
+    // respond correctly when the output extension changes after inspection.
+    std::vector<media::EncoderCapability> encoderCapabilitiesYuv420p;
     std::optional<PipelineResult> result;
     std::optional<ProcessingIdentity> identity;
     bool sourceColorSupported = false;
