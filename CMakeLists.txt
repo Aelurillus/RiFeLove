@@ -77,9 +77,11 @@ if(RIFELOVE_BUILD_NATIVE_DESKTOP AND WIN32)
   if(NOT TARGET miniz)
     message(FATAL_ERROR "The pinned miniz source did not provide its expected C library target")
   endif()
-  add_library(rifelove_native_package STATIC apps/native_desktop/native_package_archive.cpp)
+  add_library(rifelove_native_package STATIC
+    apps/native_desktop/native_package_archive.cpp
+    apps/native_desktop/native_model_download.cpp)
   target_include_directories(rifelove_native_package PUBLIC apps/native_desktop)
-  target_link_libraries(rifelove_native_package PUBLIC miniz PRIVATE bcrypt)
+  target_link_libraries(rifelove_native_package PUBLIC miniz PRIVATE bcrypt winhttp)
   target_compile_definitions(rifelove_native_package PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   if(MSVC)
     target_compile_options(rifelove_native_package PRIVATE /W4 /permissive- /EHsc)

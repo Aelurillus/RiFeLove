@@ -174,6 +174,8 @@ private:
     static constexpr int kModelClose = 1207;
     static constexpr int kModelInstall = 1208;
     static constexpr int kModelCancelInstall = 1209;
+    static constexpr int kModelDownload = 1210;
+    static constexpr int kModelDownloadUrl = 1211;
     static constexpr int kHistoryList = 1208;
     static constexpr int kHistoryRetry = 1209;
     static constexpr int kHistoryResume = 1210;
@@ -314,7 +316,7 @@ private:
     void layoutModelCenter();
     void updateModelCenter();
     void updateModelDetails();
-    void startModelPackageInstall(const std::filesystem::path& archive);
+    void startModelPackageInstall(const std::filesystem::path& archive, std::vector<std::wstring> mirrorUrls = {});
     void cancelModelPackageInstall();
     void pollModelPackageInstall();
     void showTaskHistory();
@@ -433,6 +435,7 @@ private:
     HWND modelList_ = nullptr;
     HWND modelDetails_ = nullptr;
     HWND modelCenterStatus_ = nullptr;
+    HWND modelDownloadUrl_ = nullptr;
     HFONT modelCenterFont_ = nullptr;
     HBRUSH modelCenterBackgroundBrush_ = nullptr;
     HBRUSH modelCenterSurfaceBrush_ = nullptr;
