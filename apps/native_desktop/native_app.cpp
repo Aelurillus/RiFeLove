@@ -444,6 +444,7 @@ NativeApp::~NativeApp() {
     if (modelInstallThread_.joinable()) modelInstallThread_.join();
     if (modelCenterWindow_ && IsWindow(modelCenterWindow_)) DestroyWindow(modelCenterWindow_);
     if (modelCenterFont_) DeleteObject(modelCenterFont_);
+    if (modelCenterHeadingFont_) DeleteObject(modelCenterHeadingFont_);
     if (historyWindow_ && IsWindow(historyWindow_)) DestroyWindow(historyWindow_);
     historyThread_.request_stop();
     if (historyThread_.joinable()) historyThread_.join();
@@ -1740,13 +1741,15 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelDownloadUrl_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, kModelDownloadUrl);
         SendMessageW(app->modelDownloadUrl_, EM_SETLIMITTEXT, 32768, 0);
         SendMessageW(app->modelDownloadUrl_, EM_SETCUEBANNER, TRUE,
-            reinterpret_cast<LPARAM>(L"HTTPS ZIP 镜像链接；多个镜像用分号分隔"));
+            reinterpret_cast<LPARAM>(L"HTTPS ZIP 地址；多个镜像用分号分隔"));
+        control(L"BUTTON", L"下载并安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
         app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, kModelList);
         app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
+        app->modelListHeading_ = control(L"STATIC", L"已安装与可用模型", SS_LEFT | SS_NOPREFIX, kModelListHeading);
+        app->modelDetailsHeading_ = control(L"STATIC", L"模型详情", SS_LEFT | SS_NOPREFIX, kModelDetailsHeading);
         SendMessageW(app->modelDetails_, EM_SETLIMITTEXT, 128 * 1024, 0);
         control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRegister);
         control(L"BUTTON", L"安装验证包…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelInstall);
-        control(L"BUTTON", L"下载并安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
         control(L"BUTTON", L"取消安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelCancelInstall);
         control(L"BUTTON", L"设为该类默认", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDefault);
         control(L"BUTTON", L"取消登记", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelUnregister);
@@ -1768,7 +1771,10 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     case WM_CTLCOLORLISTBOX: {
         const auto dc = reinterpret_cast<HDC>(wParam);
         const bool surface = message != WM_CTLCOLORSTATIC;
-        SetTextColor(dc, RGB(225, 232, 244));
+        const auto controlId = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
+        const bool heading = controlId == kModelListHeading || controlId == kModelDetailsHeading;
+        const bool primaryText = surface || heading || controlId == 1200;
+        SetTextColor(dc, primaryText ? RGB(225, 232, 244) : RGB(159, 178, 201));
         SetBkColor(dc, surface ? RGB(19, 24, 32) : RGB(12, 15, 21));
         const auto brush = surface ? app->modelCenterSurfaceBrush_ : app->modelCenterBackgroundBrush_;
         return reinterpret_cast<LRESULT>(brush ? brush : GetSysColorBrush(COLOR_WINDOW));
@@ -1776,8 +1782,7 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
         if (!item || item->CtlType != ODT_BUTTON) break;
-        const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelInstall ||
-            static_cast<int>(item->CtlID) == kModelDownload;
+        const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelDownload;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
         const bool focused = (item->itemState & ODS_FOCUS) != 0;
@@ -1827,6 +1832,7 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         return 0;
     case WM_DPICHANGED: {
         if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
+        if (app->modelCenterHeadingFont_) { DeleteObject(app->modelCenterHeadingFont_); app->modelCenterHeadingFont_ = nullptr; }
         const auto* suggested = reinterpret_cast<const RECT*>(lParam);
         if (suggested) {
             const auto work = monitorWorkArea(MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST));
@@ -1934,7 +1940,10 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelDetails_ = nullptr;
         app->modelCenterStatus_ = nullptr;
         app->modelDownloadUrl_ = nullptr;
+        app->modelListHeading_ = nullptr;
+        app->modelDetailsHeading_ = nullptr;
         if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
+        if (app->modelCenterHeadingFont_) { DeleteObject(app->modelCenterHeadingFont_); app->modelCenterHeadingFont_ = nullptr; }
         if (app->modelCenterBackgroundBrush_) { DeleteObject(app->modelCenterBackgroundBrush_); app->modelCenterBackgroundBrush_ = nullptr; }
         if (app->modelCenterSurfaceBrush_) { DeleteObject(app->modelCenterSurfaceBrush_); app->modelCenterSurfaceBrush_ = nullptr; }
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
@@ -1951,9 +1960,14 @@ void NativeApp::layoutModelCenter() {
     if (!modelCenterFont_) modelCenterFont_ = CreateFontW(-MulDiv(10, dpi ? dpi : 96, 72), 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    for (int id = 1200; id <= kModelDownloadUrl; ++id) {
+    if (!modelCenterHeadingFont_) modelCenterHeadingFont_ = CreateFontW(-MulDiv(11, dpi ? dpi : 96, 72), 0, 0, 0, FW_SEMIBOLD,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    for (int id = 1200; id <= kModelDetailsHeading; ++id) {
         const auto child = GetDlgItem(modelCenterWindow_, id);
-        if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(modelCenterFont_), TRUE);
+        const bool heading = id == kModelListHeading || id == kModelDetailsHeading;
+        const auto font = heading && modelCenterHeadingFont_ ? modelCenterHeadingFont_ : modelCenterFont_;
+        if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
     RECT client{};
     GetClientRect(modelCenterWindow_, &client);
@@ -1961,30 +1975,48 @@ void NativeApp::layoutModelCenter() {
     const int width = std::max(1, static_cast<int>(client.right) - margin * 2);
     const bool narrow = width < px(900);
     const int buttonHeight = px(34);
-    const int buttonRows = narrow ? 2 : 1;
+    const int buttonRows = 2;
     const int buttonsTop = std::max(px(180), static_cast<int>(client.bottom) - margin - buttonRows * (buttonHeight + gap) + gap);
-    const int contentTop = px(116), contentHeight = std::max(px(60), buttonsTop - contentTop - gap);
+    const int headingTop = px(120), headingHeight = px(20);
+    const int contentTop = headingTop + headingHeight + px(6);
+    const int contentBottom = std::max(contentTop + px(60), buttonsTop - gap);
+    const int contentHeight = std::max(px(60), contentBottom - contentTop);
     const auto move = [&](HWND child, int x, int y, int w, int h) {
         if (child) SetWindowPos(child, nullptr, x, y, std::max(1, w), std::max(1, h), SWP_NOZORDER | SWP_NOACTIVATE);
     };
     move(modelCenterStatus_, margin, px(12), width, px(56));
-    move(modelDownloadUrl_, margin, px(76), width, px(28));
+    const int downloadButtonWidth = px(148);
+    const int downloadButtonLeft = margin + width - downloadButtonWidth;
+    move(modelDownloadUrl_, margin, px(76), width - downloadButtonWidth - gap, px(34));
+    move(GetDlgItem(modelCenterWindow_, kModelDownload), downloadButtonLeft, px(76), downloadButtonWidth, px(34));
     if (narrow) {
-        const int listHeight = std::max(px(30), contentHeight * 2 / 5);
+        const int listHeight = std::max(px(48), contentHeight * 2 / 5);
+        const int detailsHeadingTop = contentTop + listHeight + gap;
+        const int detailsTop = detailsHeadingTop + headingHeight + px(4);
+        move(modelListHeading_, margin, headingTop, width, headingHeight);
         move(modelList_, margin, contentTop, width, listHeight);
-        move(modelDetails_, margin, contentTop + listHeight + gap, width, contentHeight - listHeight - gap);
+        move(modelDetailsHeading_, margin, detailsHeadingTop, width, headingHeight);
+        move(modelDetails_, margin, detailsTop, width, contentBottom - detailsTop);
     } else {
         const int listWidth = width * 38 / 100;
+        move(modelListHeading_, margin, headingTop, listWidth, headingHeight);
+        move(modelDetailsHeading_, margin + listWidth + gap, headingTop, width - listWidth - gap, headingHeight);
         move(modelList_, margin, contentTop, listWidth, contentHeight);
         move(modelDetails_, margin + listWidth + gap, contentTop, width - listWidth - gap, contentHeight);
     }
-    const std::array<int, 8> buttons{kModelRegister, kModelInstall, kModelDownload, kModelCancelInstall, kModelDefault,
+    const std::array<int, 7> buttons{kModelRegister, kModelInstall, kModelCancelInstall, kModelDefault,
         kModelUnregister, kModelRefresh, kModelClose};
-    const int columns = narrow ? 4 : 8;
+    const int columns = 4;
     const int buttonWidth = (width - (columns - 1) * gap) / columns;
-    for (std::size_t index = 0; index < buttons.size(); ++index)
-        move(GetDlgItem(modelCenterWindow_, buttons[index]), margin + static_cast<int>(index % columns) * (buttonWidth + gap),
-            buttonsTop + static_cast<int>(index / columns) * (buttonHeight + gap), buttonWidth, buttonHeight);
+    for (std::size_t index = 0; index < buttons.size(); ++index) {
+        const auto row = index / static_cast<std::size_t>(columns);
+        const auto column = index % static_cast<std::size_t>(columns);
+        const auto itemsOnRow = std::min<std::size_t>(static_cast<std::size_t>(columns), buttons.size() - row * static_cast<std::size_t>(columns));
+        const int rowWidth = static_cast<int>(itemsOnRow) * buttonWidth + (static_cast<int>(itemsOnRow) - 1) * gap;
+        const int rowLeft = margin + (width - rowWidth) / 2;
+        move(GetDlgItem(modelCenterWindow_, buttons[index]), rowLeft + static_cast<int>(column) * (buttonWidth + gap),
+            buttonsTop + static_cast<int>(row) * (buttonHeight + gap), buttonWidth, buttonHeight);
+    }
 }
 
 void NativeApp::showModelCenter() {
