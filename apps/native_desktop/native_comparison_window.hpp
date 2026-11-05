@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <windows.h>
+#include <commctrl.h>
 #include <commdlg.h>
 #include <dwmapi.h>
 #include <algorithm>
@@ -1996,6 +1997,63 @@ private:
             (qualityReference_.empty() ? L"选择原始视频" : L"选择高帧率参考");
         if (GetOpenFileNameW(&dialog)) setFiles(output ? source_ : std::filesystem::path(path), output ? std::filesystem::path(path) : output_);
     }
+    static LRESULT CALLBACK comparisonComboProcedure(HWND control, UINT message, WPARAM wParam, LPARAM lParam,
+                                                      UINT_PTR, DWORD_PTR reference) {
+        auto* self = reinterpret_cast<NativeComparisonWindow*>(reference);
+        if (!self) return DefSubclassProc(control, message, wParam, lParam);
+        if (message == WM_ERASEBKGND) return 1;
+        if (message == WM_PAINT || message == WM_PRINTCLIENT) {
+            PAINTSTRUCT paint{};
+            HDC dc = message == WM_PAINT ? BeginPaint(control, &paint) : reinterpret_cast<HDC>(wParam);
+            if (!dc) return 0;
+            const int saved = SaveDC(dc);
+            RECT rect{}; GetClientRect(control, &rect);
+            HBRUSH background = CreateSolidBrush(RGB(12, 15, 21));
+            FillRect(dc, &rect, background); DeleteObject(background);
+            const bool enabled = IsWindowEnabled(control) != FALSE;
+            const bool focused = GetFocus() == control;
+            HBRUSH fill = CreateSolidBrush(enabled ? RGB(20, 25, 34) : RGB(23, 28, 37));
+            HPEN border = CreatePen(PS_SOLID, std::max(1, self->px(1)), focused ? RGB(162, 231, 203) : RGB(45, 55, 70));
+            const auto previousBrush = SelectObject(dc, fill), previousPen = SelectObject(dc, border);
+            RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, self->px(8), self->px(8));
+            SelectObject(dc, previousPen); SelectObject(dc, previousBrush); DeleteObject(border); DeleteObject(fill);
+            std::wstring label;
+            const auto index = SendMessageW(control, CB_GETCURSEL, 0, 0);
+            if (index != CB_ERR) {
+                const auto length = SendMessageW(control, CB_GETLBTEXTLEN, index, 0);
+                if (length > 0) {
+                    label.resize(static_cast<std::size_t>(length) + 1);
+                    SendMessageW(control, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label.data()));
+                    label.resize(static_cast<std::size_t>(length));
+                }
+            }
+            if (label.empty() && GetDlgCtrlID(control) == candidateId)
+                label = L"导入报告后选择候选";
+            const COLORREF textColor = enabled ? RGB(230, 238, 247) : RGB(127, 142, 159);
+            SetBkMode(dc, TRANSPARENT); SetTextColor(dc, textColor);
+            if (self->font_) SelectObject(dc, self->font_);
+            RECT text = rect; text.left += self->px(12); text.right -= self->px(30);
+            DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            POINT arrow[3]{{rect.right - self->px(18), (rect.top + rect.bottom) / 2 - self->px(2)},
+                {rect.right - self->px(10), (rect.top + rect.bottom) / 2 - self->px(2)},
+                {rect.right - self->px(14), (rect.top + rect.bottom) / 2 + self->px(3)}};
+            HBRUSH arrowBrush = CreateSolidBrush(textColor);
+            const auto oldArrow = SelectObject(dc, arrowBrush), oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+            Polygon(dc, arrow, 3); SelectObject(dc, oldPen); SelectObject(dc, oldArrow); DeleteObject(arrowBrush);
+            if (focused) { RECT focus = rect; InflateRect(&focus, -self->px(3), -self->px(3)); DrawFocusRect(dc, &focus); }
+            RestoreDC(dc, saved);
+            if (message == WM_PAINT) EndPaint(control, &paint);
+            return 0;
+        }
+        if (message == CB_SETCURSEL) {
+            const auto result = DefSubclassProc(control, message, wParam, lParam);
+            InvalidateRect(control, nullptr, FALSE); return result;
+        }
+        if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_ENABLE)
+            InvalidateRect(control, nullptr, FALSE);
+        if (message == WM_NCDESTROY) RemoveWindowSubclass(control, comparisonComboProcedure, 1);
+        return DefSubclassProc(control, message, wParam, lParam);
+    }
     void layout() {
         if (!window_) return;
         if (!font_) font_ = CreateFontW(-px(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -2008,6 +2066,11 @@ private:
             SetWindowPos(control, nullptr, x, y, std::max(1, width), std::max(1, height), SWP_NOZORDER | SWP_NOACTIVATE);
             SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
         };
+        for (const int id : {candidateId, confidenceRatingId, naturalnessRatingId, artifactRatingId}) {
+            const HWND combo = GetDlgItem(window_, id);
+            SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), px(32));
+            SendMessageW(combo, CB_SETITEMHEIGHT, 0, px(32));
+        }
         move(sourcePathId, px(70), px(45), w - px(210), px(32));
         move(outputPathId, px(70), px(82), w - px(210), px(32));
         move(sourceBrowseId, w - px(128), px(43), px(108), px(36));
@@ -2019,9 +2082,9 @@ private:
         move(previousReviewId, previousReviewX, px(117), reviewButtonWidth, px(36));
         move(nextReviewId, previousReviewX + reviewButtonWidth + reviewButtonGap, px(117), reviewButtonWidth, px(36));
         const int ratingActionX = w - px(128);
-        move(confidenceRatingId, px(20), px(157), px(130), px(36));
-        move(naturalnessRatingId, px(158), px(157), px(175), px(36));
-        move(artifactRatingId, px(341), px(157), ratingActionX - px(349), px(36));
+        move(confidenceRatingId, px(20), px(157), px(130), px(240));
+        move(naturalnessRatingId, px(158), px(157), px(175), px(240));
+        move(artifactRatingId, px(341), px(157), ratingActionX - px(349), px(280));
         move(recordRatingId, ratingActionX, px(157), px(108), px(36));
         move(reviewerNoteId, px(174), px(198), w - px(194), px(42));
         move(sliderId, px(20), h - px(compact ? 168 : 126), w - px(40), px(20));
@@ -2104,14 +2167,14 @@ private:
             control(L"BUTTON", L"选择原片…", WS_TABSTOP | BS_OWNERDRAW, sourceBrowseId);
             control(L"BUTTON", L"选择结果…", WS_TABSTOP | BS_OWNERDRAW, outputBrowseId);
             control(L"BUTTON", L"导入报告…", WS_TABSTOP | BS_OWNERDRAW, reportBrowseId);
-            CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+            CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
                 0, 0, self->px(220), self->px(180), window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(candidateId)), GetModuleHandleW(nullptr), nullptr);
             SendMessageW(GetDlgItem(window, candidateId), CB_SETMINVISIBLE, 8, 0);
             control(L"BUTTON", L"← 复核点", WS_TABSTOP | BS_OWNERDRAW, previousReviewId);
             control(L"BUTTON", L"复核点 →", WS_TABSTOP | BS_OWNERDRAW, nextReviewId);
             const HWND confidence = CreateWindowExW(0, L"COMBOBOX", L"",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0, self->px(130), self->px(180), window,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL, 0, 0, self->px(130), self->px(180), window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(confidenceRatingId)), GetModuleHandleW(nullptr), nullptr);
             const std::array<const wchar_t*, 6> confidenceOptions{
                 L"信心度（可选）", L"1：很低", L"2：较低", L"3：一般", L"4：较高", L"5：很高"};
@@ -2120,7 +2183,7 @@ private:
             const HWND reviewerNote = control(L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL, reviewerNoteId);
             SendMessageW(reviewerNote, EM_LIMITTEXT, 1000, 0);
             const HWND naturalness = CreateWindowExW(0, L"COMBOBOX", L"",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0, self->px(240), self->px(200), window,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL, 0, 0, self->px(240), self->px(200), window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(naturalnessRatingId)), GetModuleHandleW(nullptr), nullptr);
             const std::array<const wchar_t*, 7> naturalnessOptions{
                 L"选择自然度…", L"1：明显不自然", L"2：略不自然", L"3：自然度一般",
@@ -2128,7 +2191,7 @@ private:
             for (const auto* option : naturalnessOptions) SendMessageW(naturalness, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(option));
             SendMessageW(naturalness, CB_SETMINVISIBLE, 7, 0);
             const HWND artifacts = CreateWindowExW(0, L"COMBOBOX", L"",
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 0, 0, self->px(240), self->px(200), window,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL, 0, 0, self->px(240), self->px(200), window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(artifactRatingId)), GetModuleHandleW(nullptr), nullptr);
             const std::array<const wchar_t*, 8> artifactOptions{
                 L"选择伪影情况…", L"无明显伪影", L"运动撕裂或错位", L"重影或拖影", L"闪烁或时间不稳",
@@ -2147,6 +2210,8 @@ private:
             control(L"BUTTON", L"盲评需多候选", WS_TABSTOP | BS_OWNERDRAW, revealQualityCandidatesId);
             control(L"BUTTON", L"评审代码", WS_TABSTOP | BS_OWNERDRAW, reviewerCodeButtonId);
             control(L"BUTTON", L"导出评审", WS_TABSTOP | BS_OWNERDRAW, exportRatingsId);
+            for (const int id : {candidateId, confidenceRatingId, naturalnessRatingId, artifactRatingId})
+                SetWindowSubclass(GetDlgItem(window, id), comparisonComboProcedure, 1, reinterpret_cast<DWORD_PTR>(self));
             SetScrollRange(GetDlgItem(window, sliderId), SB_CTL, 0, 10000, FALSE);
             self->layout(); self->updateControls(); return 0;
         }
@@ -2221,9 +2286,34 @@ private:
             if (wParam == integrityTimer) { self->updateIntegrityProgress(); return 0; }
             break;
         case loadedMessage: self->receive(); return 0;
+        case WM_MEASUREITEM: {
+            auto* item = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+            if (item && item->CtlType == ODT_COMBOBOX) { item->itemHeight = static_cast<UINT>(self->px(32)); return TRUE; }
+            break;
+        }
         case WM_DRAWITEM: {
             const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam); if (!item) return FALSE;
             const int saved = SaveDC(item->hDC);
+            if (item->CtlType == ODT_COMBOBOX) {
+                const bool selected = (item->itemState & ODS_SELECTED) != 0;
+                HBRUSH brush = CreateSolidBrush(selected ? RGB(36, 66, 82) : RGB(14, 23, 34));
+                FillRect(item->hDC, &item->rcItem, brush); DeleteObject(brush);
+                std::wstring label;
+                if (item->itemID != static_cast<UINT>(-1)) {
+                    const auto length = SendMessageW(item->hwndItem, CB_GETLBTEXTLEN, item->itemID, 0);
+                    if (length > 0) {
+                        label.resize(static_cast<std::size_t>(length) + 1);
+                        SendMessageW(item->hwndItem, CB_GETLBTEXT, item->itemID, reinterpret_cast<LPARAM>(label.data()));
+                        label.resize(static_cast<std::size_t>(length));
+                    }
+                }
+                RECT text = item->rcItem; text.left += self->px(12); text.right -= self->px(12);
+                SetBkMode(item->hDC, TRANSPARENT); SetTextColor(item->hDC, selected ? RGB(242, 247, 255) : RGB(220, 231, 242));
+                if (self->font_) SelectObject(item->hDC, self->font_);
+                DrawTextW(item->hDC, label.c_str(), static_cast<int>(label.size()), &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+                if (item->itemState & ODS_FOCUS) { RECT focus = item->rcItem; InflateRect(&focus, -2, -2); DrawFocusRect(item->hDC, &focus); }
+                RestoreDC(item->hDC, saved); return TRUE;
+            }
             const bool disabled = (item->itemState & ODS_DISABLED) != 0;
             HBRUSH brush = CreateSolidBrush(disabled ? RGB(29, 38, 49) : (item->itemState & ODS_SELECTED) ? RGB(37, 75, 66) : RGB(33, 52, 66));
             FillRect(item->hDC, &item->rcItem, brush); DeleteObject(brush);

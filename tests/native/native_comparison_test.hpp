@@ -157,6 +157,36 @@ void checkNativeComparison(Check check, Pump pump, HWND owner) {
     check(comparison.pair()->source.timestamp == Rational(10) && comparison.pair()->output.timestamp == Rational(20),
         "comparison uses each stream's own origin for the same relative time");
     check(comparison.open(owner) == window, "opening comparison again reuses its existing window");
+    const HWND candidate = GetDlgItem(window, 1314);
+    check(candidate && (GetWindowLongPtrW(candidate, GWL_STYLE) & CBS_OWNERDRAWFIXED),
+        "comparison candidate selector uses themed owner-drawn rows");
+    for (const int id : {1318, 1319, 1322}) {
+        const HWND rating = GetDlgItem(window, id);
+        check(rating && (GetWindowLongPtrW(rating, GWL_STYLE) & CBS_OWNERDRAWFIXED) &&
+              SendMessageW(rating, CB_GETCOUNT, 0, 0) > 1,
+              "comparison rating selectors keep their native choices and themed rows");
+    }
+    if (candidate) {
+        // Exercise the real native combo without fabricating a quality report.
+        // Restore the empty, disabled state before the remaining comparisons.
+        EnableWindow(candidate, TRUE);
+        SendMessageW(candidate, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Candidate A"));
+        SendMessageW(candidate, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Candidate B"));
+        SendMessageW(candidate, CB_SETCURSEL, 0, 0);
+        SetFocus(candidate);
+        SendMessageW(candidate, WM_KEYDOWN, VK_DOWN, 0);
+        SendMessageW(candidate, WM_KEYUP, VK_DOWN, 0);
+        check(SendMessageW(candidate, CB_GETCURSEL, 0, 0) == 1, "comparison selector retains native keyboard navigation");
+        RECT field{}; GetClientRect(candidate, &field);
+        const LPARAM point = MAKELPARAM(8, (field.bottom - field.top) / 2);
+        SendMessageW(candidate, WM_LBUTTONDOWN, MK_LBUTTON, point);
+        const bool opened = SendMessageW(candidate, CB_GETDROPPEDSTATE, 0, 0) != FALSE;
+        SendMessageW(candidate, WM_LBUTTONUP, 0, point);
+        check(opened, "comparison selector opens its native popup with the mouse");
+        SendMessageW(candidate, CB_SHOWDROPDOWN, FALSE, 0);
+        SendMessageW(candidate, CB_RESETCONTENT, 0, 0);
+        EnableWindow(candidate, FALSE);
+    }
     comparison.step(1);
     check(pump([&] { return comparison.ready(); }, 5s) && comparison.pair()->requested == Rational(1, 60),
         "next-frame button follows the output's exact next presentation timestamp");
