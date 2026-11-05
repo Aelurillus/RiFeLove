@@ -325,3 +325,18 @@ interactive end-to-end media test. A previous attempt to reuse an older bundle
 was rejected because the new executable's imports differed; a fresh full
 package was built rather than bypassing the import check. These local bundles
 are not public release artifacts and retain the release and license gates above.
+
+## Comparison selector appearance (2026-11-05)
+
+The native comparison window now draws the candidate and rating selectors in
+the same dark, rounded visual language as the workspace while retaining native
+combo boxes. The empty candidate selector explains that a report is required.
+The Windows common-controls library is linked for safe control subclassing.
+The processing-enabled native control suite passed with synthetic candidate
+choices, keyboard selection and mouse popup checks; the real-media comparison
+harness also passed decode, synchronized playback, frame stepping, slider and
+EOF checks. Isolated-desktop captures at normal size and 640 DIP width were
+inspected under `out/comparison-controls-20261105/`. Those captures do not
+exercise an imported multi-candidate review report, a screen reader, or real
+per-monitor DPI transitions. The timeline and status scrollbars still use the
+Windows system appearance and remain separate UI work.
