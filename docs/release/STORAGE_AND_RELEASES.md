@@ -63,6 +63,11 @@ The full native package continues to include the TensorRT provider and builder f
 
 This split addresses the size of the current workstation candidate: 4,956,322,954 bytes total, with 4,876,478,684 bytes under `runtime/`; `nvinfer_builder_resource_10.dll` alone is 1,971,797,024 bytes. These are local package measurements, not a published artifact size. A development-only end-to-end smoke has now exercised the CUDA-only package runtime and model on a 720p synthetic clip; the results and limits are recorded in [CUDA-only 720p pipeline evidence](CUDA_ONLY_720P_PIPELINE_EVIDENCE_2026-11-06.md). Native GUI acceptance, clean-machine install, redistribution-license review, real-footage quality and public-release acceptance remain open. Do not advertise either profile as release-ready until those gates pass.
 
+The current RIFE-only Windows candidate has an exact package and runtime
+inventory in the [Windows redistribution audit](WINDOWS_REDISTRIBUTION_AUDIT.md).
+It remains a local qualification artifact: its included model and third-party
+runtime do not have completed public redistribution approval.
+
 Local cleanup tools remain available for generated packages:
 
 ```powershell
