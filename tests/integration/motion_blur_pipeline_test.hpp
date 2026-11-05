@@ -157,6 +157,7 @@ protected:
     void verifySceneCut();
     void verifyBudgetFailure();
     void verifyCancellation();
+    void verifyNvencOpenFailureFallback();
     void SetUp() override {
         try { device = std::make_unique<rifelove::gpu::CudaDevice>(0,8 * 1024 * 1024); }
         catch (const rifelove::gpu::GpuError& error) {
@@ -308,5 +309,48 @@ void MotionBlurPipeline::verifyCancellation() {
     }
     EXPECT_TRUE(stop.stop_requested()); EXPECT_GE(processed,2U);
     expectNoPublication(output);
+}
+
+void MotionBlurPipeline::verifyNvencOpenFailureFallback() {
+    const auto source = directory / "source.mkv";
+    const auto output = directory / "fallback.mp4";
+    writeExposureSource(source,25,3,-1,{},AV_PIX_FMT_YUV420P);
+    ExposureLinearBackend backend(*device);
+    auto config = settings(Rational(50));
+    config.motionBlur.enabled = false;
+    config.encoding.encoder = "auto";
+    config.encoding.bitRate = 1'000'000;
+    std::size_t nvencAttempts = 0;
+    std::vector<rifelove::PipelineProgress> fallbacks;
+    const auto result = rifelove::detail::interpolateVideoWithNvencOpenHook(
+        source.string(),output.string(),config,*device,backend,
+        [&] {
+            ++nvencAttempts;
+            throw rifelove::media::MediaError("open video encoder h264_nvenc",AVERROR(ENOSYS));
+        },
+        [&](const rifelove::PipelineProgress& event) {
+            if (event.stage == "encoder_fallback") fallbacks.push_back(event);
+        });
+    EXPECT_EQ(nvencAttempts,1U);
+    ASSERT_EQ(fallbacks.size(),1U);
+    EXPECT_EQ(fallbacks.front().encoder,"libopenh264");
+    EXPECT_FALSE(fallbacks.front().detail.empty());
+    EXPECT_EQ(result.video.encoder,"libopenh264");
+    EXPECT_FALSE(result.encoderFallbackReason.empty());
+    EXPECT_EQ(result.sourceFrames,3U);
+    EXPECT_EQ(result.video.framesSubmitted,6U);
+    EXPECT_EQ(result.validation.decodedFrames,6U);
+    EXPECT_EQ(result.video.firstTimestamp,Rational(0));
+    EXPECT_EQ(result.video.endExclusive,Rational(3,25));
+    const auto info = rifelove::media::MediaEngine::probe(output.string());
+    const auto video = std::find_if(info.streams.begin(),info.streams.end(),[](const auto& stream) {
+        return stream.type == "video";
+    });
+    ASSERT_NE(video,info.streams.end());
+    EXPECT_EQ(video->codec,"h264");
+    const auto decoded = readExposurePixels(output);
+    ASSERT_EQ(decoded.timestamps.size(),6U);
+    for (std::size_t index = 0; index < decoded.timestamps.size(); ++index)
+        EXPECT_EQ(decoded.timestamps[index],Rational(static_cast<std::int64_t>(index),50));
 }
 } // namespace

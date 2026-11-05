@@ -168,8 +168,9 @@ private:
 };
 }
 
-PipelineResult interpolateVideo(const std::string& source, const std::string& destination, const PipelineSettings& settings,
+PipelineResult detail::interpolateVideoWithNvencOpenHook(const std::string& source, const std::string& destination, const PipelineSettings& settings,
     gpu::CudaDevice& device, inference::IInterpolationBackend& backend,
+    const std::function<void()>& beforeNvencOpen,
     const std::function<void(const PipelineProgress&)>& progress, std::stop_token stop) {
     checkStop(stop);
     if (settings.targetRate <= Rational(0)) throw std::invalid_argument("Target frame rate must be positive");
@@ -379,8 +380,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
     const auto encoderSetupStarted = std::chrono::steady_clock::now();
     if (encoding.encoder == "auto") {
         encoding.encoder = "h264_nvenc";
-        if (media::MediaEngine::hasEncoder(encoding.encoder)) {
-            try { writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop); }
+        if (beforeNvencOpen || media::MediaEngine::hasEncoder(encoding.encoder)) {
+            try {
+                if (beforeNvencOpen) beforeNvencOpen();
+                writer = std::make_unique<media::VideoMuxWriter>(source,initialWriterPath,encoding,stop);
+            }
             catch (const media::MediaError& error) {
                 if (error.operation() != "open video encoder h264_nvenc" || stop.stop_requested()) throw;
                 fallback = media::diagnoseNvencFailure(encoding.encoder,error.what());
@@ -1138,5 +1142,11 @@ PipelineResult interpolateVideo(const std::string& source, const std::string& de
             {"rife_frames",static_cast<std::uint64_t>(result.aiFrames)},{"processing_fps",result.processingFps}});
     notify("completed",end);
     return result;
+}
+
+PipelineResult interpolateVideo(const std::string& source, const std::string& destination, const PipelineSettings& settings,
+    gpu::CudaDevice& device, inference::IInterpolationBackend& backend,
+    const std::function<void(const PipelineProgress&)>& progress, std::stop_token stop) {
+    return detail::interpolateVideoWithNvencOpenHook(source,destination,settings,device,backend,{},progress,stop);
 }
 } // namespace rifelove
