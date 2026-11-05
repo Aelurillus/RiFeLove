@@ -5,6 +5,7 @@
 #include "native_compression_test.hpp"
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 #include "native_comparison_test.hpp"
+#include <nlohmann/json.hpp>
 #endif
 
 #include <windows.h>
@@ -1327,6 +1328,40 @@ void checkProcessing(NativeApp& app, HWND window, const std::filesystem::path& s
         std::cout << "Native processing: stage=" << utf8(finalState.stage)
                   << "; encoder=" << utf8(finalState.encoderSummary)
                   << "; frames=" << finalState.outputFrames << '\n';
+        // Read the actual persisted result, rather than treating a playable
+        // output or the requested backend as proof that interpolation ran.
+        try {
+            const auto database = app.testDataDirectory().directory / L"queue.sqlite";
+            rifelove::TaskStore store(utf8(database.wstring()), rifelove::TaskStore::OpenMode::readOnly);
+            std::optional<rifelove::ConfiguredTask> completed;
+            const bool recorded = pumpUntil([&] {
+                for (const auto& row : store.configured()) {
+                    const auto path = std::filesystem::path(std::u8string(row.task.outputPath.begin(), row.task.outputPath.end()));
+                    std::error_code error;
+                    if (row.task.state == rifelove::TaskState::completed &&
+                        std::filesystem::equivalent(path, output, error) && !error) {
+                        completed = row;
+                        return true;
+                    }
+                }
+                return false;
+            }, std::chrono::seconds(5));
+            check(recorded, "completed native output has a persisted task result");
+            if (recorded) {
+                const auto result = nlohmann::json::parse(completed->result);
+                check(result.at("outputFrames").get<std::uint64_t>() == finalState.outputFrames,
+                      "persisted output frame count agrees with the native UI");
+                const auto backend = result.at("backend").get<std::string>();
+                check(!backend.empty(), "persisted result identifies the selected inference backend");
+                std::cout << "Native result: backend=" << backend
+                          << "; aiFrames=" << result.at("aiFrames").get<std::uint64_t>()
+                          << "; inferenceCalls=" << result.at("inferenceCalls").get<std::uint64_t>()
+                          << "; heldFrames=" << result.at("heldFrames").get<std::uint64_t>() << '\n';
+            }
+        } catch (const std::exception& error) {
+            std::cerr << "Native result readback: " << error.what() << '\n';
+            check(false, "read completed native task result");
+        }
     }
 }
 
