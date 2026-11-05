@@ -294,3 +294,12 @@ test executable, a synthetic short clip, and locally staged dependencies. It
 does not establish perceptual quality, representative throughput, long-video
 reliability, interactive desktop accessibility, mixed-DPI behavior, or a clean
 machine's packaged installation. Those remain separate release checks.
+
+A second run with the same source and model extended the harness to read the
+completed task's persisted result and compare its output-frame count with the
+native UI. It recorded `onnxruntime_tensorrt_cuda`, 59 RIFE-generated frames,
+59 inference calls, one held frame, and 120 total output frames; the full
+output independently decoded without errors. The second output SHA-256 is
+`d8678028a4558c933673cc31e7d086010f0c5698020c24d368900706f2473e98`.
+The provider label describes the configured ONNX Runtime session, not proof
+that every operation ran on TensorRT. Other acceptance limits above still apply.
