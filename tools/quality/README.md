@@ -16,6 +16,27 @@
 
 Sintel/Durian 原始帧按 CC BY 3.0 发布，可在署名 `© copyright Blender Foundation | durian.blender.org` 后复用，包括商业用途；标志、商标和明显非项目第三方素材除外，见[官方许可说明](https://durian.blender.org/sharing/)。Xiph 提供了 trailer PNG 包，但未发布 SHA-256 校验值；本仓库按获取到的 720p 包字节固定了项目摘要 `6324f7ea1a054d2e0b477c070c8f291b7a796926ba7199af51b1701d80c5911b` 和大小。该动画切片不证明真实视频质量；候选训练集是否含 Sintel 也未知。
 
+## 已授权的 UVG-VCM 实拍高帧率试点
+
+[UVG-VCM 官方数据页](https://ultravideo.fi/UVG-VCM/index.html)将数据集标记为 CC BY 4.0，并说明只分发已取得必要权限、个人信息已按需匿名化的内容；使用时需按页面引用数据集论文。试点选 `Karting Time`：3840×2160、60 fps、70 帧、YUV444 16-bit。上游没有发布此文件的 SHA-256 或色彩范围、矩阵、传递函数信息；准备报告会记录本机计算的原始摘要和显式色彩假设。原始视频不提交到 Git。
+
+```powershell
+$data = 'out/datasets/uvg-vcm'
+New-Item -ItemType Directory -Force $data | Out-Null
+curl.exe --location --fail --output "$data/KartingTime_3840x2160_60fps_yuv444_16bits_70.yuv" `
+  'https://ultravideo.fi/UVG-VCM/KartingTime/KartingTime_3840x2160_60fps_yuv444_16bits_70.yuv'
+
+py -3 tools/quality/prepare_uvg_vcm_pilot.py `
+  --raw "$data/KartingTime_3840x2160_60fps_yuv444_16bits_70.yuv" `
+  --output-directory "$data/prepared-1080p" `
+  --ffmpeg 'C:/path/to/ffmpeg.exe' --ffprobe 'C:/path/to/ffprobe.exe' `
+  --source-range tv
+```
+
+`1080p` 是默认配置；要准备较低分辨率对照时，设置 `--output-profile 720p` 并使用独立的输出目录。
+
+准备器用偶数帧 `0,2,…,68` 生成 35 帧、30 fps 原片，以原始索引 `0…68` 生成 69 帧、60 fps 参考；34 个奇数索引 `1,3,…,67` 是有效中点。原始索引 69 没有右侧输入帧，RifeLove 端到端输出的末尾保持帧也不纳入质量候选。运行插帧后，将结果限制到与 69 帧参考相同的 PTS，再使用本节的多候选评估器比较。只有明确固定、记录的色彩假设下的分数可复现；原始网页没有为此序列公布色彩元数据。该试点约 1.17 秒且偏机读车牌场景，不构成通用真实视频排名。
+
 把官方包解压到被 Git 忽略的本机 `out/datasets/sintel-trailer-720p/` 后，先生成来源和逐帧哈希清单，再准备媒体：
 
 ```powershell
