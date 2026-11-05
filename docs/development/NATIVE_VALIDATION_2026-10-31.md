@@ -303,3 +303,25 @@ output independently decoded without errors. The second output SHA-256 is
 `d8678028a4558c933673cc31e7d086010f0c5698020c24d368900706f2473e98`.
 The provider label describes the configured ONNX Runtime session, not proof
 that every operation ran on TensorRT. Other acceptance limits above still apply.
+
+## RIFE-only packaging candidate (2026-11-05)
+
+The new `-RifeOnly` selection built a fresh full local bundle from the current
+native executable and local FFmpeg, inference runtime and RIFE 4.25 v3 pack.
+Its manifest listed exactly one model, all restoration paths in defaults were
+null, the initial data directory was empty, and Qt/CLI were absent. The full
+package build used `-SkipStartupSmoke` to avoid writing to the ordinary Windows
+user profile. It was then reused into a fresh portable bundle with an explicit
+checksummed portable marker. Independent readback verified all 95 listed
+immutable file checksums and confirmed the one-model manifest and null SR path.
+
+The portable executable started with a fresh data directory and created its
+own queue database there. The first hidden-window smoke attempt could not use
+`CloseMainWindow` to find the hidden window and forcibly stopped that test
+process. A second launch located the native window by its class and process ID,
+closed it normally with `WM_CLOSE`, and exited with code zero; afterward its
+portable data directory contained the queue database. Neither launch is an
+interactive end-to-end media test. A previous attempt to reuse an older bundle
+was rejected because the new executable's imports differed; a fresh full
+package was built rather than bypassing the import check. These local bundles
+are not public release artifacts and retain the release and license gates above.

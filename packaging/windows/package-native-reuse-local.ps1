@@ -8,6 +8,7 @@ param(
     [string]$DeblurModelDirectory = "",
     # Fresh base bundle: only RIFE + SR are staged; experiments are explicit.
     [switch]$BaseModelsOnly,
+    [switch]$RifeOnly,
     [switch]$IncludeTemporalRestoration,
     [switch]$IncludeCompressionRestoration,
     [switch]$IncludeDeblurRestoration,
@@ -28,7 +29,8 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "native-build-dependencies.ps1")
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "out"))
-$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration -IncludeDeblurRestoration:$IncludeDeblurRestoration
+$modelSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly:$BaseModelsOnly -RifeOnly:$RifeOnly -IncludeTemporalRestoration:$IncludeTemporalRestoration -IncludeCompressionRestoration:$IncludeCompressionRestoration -IncludeDeblurRestoration:$IncludeDeblurRestoration
+$freshModelSelection = $BaseModelsOnly -or $RifeOnly
 if (-not $SourceDirectory) { $SourceDirectory = Join-Path $outputRoot "RifeLoveNative-local-nvenc" }
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $repositoryRoot "build/native-ui-review" }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $outputRoot "RifeLoveNative-local-ui-preview" }
@@ -368,7 +370,7 @@ if ($manifest.packageKind -ne "local-native-windows-x64" -or $manifest.qtInclude
     throw "Source package is not the expected local, non-Qt desktop bundle."
 }
 $excludedModelRoots = @(Get-NativeExcludedModelRoots $modelSelection)
-if ($modelSelection.mode -ceq 'base' -or -not $modelSelection.includeDeblurRestoration) {
+if ($freshModelSelection -or -not $modelSelection.includeDeblurRestoration) {
     # Filter metadata before optional model validation and staging. This is the
     # key isolation boundary: excluded model directories and their licenses are
     # never opened, hashed, or hard-linked for a base bundle.
@@ -381,7 +383,7 @@ if ($modelSelection.mode -ceq 'base' -or -not $modelSelection.includeDeblurResto
     $manifest.models = @($manifest.models | Where-Object {
         -not (Test-NativeRelativePathExcluded ([string]$_.directory) $excludedModelRoots $modelSelection)
     })
-    if ($modelSelection.mode -ceq 'base') {
+    if ($freshModelSelection) {
         $manifest['migration'] = [ordered]@{ legacyModelIncluded = $false; evidence = @(); sourceRecoveryDataCopied = $false }
     }
 }
@@ -420,10 +422,8 @@ if ($manifest.ffmpeg.ContainsKey("sdkManifest")) {
         throw "Source package FFmpeg SDK manifest differs from the selected build; rebuild a full package instead."
     }
 }
-$requiredModelDirectories = @(
-    "models/rife-4.25-fp32-sdr8-v3",
-    "models/realesrgan-x2plus-sdr8-v2"
-)
+$requiredModelDirectories = @("models/rife-4.25-fp32-sdr8-v3")
+if ($modelSelection.includeSuperResolution) { $requiredModelDirectories += "models/realesrgan-x2plus-sdr8-v2" }
 $manifestModelDirectories = @($manifest.models | ForEach-Object { ([string]$_.directory).Replace('\', '/') })
 foreach ($relative in $requiredModelDirectories) {
     if ($manifestModelDirectories -notcontains $relative) {
@@ -542,7 +542,7 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($source.Length).TrimStart('\', '/').Replace('\', '/')
-        if ($BaseModelsOnly -and $relative -ceq 'models/default-model.txt') { continue }
+        if ($freshModelSelection -and $relative -ceq 'models/default-model.txt') { continue }
         if ($relative -in @("SHA256SUMS.txt", "PACKAGE-MANIFEST.json", "RifeLoveNative.exe", "README-本机原生包.txt", "config/defaults.json", "dependency-imports.json", "portable.flag", "portable-mode.txt")) { continue }
         if ($relative -match '(?i)(^|/)qt|qml|(^|/)rifelove-cli(\.exe)?$') { throw "Unexpected Qt or CLI artifact: $relative" }
         $destination = Join-Path $stage ($relative.Replace('/', '\'))
@@ -566,8 +566,9 @@ try {
     if (-not (Test-Path -LiteralPath $defaultsPath -PathType Leaf)) { throw "Source package defaults are missing: $defaultsPath" }
     $defaults = Get-Content -Raw -LiteralPath $defaultsPath | ConvertFrom-Json -AsHashtable
     Set-NativeRestorationDefaults $defaults (@($optionalPacks | Where-Object { $_.relative -ceq "models/stdf-r3-y7-sdr8-local-eval" }).Count -eq 1) (@($optionalPacks | Where-Object { $_.relative -ceq "models/fastdvdnet-clipped-five-frame-sdr8-eval" }).Count -eq 1) (@($optionalPacks | Where-Object { $_.relative -ceq "models/nafnet-gopro-deblur-sdr8-fp32-eval" }).Count -eq 1)
-    $defaults['modelBundleMode'] = if ($BaseModelsOnly) { 'base' } else { 'compatible-source' }
-    if ($BaseModelsOnly) {
+    $defaults['modelBundleMode'] = if ($freshModelSelection) { $modelSelection.mode } else { 'compatible-source' }
+    if ($RifeOnly) { $defaults['restorationModelDirectory'] = $null }
+    if ($freshModelSelection) {
         $defaults['defaultModelDirectory'] = 'models/rife-4.25-fp32-sdr8-v3'
         $defaults['legacyModelDirectory'] = $null
         $defaults['legacyModelIncluded'] = $false
@@ -601,7 +602,7 @@ try {
     $manifest.ffmpeg.x86asm = if ($ffmpegSdk.configuration.x86asmEnabled) { "enabled; end-to-end throughput remains workload-specific" } else { "disabled; CPU throughput remains unqualified" }
     $manifest.inferenceRuntime.source = "local TensorRT/ONNX Runtime CUDA SDK"
     $manifest.packageName = Split-Path -Leaf $target
-    $manifest.modelBundleMode = if ($BaseModelsOnly) { 'base' } else { 'compatible-source' }
+    $manifest.modelBundleMode = if ($freshModelSelection) { $modelSelection.mode } else { 'compatible-source' }
     $manifest.generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $manifest.executableSha256 = (Get-FileHash -LiteralPath (Join-Path $stage "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest.ffmpeg.sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver }
@@ -613,6 +614,7 @@ try {
         '此普通包未启用便携模式，未捆绑 portable-mode.txt。任务数据库与本机模型偏好使用 Windows 当前用户的 %LOCALAPPDATA%\RifeLove；本包 data 为空。需要专用隔离便携包时，请在新输出目录打包并显式传入 -PortableMode。'
     }
     $includedModelsDescription = (@($manifest.models | ForEach-Object { [string]$_.directory }) -join '；')
+    $srDescription = if ($modelSelection.includeSuperResolution) { 'Real-ESRGAN x2plus 超分可选，默认关闭。' } else { '本包未捆绑超分模型。' }
     $temporalDescription = if (@($optionalPacks | Where-Object { $_.relative -ceq 'models/fastdvdnet-clipped-five-frame-sdr8-eval' }).Count -eq 1) {
         '包内 FastDVDnet 五帧模型仅是 SDR8 实验性时序降噪模型，默认关闭；它可与超分同时选择，但不代表通用压缩修复、去模糊或细节增强能力。'
     } else { '本包未捆绑 FastDVDnet，相关默认路径为空。' }
@@ -631,7 +633,7 @@ $dataModeDescription
 视频输出位置由用户选择；此包不包含用户视频、队列、日志或模型偏好。
 高帧率与长视频仍需更广泛的兼容性验收；失败时不会发布未通过验证的输出。TensorRT 初次加载可能较慢。
 FFmpeg x86asm：$($manifest.ffmpeg.x86asm)。实际 SDK 配置与运行库 SHA-256 记录在 PACKAGE-MANIFEST.json；复用包和新 EXE 旁的 FFmpeg DLL 必须与所选 SDK 逐字节匹配。
-默认使用 RIFE 4.25 插帧模型；Real-ESRGAN x2plus 超分可选，默认关闭。
+默认使用 RIFE 4.25 插帧模型。$srDescription
 实际打包模型：$includedModelsDescription。
 $temporalDescription
 $compressionDescription
