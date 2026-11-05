@@ -612,7 +612,10 @@ if(RIFELOVE_BUILD_TESTS)
       add_test(NAME Packaging.NativeDataMode
         COMMAND "${RIFELOVE_PWSH_EXECUTABLE}" -NoProfile -ExecutionPolicy Bypass -File
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/native_portable_package_test.ps1")
-      set_tests_properties(Packaging.NativeModelReuse Packaging.NativeDataMode PROPERTIES
+      add_test(NAME Packaging.LegacyPreviewGuard
+        COMMAND "${RIFELOVE_PWSH_EXECUTABLE}" -NoProfile -ExecutionPolicy Bypass -File
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/legacy_preview_guard_test.ps1")
+      set_tests_properties(Packaging.NativeModelReuse Packaging.NativeDataMode Packaging.LegacyPreviewGuard PROPERTIES
         TIMEOUT 60 LABELS "packaging;cpu-only")
     endif()
   endif()

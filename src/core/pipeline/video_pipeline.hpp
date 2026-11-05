@@ -218,4 +218,13 @@ struct PipelineResult {
 [[nodiscard]] PipelineResult interpolateVideo(const std::string& source, const std::string& destination,
     const PipelineSettings& settings, gpu::CudaDevice& device, inference::IInterpolationBackend& backend,
     const std::function<void(const PipelineProgress&)>& progress = {}, std::stop_token stop = {});
+namespace detail {
+// Test-only entry point. A nonempty hook forces the automatic NVENC open path
+// even when the local FFmpeg build does not register NVENC. The hook runs just
+// before the real NVENC writer would open; software writers are always real.
+[[nodiscard]] PipelineResult interpolateVideoWithNvencOpenHook(const std::string& source,
+    const std::string& destination, const PipelineSettings& settings, gpu::CudaDevice& device,
+    inference::IInterpolationBackend& backend, const std::function<void()>& beforeNvencOpen,
+    const std::function<void(const PipelineProgress&)>& progress = {}, std::stop_token stop = {});
+} // namespace detail
 } // namespace rifelove

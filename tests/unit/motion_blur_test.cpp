@@ -25,6 +25,7 @@ TEST_F(MotionBlurPipeline, ShortClipDrainsBothRealSourceEdgeHoldsAtEof) { verify
 TEST_F(MotionBlurPipeline, SceneCutsAreCountedAsFallbackAndNeverExposureMixed) { verifySceneCut(); }
 TEST_F(MotionBlurPipeline, InsufficientFullShutterBudgetFailsWithoutPublishingOrLeakingPartialFiles) { verifyBudgetFailure(); }
 TEST_F(MotionBlurPipeline, CancellationAfterProcessingRemovesUnpublishedOutput) { verifyCancellation(); }
+TEST_F(MotionBlurPipeline, NvencOpenFailureFallsBackToRealSoftwareH264AndPreservesTimeline) { verifyNvencOpenFailureFallback(); }
 TEST_F(AutomaticDenoisePipeline, ConditionsRealTemporalRequestsResetsAtCutsAndPreservesTimeline) { verifyConditioningAndTiming(); }
 TEST_F(AutomaticDenoisePipeline, CompressionDeblockRunsBeforeFastDvdnetAndPreservesScenePts) { verifyCompressionStage(); }
 TEST_F(AutomaticDenoisePipeline, AutomaticCompressionAnalyzesSourcePtsAndBypassesCleanScene) { verifyAutomaticCompression(); }
