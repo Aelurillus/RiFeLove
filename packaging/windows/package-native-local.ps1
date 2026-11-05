@@ -19,6 +19,7 @@ param(
     [switch]$IncludeTemporalRestoration,
     [switch]$IncludeCompressionRestoration,
     [switch]$IncludeDeblurRestoration,
+    [switch]$CudaOnly,
     [switch]$SkipStartupSmoke,
     [switch]$ValidateDependenciesOnly
 )
@@ -484,6 +485,9 @@ if ($freshModelSelection -and (Test-Path -LiteralPath $target)) {
 }
 $packageLeaf = Split-Path -Path $target -Leaf
 if ($packageLeaf -notmatch '^RifeLoveNative-local(?:$|[-.])') { throw "为避免与 Qt 产物冲突，原生包目录必须以 RifeLoveNative-local 开头：$target" }
+if ($CudaOnly -and $packageLeaf -notmatch '(?i)(^|-)cuda-only($|-)') {
+    throw "CUDA-only 输出目录必须包含 -cuda-only，以免与完整 TensorRT 包混淆：$target"
+}
 $packageParent = Split-Path -Path $target -Parent
 $staging = Join-Path $packageParent (".{0}.staging-{1}" -f $packageLeaf, [Guid]::NewGuid().ToString("N"))
 $backup = Join-Path $packageParent (".{0}.previous-{1}" -f $packageLeaf, [Guid]::NewGuid().ToString("N"))
@@ -510,30 +514,17 @@ $ffmpegFiles = @(
 foreach ($name in $ffmpegFiles) { Resolve-ExistingFile (Join-Path $ffmpeg "bin/$name") "FFmpeg 运行库" | Out-Null }
 $ffmpegRuntimeHashes = Assert-FfmpegRuntimeIdentity -SdkRoot $ffmpeg -RuntimeDirectory $build -FileNames $ffmpegFiles
 $ffmpegX86asmDescription = if ($ffmpegSdk.configuration.x86asmEnabled) { "enabled; end-to-end throughput remains workload-specific" } else { "disabled; CPU throughput remains unqualified" }
-$runtimeFiles = @(Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll" | Sort-Object Name)
-$requiredRuntimeFiles = @(
-    # ONNX Runtime provider and core
-    "onnxruntime.dll", "onnxruntime_providers_shared.dll", "onnxruntime_providers_cuda.dll", "onnxruntime_providers_tensorrt.dll",
-    # CUDA 12 runtime and math libraries
-    "cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll", "cufft64_11.dll", "cufftw64_11.dll", "nvblas64_12.dll",
-    # cuDNN 9 runtime and engines
-    "cudnn64_9.dll", "cudnn_adv64_9.dll", "cudnn_cnn64_9.dll", "cudnn_engines_precompiled64_9.dll",
-    "cudnn_engines_runtime_compiled64_9.dll", "cudnn_graph64_9.dll", "cudnn_heuristic64_9.dll", "cudnn_ops64_9.dll",
-    # TensorRT 10 runtime, plugins, builder resource and ONNX parser
-    "nvinfer_10.dll", "nvinfer_builder_resource_10.dll", "nvinfer_plugin_10.dll", "nvonnxparser_10.dll"
-)
-$runtimeFileNames = @($runtimeFiles | ForEach-Object Name | ForEach-Object { $_.ToLowerInvariant() })
-foreach ($name in $requiredRuntimeFiles) {
-    if ($runtimeFileNames -notcontains $name.ToLowerInvariant()) {
-        throw "推理运行库缺少必需 DLL：$name；拒绝生成可能静默回退的本机包。"
-    }
-}
+$runtimeSourceFiles = @(Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll" | Sort-Object Name)
+$runtimeSelection = Resolve-NativeInferenceRuntimeSelection -AvailableFileNames @($runtimeSourceFiles | ForEach-Object Name) -CudaOnly:$CudaOnly
+$runtimeFiles = @($runtimeSourceFiles | Where-Object { $runtimeSelection.files -contains $_.Name })
+$requiredRuntimeFiles = @($runtimeSelection.requiredFiles)
 $versionFile = Join-Path $runtime "tensorrt-runtime.version"
 if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) { throw "缺少 TensorRT 运行库版本/校验侧车：$versionFile" }
 $versionLines = @(Get-Content -LiteralPath $versionFile | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 if ($versionLines.Count -lt 2 -or $versionLines[0] -notmatch '^\d+\.\d+\.\d+\.\d+$' -or $versionLines[1] -notmatch '^[0-9a-fA-F]{64}$') {
     throw "TensorRT 运行库版本侧车格式无效，必须包含版本和来源 SHA-256：$versionFile"
 }
+$runtimeSourceDescription = if ($runtimeSelection.includesTensorRt) { 'local TensorRT/ONNX Runtime CUDA SDK' } else { 'local ONNX Runtime CUDA SDK' }
 $mingwFiles = @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
 foreach ($name in $mingwFiles) {
     Resolve-ExistingFile (Join-Path $mingw $name) "MinGW 运行库" | Out-Null
@@ -548,6 +539,7 @@ if ($ValidateDependenciesOnly) {
     [ordered]@{
         result = 'passed'; purpose = 'dependency-preflight-only'; buildDirectory = $build
         inferenceRuntimeDirectory = $runtime; inferenceRuntimeSource = $dependencySelection.inferenceRuntimeSource
+        inferenceRuntimeProfile = $runtimeSelection.profile; inferenceRuntimeFiles = @($runtimeFiles | ForEach-Object Name)
         minGWBinDirectory = $mingw; minGWSource = $dependencySelection.minGWSource
         compiler = $dependencySelection.compiler; compilerIdentity = $compilerIdentity
         ffmpegLinkInputs = $ffmpegSdk.linkInputs
@@ -601,7 +593,7 @@ try {
     $runtimeTarget = Join-Path $staging "runtime"
     New-Item -ItemType Directory -Path $runtimeTarget | Out-Null
     foreach ($file in $runtimeFiles) { Copy-FileChecked $file.FullName (Join-Path $runtimeTarget $file.Name) }
-    Copy-FileChecked $versionFile (Join-Path $runtimeTarget "tensorrt-runtime.version")
+    if ($runtimeSelection.includesTensorRt) { Copy-FileChecked $versionFile (Join-Path $runtimeTarget "tensorrt-runtime.version") }
 
     $modelsTarget = Join-Path $staging "models"
     New-Item -ItemType Directory -Path $modelsTarget | Out-Null
@@ -657,7 +649,9 @@ try {
     Copy-FileChecked (Join-Path $onnxRoot "LICENSE") (Join-Path $licenseTarget "ONNX-Runtime-MIT.txt")
     Copy-FileChecked (Join-Path $onnxRoot "ThirdPartyNotices.txt") (Join-Path $licenseTarget "ONNX-Runtime-ThirdPartyNotices.txt")
     $tensorRtRoot = Split-Path (Split-Path $runtime -Parent) -Parent
-    Copy-FileChecked (Join-Path $tensorRtRoot "licenses/TensorRT-10.9-LICENSE.txt") (Join-Path $licenseTarget "TensorRT-10.9-LICENSE.txt")
+    if ($runtimeSelection.includesTensorRt) {
+        Copy-FileChecked (Join-Path $tensorRtRoot "licenses/TensorRT-10.9-LICENSE.txt") (Join-Path $licenseTarget "TensorRT-10.9-LICENSE.txt")
+    }
     foreach ($item in @(Get-ChildItem -LiteralPath (Join-Path $tensorRtRoot "onnx-cuda-12.8") -Recurse -File -Filter "License.txt")) {
         $safe = ($item.Directory.Name -replace '[^A-Za-z0-9._-]','_')
         Copy-FileChecked $item.FullName (Join-Path $licenseTarget ("NVIDIA-{0}-License.txt" -f $safe))
@@ -691,7 +685,7 @@ try {
         compilerRuntime = $compilerIdentity
         modelBundleMode = $modelSelection.mode
         ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; runtimeSha256 = $ffmpegRuntimeHashes; configuration = $ffmpegSdk.configuration; linkInputs = $ffmpegSdk.linkInputs; nvenc = "integrated in isolated SDK; H.264 NVENC and software fallback require hardware/workload validation"; x86asm = $ffmpegX86asmDescription; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
-        inferenceRuntime = [ordered]@{ source = "local TensorRT/ONNX Runtime CUDA SDK"; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = $versionLines[0]; sourceSha256 = $versionLines[1]; providers = @("TensorRT", "CUDA", "CPU-fallback") }
+        inferenceRuntime = [ordered]@{ profile = $runtimeSelection.profile; source = $runtimeSourceDescription; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = if ($runtimeSelection.includesTensorRt) { $versionLines[0] } else { $null }; sourceSha256 = if ($runtimeSelection.includesTensorRt) { $versionLines[1] } else { $null }; providers = $runtimeSelection.providers }
         models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; licensePath = "licenses/Model-$($_.destination)-$($_.licenseFile)"; provenancePath = if ($_.legacy) { $null } else { "models/$($_.destination)/$($_.descriptor.provenance.manifestFile)" }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "stdf-r3-y7-sdr8-local-eval") { "experimental-optional-compression-repair" } elseif ($_.destination -eq "nafnet-gopro-deblur-sdr8-fp32-eval") { "experimental-optional-deblur" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
         migration = [ordered]@{ legacyModelIncluded = $includeLegacyModel; legacyModelPathToken = $legacyReference.token; legacyModelSha256 = $legacyModelHash; evidence = @($legacyReference.evidence); cleanPackageOmitsUnreferencedLegacy = $true }
         defaults = "config/defaults.json"; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"
@@ -707,6 +701,11 @@ try {
     } else { '本包未捆绑 NAFNet 去模糊，相关默认路径为空。' }
     $stateRefreshDescription = if ($freshModelSelection) { '本次为全新模型选择目录，不复制历史队列、恢复记录或用户模型；原目录保持不变。' } else { '刷新本机包会保留旧 data 和用户添加的模型；SHA256SUMS.txt 不包含可变用户 data。' }
     $srDescription = if ($modelSelection.includeSuperResolution) { 'Real-ESRGAN x2plus 超分可选且默认关闭。' } else { '本包未捆绑超分模型。' }
+    $inferenceRuntimeDescription = if ($runtimeSelection.includesTensorRt) {
+        '本包捆绑 TensorRT 10.9 与 ONNX Runtime CUDA；首次推理可能生成本机 TensorRT 缓存。'
+    } else {
+        '本包仅捆绑 ONNX Runtime CUDA、CUDA 与 cuDNN，不含 TensorRT；自动后端使用 CUDA。若要启用 TensorRT，请改用 full-tensorrt 版本。'
+    }
     $readme = @"
 RifeLove 原生 Windows 本机包
 
@@ -717,7 +716,7 @@ $deblurDescription
 任务数据库与本机模型偏好默认保存在 Windows 当前用户的 %LOCALAPPDATA%\RifeLove，不要求 EXE 目录可写。视频输出位置由用户选择，原片不会被覆盖。
 只有在 EXE 同目录创建 portable-mode.txt 且第一行为 RifeLovePortable 1，才显式使用旁边的 data 目录。$stateRefreshDescription
 当前包使用隔离构建的 FFmpeg 运行库，包含 H.264 NVENC、OpenH264、Kvazaar 和 libaom；自动编码优先使用 H.264 NVENC，并在不可用时软件回退。x86asm：$ffmpegX86asmDescription。处理性能依赖硬件、模型、分辨率和编码配置；短片回归不代表所有素材已验收。
-TensorRT、ONNX Runtime CUDA、CUDA、cuDNN 和 FFmpeg DLL 随包放置。仍需要兼容的 NVIDIA 驱动；首次推理可能生成本机 TensorRT 缓存。
+$inferenceRuntimeDescription 仍需要兼容的 NVIDIA 驱动。
 只有刷新时发现 data 中存在带精确 v2 路径 token、模型 ID、版本和 SHA-256 的队列/检查点记录，包才会额外保留 models/rife-4.25-fp32-sdr8-v2；干净包不会捆绑未被实际迁移数据引用的重复 RIFE 模型。
 依赖来源、导入清单、模型 SHA-256、许可证和限制见 PACKAGE-MANIFEST.json、dependency-imports.json、SHA256SUMS.txt 和 licenses。
 "@

@@ -193,6 +193,24 @@ Assert-Equal 3 @($compressionSelection.modelIds).Count 'STDF can be added indepe
 Assert-Equal 3 @($deblurSelection.modelIds).Count 'NAFNet can be added independently of other experiments'
 Assert-Equal 5 @($fiveSelection.modelIds).Count 'Full packaging includes NAFNet only when explicitly selected'
 Assert-Equal 4 @($allSelection.modelIds).Count 'Both experiments can be added to a fresh base package'
+$runtimeFixtureFiles = @(
+    'onnxruntime.dll','onnxruntime_providers_shared.dll','onnxruntime_providers_cuda.dll','onnxruntime_providers_tensorrt.dll',
+    'cudart64_12.dll','cublas64_12.dll','cublasLt64_12.dll','cufft64_11.dll','cufftw64_11.dll','nvblas64_12.dll',
+    'cudnn64_9.dll','cudnn_adv64_9.dll','cudnn_cnn64_9.dll','cudnn_engines_precompiled64_9.dll',
+    'cudnn_engines_runtime_compiled64_9.dll','cudnn_graph64_9.dll','cudnn_heuristic64_9.dll','cudnn_ops64_9.dll',
+    'nvinfer_10.dll','nvinfer_builder_resource_10.dll','nvinfer_plugin_10.dll','nvonnxparser_10.dll'
+)
+$fullRuntime = Resolve-NativeInferenceRuntimeSelection -AvailableFileNames $runtimeFixtureFiles
+$cudaRuntime = Resolve-NativeInferenceRuntimeSelection -AvailableFileNames $runtimeFixtureFiles -CudaOnly
+Assert-Equal 'full-tensorrt' $fullRuntime.profile 'Default runtime package retains TensorRT'
+Assert-Equal $true $fullRuntime.includesTensorRt 'Full package declares its TensorRT runtime'
+Assert-Equal $true ($fullRuntime.files -contains 'nvinfer_builder_resource_10.dll') 'Full package retains the TensorRT engine builder'
+Assert-Equal 'cuda-only' $cudaRuntime.profile 'CUDA-only runtime has an explicit profile'
+Assert-Equal $false $cudaRuntime.includesTensorRt 'CUDA-only package declares that TensorRT is absent'
+Assert-Equal $true ($cudaRuntime.files -contains 'onnxruntime_providers_cuda.dll') 'CUDA-only package retains the CUDA provider'
+Assert-Equal $false ($cudaRuntime.files -contains 'onnxruntime_providers_tensorrt.dll') 'CUDA-only package omits the TensorRT provider'
+Assert-Equal $false ($cudaRuntime.files -contains 'nvinfer_builder_resource_10.dll') 'CUDA-only package omits the largest TensorRT library'
+Assert-Rejected { Resolve-NativeInferenceRuntimeSelection -AvailableFileNames @('onnxruntime.dll') -CudaOnly } 'missing required files' 'CUDA-only package rejects missing CUDA dependencies'
 $rifeFixture = New-ModelFixture 'rife-4.25-fp32-sdr8-v3' (Join-Path $testRoot 'base-cache') 'rife'
 $srFixture = New-ModelFixture 'realesrgan-x2plus-sdr8-v2' (Join-Path $testRoot 'base-cache')
 $missing = Join-Path $testRoot 'excluded-cache-does-not-exist'
