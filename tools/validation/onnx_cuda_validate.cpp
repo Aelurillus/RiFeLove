@@ -67,7 +67,7 @@ int wmain(int argc, wchar_t** argv) {
             {"requested_precision",useFp16 ? "fp16" : "fp32"}, {"fp16_enabled",capabilities.fp16},
             {"runtime", "1.22.0"}, {"model_sha256",pack.sha256},
             {"device",device->info().name}, {"compute_capability",std::to_string(device->info().computeMajor) + "." + std::to_string(device->info().computeMinor)},
-            {"use_tf32",false}, {"convolution_algorithm_search","DEFAULT"}, {"arena_budget_bytes",config.arenaBudgetBytes}, {"cases",json::array()}};
+            {"use_tf32",false}, {"convolution_algorithm_search","EXHAUSTIVE"}, {"arena_budget_bytes",config.arenaBudgetBytes}, {"cases",json::array()}};
         const double maxLimit = reference.at("ort_max_abs_error_limit").get<double>();
         const double psnrLimit = reference.value("minimum_psnr_db", 80.0);
         require(maxLimit > 0 && maxLimit <= 0.5 / 255 && psnrLimit >= 80, "Reference tolerance is weaker than the SDR8 numerical gate");
