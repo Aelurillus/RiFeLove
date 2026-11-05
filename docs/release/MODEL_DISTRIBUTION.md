@@ -34,9 +34,13 @@ The local ONNX SHA-256 is `8905ab350363251e45e1b46fec355042da9514a34941e64c62b82
 It is the RifeLove integrity pin for the model graph, not an upstream author
 signature; the author did not publish an authoritative checkpoint checksum.
 The pack includes the license, pinned source manifest, and SDR8 numerical
-validation report. It does not claim HDR support, a universal quality ranking,
-or author authentication. Small-profile numerical checks and a local SDR video
-pipeline run are not broad perceptual acceptance.
+validation report. That report records six small-profile PyTorch CPU and ONNX
+Runtime CPU cases. Separate repository records cover local CUDA/TensorRT FP32
+checks and a tagged SDR video pipeline run; they are not included in the ZIP.
+These checks do not claim HDR support, a universal quality ranking, or author
+authentication, and they are not broad perceptual acceptance. See the [local
+model selection record](../development/LOCAL_MODEL_SELECTION.md) for the
+additional hardware and video evidence.
 
 ## Download-channel acceptance
 
