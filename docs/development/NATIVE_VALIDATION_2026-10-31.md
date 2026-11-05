@@ -340,3 +340,24 @@ inspected under `out/comparison-controls-20261105/`. Those captures do not
 exercise an imported multi-candidate review report, a screen reader, or real
 per-monitor DPI transitions. The timeline and status scrollbars still use the
 Windows system appearance and remain separate UI work.
+
+## Local RIFE model archive and import (2026-11-05)
+
+A local, unpublished model archive was assembled from the validated RIFE-only
+bundle. It contains the RIFE 4.25 v3 pack, its upstream MIT license, source and
+validation sidecars, reference tensors, and a short import guide. The archive
+is 23,889,743 bytes with SHA-256
+`9393b1fea10467aa0315a3c8f7d89dc1a39c282b955196b192f3b067d9755c3d`.
+The existing release-archive safety check accepted
+its 30 entries; all 29 model files were compared by SHA-256 after extraction.
+The source model graph SHA-256 was the pinned RIFE value recorded above.
+
+The extracted directory was registered via the native model-center logic in
+a fresh isolated profile, set as default, and revalidated successfully after
+restart. A separate copy with its license modified was rejected. The extracted
+pack was also loaded for a synthetic 30-to-60 FPS Start-control run: the
+persisted result recorded 59 generated frames and 59 inference calls out of 120
+output frames. This used a test executable and locally staged GPU runtime; it
+did not automate the folder-picker dialog or publish the archive. Archive and
+outputs remain under `out/rife-model-release-prep-20261105/`. Checksums show
+consistency with the locally pinned acquisition, not an author-published hash.

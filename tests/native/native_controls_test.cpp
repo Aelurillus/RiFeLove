@@ -1517,6 +1517,41 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    if (argc == 3 && std::wstring(argv[1]) == L"--model-import") {
+        {
+            rifelove::native_test::ModelCenterTemporaryDirectory profile;
+            const auto appRoot = profile.root / L"app";
+            const auto userRoot = profile.root / L"LocalAppData";
+            const auto model = std::filesystem::absolute(std::filesystem::path(argv[2])).lexically_normal();
+            std::filesystem::create_directories(appRoot);
+            {
+                NativeApp app(appRoot, userRoot);
+                check(app.create(GetModuleHandleW(nullptr), SW_SHOWNOACTIVATE), "create owner for external model import");
+                check(!app.testViewState().modelReady, "fresh import profile has no bundled default model");
+                const bool registered = app.testRegisterModel(model);
+                check(registered, "register external model pack through native model-center logic");
+                std::size_t index = app.testLocalModels().size();
+                for (std::size_t i = 0; i < app.testLocalModels().size(); ++i) {
+                    if (rifelove::native_desktop::NativeModelPreferences::key(app.testLocalModels()[i].directory) ==
+                        rifelove::native_desktop::NativeModelPreferences::key(model)) { index = i; break; }
+                }
+                const bool selected = registered && index < app.testLocalModels().size() && app.testSetDefaultModel(index);
+                check(selected && app.testViewState().modelReady, "external model verifies and becomes the native default");
+                if (const HWND owner = app.testMainWindow()) DestroyWindow(owner);
+            }
+            {
+                NativeApp reopened(appRoot, userRoot);
+                check(reopened.testViewState().modelReady &&
+                    rifelove::native_desktop::NativeModelPreferences::key(reopened.testModelPreferences().defaults[0]) ==
+                        rifelove::native_desktop::NativeModelPreferences::key(model),
+                    "external default survives restart and is revalidated");
+            }
+        }
+        SetThreadDesktop(original); CloseDesktop(isolated);
+        if (failures) return 1;
+        std::cout << "Native model import: registered, selected and revalidated after restart.\n";
+        return 0;
+    }
     if ((argc == 4 || argc == 5) && std::wstring(argv[1]) == L"--comparison") {
         {
             rifelove::native_test::ModelCenterTemporaryDirectory profile;
