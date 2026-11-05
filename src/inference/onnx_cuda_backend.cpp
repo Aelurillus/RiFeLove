@@ -366,10 +366,10 @@ public:
             check(api, api.CreateCUDAProviderOptions(&cuda.value));
             const std::string ordinal = std::to_string(device->info().ordinal), budget = std::to_string(config.arenaBudgetBytes);
             const char* keys[] = {"device_id", "gpu_mem_limit", "arena_extend_strategy", "cudnn_conv_algo_search", "cudnn_conv_use_max_workspace", "use_tf32", "do_copy_in_default_stream"};
-            // Use the documented implicit-precomputed-GEMM baseline. Heuristic
-            // selection showed a gate failure on a repeated native run; faster
-            // algorithms need their own numerical qualification before use.
-            const char* values[] = {ordinal.c_str(), budget.c_str(), "kSameAsRequested", "DEFAULT", "0", "0", "1"};
+            // ONNX Runtime 1.22 warns that DEFAULT uses cuDNN's fallback planner,
+            // which may be extremely slow. Qualify exhaustive search against the
+            // pinned RIFE numerical reference and full-pipeline throughput.
+            const char* values[] = {ordinal.c_str(), budget.c_str(), "kSameAsRequested", "EXHAUSTIVE", "0", "0", "1"};
             check(api, api.UpdateCUDAProviderOptions(cuda.value, keys, values, std::size(keys)));
             check(api, api.UpdateCUDAProviderOptionsWithValue(cuda.value, "user_compute_stream", reinterpret_cast<void*>(device->streamAddress())));
             try { check(api, api.SessionOptionsAppendExecutionProvider_CUDA_V2(options.value, cuda.value)); }
