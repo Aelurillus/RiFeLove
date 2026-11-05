@@ -3,10 +3,13 @@
 ## Current state
 
 There is not yet a public RifeLove application release or a public RifeLove
-model download. The native Model Center can install a ZIP and its adjacent
-distribution manifest after the user has downloaded both files. It does not
-fetch a catalog or download from a host. Do not treat an old development-preview
-entry or a source-checkpoint URL as a published, ready-to-use RifeLove model.
+model download. The native Model Center can install a local ZIP or fetch a ZIP
+from a user-supplied HTTPS URL with its adjacent distribution manifest. It can
+try fallback mirrors and resume an interrupted archive transfer. It does not
+fetch a built-in catalog or authenticate the manifest publisher. This direct
+URL workflow is not a public RifeLove model channel. Do not treat an old
+development-preview entry or a source-checkpoint URL as a published,
+ready-to-use RifeLove model.
 
 The first distributable candidate is the verified RIFE 4.25 FP32 SDR8 model
 pack. Build its local review artifact with:
@@ -64,8 +67,10 @@ model verifier, and moves the verified pack into the managed user model
 directory before registration. The selected sidecar supplies the integrity
 pins; its hashes do not authenticate the publisher.
 
-The product goal still requires multiple independent, verified download
-channels, an in-app catalog and resumable network downloads. The installed
-application can guide local package installation but cannot yet choose a
-channel or fetch a package. Model downloads and the public application release
-remain incomplete.
+The product goal still requires a signed in-app catalog, a publisher trust
+root, multiple independent public mirrors, and anonymous read-back checks that
+prove each mirror serves the same package bytes. The current direct downloader
+can fetch a user-selected URL and resume an interrupted archive, but its
+adjacent sidecar does not authenticate the publisher. Public model downloads
+and the application release remain closed pending license and release
+qualification.

@@ -166,9 +166,9 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
         text(state.processingAvailable ? L"查看本地任务记录" : L"任务记录 · 暂不可用",
              28, state.processingAvailable ? 234 : 200, l.side - 45, 20, 11, D2D1::ColorF(0x9AAAC0));
     if (l.resourceButtonsTop >= 340) {
-        text(state.processingAvailable ? L"模型中心 · 完全离线" : L"模型中心 · 当前构建不可用",
+        text(state.processingAvailable ? L"模型中心 · 本地与 HTTPS 下载" : L"模型中心 · 当前构建不可用",
              28, 261, l.side - 50, 20, 10, D2D1::ColorF(0x9AAAC0));
-        text(L"仅登记，不复制或删除", 28, 284, l.side - 45, 18, 10, D2D1::ColorF(0x667286));
+        text(L"SHA-256 校验 · 显式安装", 28, 284, l.side - 45, 18, 10, D2D1::ColorF(0x667286));
     }
     if (l.resourceButtonsTop >= 380) {
         line(20, 327, l.side - 40);

@@ -5,6 +5,7 @@
 #include <array>
 #include <bit>
 #include <charconv>
+#include <cctype>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <cmath>
@@ -28,6 +29,7 @@
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 #include "native_package_archive.hpp"
+#include "native_model_download.hpp"
 #include <nlohmann/json.hpp>
 #include "media/encoder_policy.hpp"
 #include "media/media_engine.hpp"
@@ -1735,11 +1737,16 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), app->instance_, nullptr);
         };
         app->modelCenterStatus_ = control(L"STATIC", L"", SS_LEFT, 1200);
+        app->modelDownloadUrl_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, kModelDownloadUrl);
+        SendMessageW(app->modelDownloadUrl_, EM_SETLIMITTEXT, 32768, 0);
+        SendMessageW(app->modelDownloadUrl_, EM_SETCUEBANNER, TRUE,
+            reinterpret_cast<LPARAM>(L"HTTPS ZIP 镜像链接；多个镜像用分号分隔"));
         app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, kModelList);
         app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
         SendMessageW(app->modelDetails_, EM_SETLIMITTEXT, 128 * 1024, 0);
         control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRegister);
         control(L"BUTTON", L"安装验证包…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelInstall);
+        control(L"BUTTON", L"下载并安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
         control(L"BUTTON", L"取消安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelCancelInstall);
         control(L"BUTTON", L"设为该类默认", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDefault);
         control(L"BUTTON", L"取消登记", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelUnregister);
@@ -1769,7 +1776,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
         if (!item || item->CtlType != ODT_BUTTON) break;
-        const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelInstall;
+        const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelInstall ||
+            static_cast<int>(item->CtlID) == kModelDownload;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
         const bool focused = (item->itemState & ODS_FOCUS) != 0;
@@ -1859,6 +1867,26 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         if (id == kModelRegister && app->modelChangesAllowed()) {
             const auto directory = app->browseForFolder(L"登记本机模型目录（包含 model.json）；原文件保留不变");
             if (!directory.empty()) (void)app->registerLocalModel(directory);
+        } else if (id == kModelDownload && app->modelChangesAllowed() && !app->modelInstallActive_.load()) {
+            const auto input = app->controlText(app->modelDownloadUrl_);
+            std::vector<std::wstring> mirrorUrls;
+            std::size_t begin = 0;
+            while (begin < input.size()) {
+                const auto end = input.find_first_of(L";\r\n", begin);
+                auto mirror = input.substr(begin, end == std::wstring::npos ? std::wstring::npos : end - begin);
+                const auto first = mirror.find_first_not_of(L" \t");
+                if (first != std::wstring::npos) {
+                    const auto last = mirror.find_last_not_of(L" \t");
+                    mirror = mirror.substr(first, last - first + 1);
+                    mirrorUrls.push_back(std::move(mirror));
+                }
+                if (end == std::wstring::npos) break;
+                begin = end + 1;
+            }
+            if (mirrorUrls.empty() || mirrorUrls.size() > 5) {
+                app->modelCenterNotice_ = L"请填入 1–5 个 HTTPS ZIP 镜像链接，以分号分隔。";
+                app->updateModelDetails();
+            } else app->startModelPackageInstall({}, std::move(mirrorUrls));
         } else if (id == kModelInstall && app->modelChangesAllowed() && !app->modelInstallActive_.load()) {
             std::array<wchar_t, 32768> selected{};
             OPENFILENAMEW dialog{};
@@ -1905,6 +1933,7 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelList_ = nullptr;
         app->modelDetails_ = nullptr;
         app->modelCenterStatus_ = nullptr;
+        app->modelDownloadUrl_ = nullptr;
         if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
         if (app->modelCenterBackgroundBrush_) { DeleteObject(app->modelCenterBackgroundBrush_); app->modelCenterBackgroundBrush_ = nullptr; }
         if (app->modelCenterSurfaceBrush_) { DeleteObject(app->modelCenterSurfaceBrush_); app->modelCenterSurfaceBrush_ = nullptr; }
@@ -1922,7 +1951,7 @@ void NativeApp::layoutModelCenter() {
     if (!modelCenterFont_) modelCenterFont_ = CreateFontW(-MulDiv(10, dpi ? dpi : 96, 72), 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    for (int id = 1200; id <= kModelCancelInstall; ++id) {
+    for (int id = 1200; id <= kModelDownloadUrl; ++id) {
         const auto child = GetDlgItem(modelCenterWindow_, id);
         if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(modelCenterFont_), TRUE);
     }
@@ -1934,11 +1963,12 @@ void NativeApp::layoutModelCenter() {
     const int buttonHeight = px(34);
     const int buttonRows = narrow ? 2 : 1;
     const int buttonsTop = std::max(px(180), static_cast<int>(client.bottom) - margin - buttonRows * (buttonHeight + gap) + gap);
-    const int contentTop = px(102), contentHeight = std::max(px(60), buttonsTop - contentTop - gap);
+    const int contentTop = px(116), contentHeight = std::max(px(60), buttonsTop - contentTop - gap);
     const auto move = [&](HWND child, int x, int y, int w, int h) {
         if (child) SetWindowPos(child, nullptr, x, y, std::max(1, w), std::max(1, h), SWP_NOZORDER | SWP_NOACTIVATE);
     };
-    move(modelCenterStatus_, margin, px(12), width, px(82));
+    move(modelCenterStatus_, margin, px(12), width, px(56));
+    move(modelDownloadUrl_, margin, px(76), width, px(28));
     if (narrow) {
         const int listHeight = std::max(px(30), contentHeight * 2 / 5);
         move(modelList_, margin, contentTop, width, listHeight);
@@ -1948,9 +1978,9 @@ void NativeApp::layoutModelCenter() {
         move(modelList_, margin, contentTop, listWidth, contentHeight);
         move(modelDetails_, margin + listWidth + gap, contentTop, width - listWidth - gap, contentHeight);
     }
-    const std::array<int, 7> buttons{kModelRegister, kModelInstall, kModelCancelInstall, kModelDefault,
+    const std::array<int, 8> buttons{kModelRegister, kModelInstall, kModelDownload, kModelCancelInstall, kModelDefault,
         kModelUnregister, kModelRefresh, kModelClose};
-    const int columns = narrow ? 4 : 7;
+    const int columns = narrow ? 4 : 8;
     const int buttonWidth = (width - (columns - 1) * gap) / columns;
     for (std::size_t index = 0; index < buttons.size(); ++index)
         move(GetDlgItem(modelCenterWindow_, buttons[index]), margin + static_cast<int>(index % columns) * (buttonWidth + gap),
@@ -2022,12 +2052,14 @@ void NativeApp::updateModelDetails() {
     const bool installing = modelInstallActive_.load();
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelRegister), editable && !installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelInstall), editable && !installing);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelDownload), editable && !installing);
+    EnableWindow(modelDownloadUrl_, editable && !installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelCancelInstall), installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelDefault), editable && item && item->usable);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelUnregister), editable && item);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelRefresh), modelChangesAllowed());
-    std::wstring status = L"完全离线 · " + std::to_wstring(localModels_.size()) + L" 个本地目录。可登记外部目录，或安装经过清单校验的 ZIP 包。\r\n";
-    status += L"完整性通过仅代表本地文件哈希一致，不认证发布者或画质。\r\n";
+    std::wstring status = std::to_wstring(localModels_.size()) + L" 个模型。支持本地安装与 HTTPS 镜像下载。\r\n";
+    status += L"SHA-256 检查文件完整性，不认证发布者或画质。\r\n";
     if (installing) {
         std::lock_guard lock(modelInstallMutex_);
         status += modelInstallState_.status;
@@ -2037,7 +2069,7 @@ void NativeApp::updateModelDetails() {
         }
     } else status += modelChangesAllowed() ? modelCenterNotice_ : L"正在检查视频或运行任务；模型更改暂不可用。";
     SetWindowTextW(modelCenterStatus_, status.c_str());
-    std::wstring details = L"暂无已登记模型。\r\n\r\n选择“安装验证包…”并提供 ZIP 与同目录的 .distribution.json 清单，可将模型安装到 RifeLove 托管目录。也可登记一个已解压的本机目录。";
+    std::wstring details = L"暂无已登记模型。\r\n\r\n可在上方填入 1–5 个 HTTPS ZIP 镜像地址并选择“下载并安装”；每个地址旁需能取得同名 .distribution.json 清单。中断下载会保留可续传数据。也可安装本地 ZIP 或登记已解压的本机目录。";
     if (item) {
         modelCenterSelectedPath_ = item->directory;
         const wchar_t* kind = item->kind == 0 ? L"RIFE 插帧" : item->kind == 1 ? L"超分辨率" : item->kind == 2 ? L"时域降噪" : item->kind == 3 ? L"压缩修复 · STDF 本机评估" : item->kind == 4 ? L"实验性独立去模糊" : L"其他 / 尚未支持";
@@ -3297,31 +3329,128 @@ bool NativeApp::saveModelPreferences(const NativeModelPreferences& preferences) 
     }
 }
 
-void NativeApp::startModelPackageInstall(const std::filesystem::path& archive) {
+void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, std::vector<std::wstring> mirrorUrls) {
     if (!modelPreferencesWritable_ || !dataDirectory_.writable || !dataDirectory_.preferencesReady ||
         !modelChangesAllowed() || modelInstallActive_.load()) return;
     if (modelInstallThread_.joinable()) modelInstallThread_.join();
     auto manifestPath = archive;
-    manifestPath.replace_extension(L".distribution.json");
+    if (!mirrorUrls.empty()) manifestPath.clear();
+    else manifestPath.replace_extension(L".distribution.json");
     {
         std::lock_guard lock(modelInstallMutex_);
         modelInstallState_ = {};
         modelInstallState_.status = L"准备校验模型包…";
     }
     modelInstallActive_.store(true);
+    const bool downloading = !mirrorUrls.empty();
     try {
-        modelInstallThread_ = std::jthread([this, archive, manifestPath](std::stop_token stopToken) {
+        modelInstallThread_ = std::jthread([this, archive, manifestPath, mirrorUrls = std::move(mirrorUrls)](std::stop_token stopToken) {
             std::optional<std::filesystem::path> installed;
             std::wstring failure;
             std::wstring status;
             try {
                 if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
-                (void)checkedNativeModelDirectory(manifestPath.parent_path(), false);
-                const DWORD manifestAttributes = GetFileAttributesW(manifestPath.c_str());
+                auto resolvedArchive = archive;
+                auto resolvedManifestPath = manifestPath;
+                std::vector<std::filesystem::path> downloadedManifests;
+                if (!mirrorUrls.empty()) {
+                    const auto downloadsRoot = dataDirectory_.directory / L"ModelDownloads";
+                    prepareWritableNativeDataDirectory(downloadsRoot);
+                    (void)checkedNativeModelDirectory(downloadsRoot, false);
+                    std::wstring mirrorFailures;
+                    for (std::size_t mirrorIndex = 0; mirrorIndex < mirrorUrls.size(); ++mirrorIndex) {
+                        const auto& mirrorUrl = mirrorUrls[mirrorIndex];
+                        try {
+                            if (!mirrorUrl.starts_with(L"https://") || mirrorUrl.find_first_of(L"?#") != std::wstring::npos)
+                                throw std::invalid_argument("Use a lowercase HTTPS ZIP URL without a query or fragment");
+                            auto baseUrl = mirrorUrl;
+                            auto urlEnd = baseUrl.size();
+                            while (urlEnd > 0 && (baseUrl[urlEnd - 1] == L'/' || baseUrl[urlEnd - 1] == L'\\')) --urlEnd;
+                            baseUrl.resize(urlEnd);
+                            const auto slash = baseUrl.find_last_of(L'/');
+                            const auto dot = baseUrl.find_last_of(L'.');
+                            if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash) ||
+                                baseUrl.substr(dot) != L".zip")
+                                throw std::invalid_argument("Each mirror URL must end in .zip");
+                            const auto manifestUrl = baseUrl.substr(0, dot) + L".distribution.json";
+                            const auto manifestCandidate = downloadsRoot / (L"mirror-" + std::to_wstring(mirrorIndex) + L".distribution.json");
+                            {
+                                std::lock_guard lock(modelInstallMutex_);
+                                modelInstallState_.completedBytes = 0;
+                                modelInstallState_.totalBytes = 0;
+                                modelInstallState_.status = L"正在获取镜像 " + std::to_wstring(mirrorIndex + 1) + L" 的模型清单";
+                            }
+                            const auto reportProgress = [this, mirrorIndex](NativeModelDownloadProgress value) {
+                                std::lock_guard lock(modelInstallMutex_);
+                                modelInstallState_.completedBytes = value.completedBytes;
+                                modelInstallState_.totalBytes = value.totalBytes;
+                                modelInstallState_.status = L"正在下载镜像 " + std::to_wstring(mirrorIndex + 1) + L" 的 ZIP 或校验清单";
+                            };
+                            downloadNativeModelFile(manifestUrl, manifestCandidate, 0, {}, 1024 * 1024,
+                                stopToken, reportProgress);
+                            downloadedManifests.push_back(manifestCandidate);
+                            const auto manifestBytes = inference::readLocalFile(manifestCandidate, 1024 * 1024);
+                            const std::string manifestText(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size());
+                            const auto mirrorManifest = nlohmann::json::parse(manifestText);
+                            const auto& artifact = mirrorManifest.at("artifact");
+                            const auto fileName = artifact.at("fileName").get<std::string>();
+                            const auto archiveSize = artifact.at("sizeBytes").get<std::uint64_t>();
+                            const auto archiveSha = artifact.at("sha256").get<std::string>();
+                            const auto safeArchiveName = [](const std::string& value) {
+                                if (value.empty() || value.size() > 128 || value == "." || value == ".." ||
+                                    !((value.front() >= 'a' && value.front() <= 'z') || (value.front() >= 'A' && value.front() <= 'Z') ||
+                                      (value.front() >= '0' && value.front() <= '9')) || value.back() == '.') return false;
+                                const auto extension = value.find('.');
+                                auto deviceName = value.substr(0, extension);
+                                std::transform(deviceName.begin(), deviceName.end(), deviceName.begin(), [](unsigned char ch) {
+                                    return static_cast<char>(std::tolower(ch));
+                                });
+                                if (deviceName == "con" || deviceName == "prn" || deviceName == "aux" || deviceName == "nul" ||
+                                    deviceName == "com1" || deviceName == "com2" || deviceName == "com3" || deviceName == "com4" ||
+                                    deviceName == "com5" || deviceName == "com6" || deviceName == "com7" || deviceName == "com8" || deviceName == "com9" ||
+                                    deviceName == "lpt1" || deviceName == "lpt2" || deviceName == "lpt3" || deviceName == "lpt4" ||
+                                    deviceName == "lpt5" || deviceName == "lpt6" || deviceName == "lpt7" || deviceName == "lpt8" || deviceName == "lpt9") return false;
+                                return std::all_of(value.begin(), value.end(), [](char ch) {
+                                    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                                        (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.';
+                                });
+                            };
+                            const auto validSha = [](const std::string& value) {
+                                return value.size() == 64 && std::all_of(value.begin(), value.end(), [](char ch) {
+                                    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+                                });
+                            };
+                            if (!safeArchiveName(fileName) || archiveSize == 0 || archiveSize > 1024ULL * 1024 * 1024 || !validSha(archiveSha))
+                                throw std::invalid_argument("Mirror manifest contains an unsafe file name or invalid package size/hash");
+                            const auto candidateArchive = downloadsRoot / std::filesystem::path(wideFromUtf8(fileName));
+                            {
+                                std::lock_guard lock(modelInstallMutex_);
+                                modelInstallState_.completedBytes = 0;
+                                modelInstallState_.totalBytes = archiveSize;
+                                modelInstallState_.status = L"正在下载并校验镜像 " + std::to_wstring(mirrorIndex + 1);
+                            }
+                            downloadNativeModelFile(mirrorUrl, candidateArchive, archiveSize, archiveSha,
+                                1024ULL * 1024 * 1024, stopToken, reportProgress);
+                            resolvedArchive = candidateArchive;
+                            resolvedManifestPath = manifestCandidate;
+                            break;
+                        } catch (const NativePackageInstallCancelled&) {
+                            throw;
+                        } catch (const std::exception& error) {
+                            if (!mirrorFailures.empty()) mirrorFailures += L"；";
+                            mirrorFailures += L"镜像 " + std::to_wstring(mirrorIndex + 1) + L"：" + wideFromUtf8(error.what());
+                        }
+                    }
+                    if (resolvedArchive.empty() || resolvedManifestPath.empty())
+                        throw std::runtime_error("All model mirrors failed: " + nativeModelUtf8(mirrorFailures));
+                }
+                if (resolvedArchive.empty()) throw std::invalid_argument("No model package was selected");
+                (void)checkedNativeModelDirectory(resolvedManifestPath.parent_path(), false);
+                const DWORD manifestAttributes = GetFileAttributesW(resolvedManifestPath.c_str());
                 if (manifestAttributes == INVALID_FILE_ATTRIBUTES || (manifestAttributes &
                     (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
                     throw std::runtime_error("Distribution manifest must be a regular local file");
-                const auto manifestBytes = inference::readLocalFile(manifestPath, 1024 * 1024);
+                const auto manifestBytes = inference::readLocalFile(resolvedManifestPath, 1024 * 1024);
                 const std::string manifestText(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size());
                 const auto manifest = nlohmann::json::parse(manifestText);
                 if (!manifest.is_object() || manifest.at("schemaVersion") != 1)
@@ -3363,7 +3492,7 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive) {
 
                 const auto& artifact = manifest.at("artifact");
                 const auto archiveName = boundedString(artifact, "fileName", 256);
-                if (archiveName != nativeModelUtf8(archive.filename().wstring()))
+                if (archiveName != nativeModelUtf8(resolvedArchive.filename().wstring()))
                     throw std::invalid_argument("The selected ZIP file name does not match its distribution manifest");
                 NativePackageArchivePlan plan;
                 plan.rootDirectory = boundedString(artifact, "rootDirectory", 128);
@@ -3402,7 +3531,7 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive) {
                     modelInstallState_.status = value.phase == "archive" ? L"正在校验归档 SHA-256" :
                         value.phase == "extract" ? L"正在安全解压到暂存目录" : L"正在校验模型文件 SHA-256";
                 };
-                const auto modelDirectory = extractNativeModelPackageArchive(archive, plan, stage, stopToken, progress);
+                const auto modelDirectory = extractNativeModelPackageArchive(resolvedArchive, plan, stage, stopToken, progress);
                 struct StageCleanup final {
                     std::filesystem::path path;
                     ~StageCleanup() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
@@ -3436,13 +3565,19 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive) {
                     if (installedPack.sha256 != verified.sha256 || installedPack.id != verified.id || installedPack.version != verified.version)
                         throw std::runtime_error("A different model already occupies the managed version directory");
                     installed = destination;
-                    status = L"此模型版本已安装；已重新校验现有文件。";
+                    status = mirrorUrls.empty() ? L"此模型版本已安装；已重新校验现有文件。" : L"镜像下载包已校验；此模型版本已安装。";
                 } else {
                     if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
                     if (!MoveFileExW(modelDirectory.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH))
                         throw std::runtime_error("Cannot atomically publish the verified model into the managed directory");
                     installed = destination;
-                    status = L"模型包已验证并原子安装。";
+                    status = mirrorUrls.empty() ? L"模型包已验证并原子安装。" : L"模型包已下载、校验并原子安装。";
+                }
+                if (!mirrorUrls.empty()) {
+                    std::error_code cleanupError;
+                    std::filesystem::remove(resolvedArchive, cleanupError);
+                    for (const auto& downloadedManifest : downloadedManifests)
+                        std::filesystem::remove(downloadedManifest, cleanupError);
                 }
             } catch (const NativePackageInstallCancelled&) {
                 failure = L"安装已取消；暂存文件已清理，现有模型未更改。";
@@ -3466,7 +3601,9 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive) {
             modelInstallActive_.store(false);
             throw std::runtime_error("Cannot start the model installation progress timer");
         }
-        modelCenterNotice_ = L"正在后台校验模型包；取消不会影响已安装模型。";
+        modelCenterNotice_ = !downloading
+            ? L"正在后台校验模型包；取消不会影响已安装模型。"
+            : L"正在后台下载并验证模型包；中断后可从同一镜像续传。";
         updateModelDetails();
     } catch (const std::exception& error) {
         modelInstallActive_.store(false);
@@ -3479,7 +3616,7 @@ void NativeApp::cancelModelPackageInstall() {
     if (modelInstallThread_.joinable()) modelInstallThread_.request_stop();
     if (modelInstallActive_.load()) {
         std::lock_guard lock(modelInstallMutex_);
-        modelInstallState_.status = L"正在取消并清理暂存文件…";
+        modelInstallState_.status = L"正在取消；解压暂存会清理，未完成的下载会保留以便续传…";
     }
     if (modelCenterWindow_) updateModelDetails();
 }
