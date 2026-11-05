@@ -94,11 +94,13 @@ Practical-RIFE, whose pinned README states that linked trained model contents
 are covered by the project's MIT license. The pack includes the exact license,
 source manifest, validation report, and SHA-256-bound model descriptor.
 
-Qualification: this pack has small-profile CPU/CUDA/TensorRT FP32 numerical
-checks and local SDR video pipeline evidence. Those checks do not establish a
-universal model ranking or perceptual quality on all footage. HDR is not
-qualified. The project-pinned model hash verifies package integrity; it is
-not an upstream author signature.
+Qualification: the validation.json included in this pack records six small-
+profile SDR8 reference cases on PyTorch CPU and ONNX Runtime CPU. Separate
+project records cover local CUDA/TensorRT FP32 numerical checks and a tagged
+SDR video pipeline run; those records are not included in this archive. None
+of these checks establishes a universal model ranking or perceptual quality
+on all footage. HDR is not qualified. The project-pinned model hash verifies
+package integrity; it is not an upstream author signature.
 '@
     $readmePath = Join-Path $stageRoot 'README.txt'
     [System.IO.File]::WriteAllText($readmePath, $readme, [System.Text.UTF8Encoding]::new($false))
