@@ -1948,6 +1948,7 @@ void NativeApp::updateModelCenter() {
     for (std::size_t index = 0; index < localModels_.size(); ++index) {
         const auto& item = localModels_[index];
         auto label = item.name + L"  " + item.version;
+        if (item.modelSha256.size() >= 8) label += L"  [SHA " + item.modelSha256.substr(0, 8) + L"]";
         const bool selectedDefault = item.kind >= 0 && !modelPreferences_.defaults[static_cast<std::size_t>(item.kind)].empty() &&
             NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(modelPreferences_.defaults[static_cast<std::size_t>(item.kind)]);
         if (selectedDefault) label += L"  [默认]";
@@ -1984,6 +1985,14 @@ void NativeApp::updateModelDetails() {
         details += L"\r\n\r\n能力：" + item->capabilities + L"\r\n颜色 / 输入配置：" + item->profiles;
         details += L"\r\n\r\n验证状态：" + item->verification;
         details += item->usable ? L"\r\n当前客户端可选用；实际处理仍需通过运行库、设备和源视频检查。" : L"\r\n仅可查看，不能设为默认。";
+        details += L"\r\n\r\n模型 SHA-256：" + (item->modelSha256.empty() ? L"未声明" : item->modelSha256);
+        details += L"\r\n许可：" + (item->licenseId.empty() ? L"未声明" : item->licenseId);
+        details += L"\r\n来源仓库：" + (item->sourceRepository.empty() ? L"未声明" : item->sourceRepository);
+        details += L"\r\n来源提交：" + (item->upstreamCommit.empty() ? L"未固定" : item->upstreamCommit);
+        details += L"\r\n验证配置：" + (item->numericalProfile.empty() ? L"未声明" : item->numericalProfile);
+        details += L"\r\n验证后端：" + (item->validatedBackends.empty() ? L"未声明" : item->validatedBackends);
+        details += L"\r\n许可范围证据：" + (item->licenseScopeEvidence.empty() ? L"未提供" : item->licenseScopeEvidence);
+        details += L"\r\n\r\nSHA-256 与侧车文件哈希用于检查本地文件一致性，不认证发布者身份，也不代表画质排名。";
         details += L"\r\n\r\n完整目录（可选择并复制）：\r\n" + item->directory.wstring();
         details += L"\r\n\r\n默认项按类别分别保存；实验性去模糊启动时始终关闭，需在主窗口显式开启；可与超分同时选择。";
     }
@@ -3056,6 +3065,16 @@ NativeApp::LocalModel NativeApp::inspectLocalModel(const std::filesystem::path& 
             item.kind = 0;
             item.name = wideFromUtf8(pack.displayName.empty() ? pack.id : pack.displayName);
             item.version = wideFromUtf8(pack.version);
+            item.modelSha256 = wideFromUtf8(pack.sha256);
+            item.licenseId = wideFromUtf8(pack.licenseId);
+            item.sourceRepository = wideFromUtf8(pack.sourceRepository);
+            item.upstreamCommit = wideFromUtf8(pack.upstreamCommit);
+            item.licenseScopeEvidence = wideFromUtf8(pack.licenseScopeEvidence);
+            item.numericalProfile = wideFromUtf8(pack.numericalProfile);
+            for (const auto& backend : pack.validatedBackends) {
+                if (!item.validatedBackends.empty()) item.validatedBackends += L"、";
+                item.validatedBackends += wideFromUtf8(backend);
+            }
             item.capabilities = L"RIFE 帧间插帧；适配器 " + wideFromUtf8(pack.adapterId) + L" / " + std::to_wstring(pack.adapterVersion);
             for (const auto& profile : pack.supportedInputProfiles) {
                 if (!item.profiles.empty()) item.profiles += L"、";
@@ -3076,6 +3095,16 @@ NativeApp::LocalModel NativeApp::inspectLocalModel(const std::filesystem::path& 
             const auto& capabilities = pack.capabilities;
             item.name = wideFromUtf8(pack.displayName.empty() ? pack.id : pack.displayName);
             item.version = wideFromUtf8(pack.version);
+            item.modelSha256 = wideFromUtf8(pack.graphSha256);
+            item.licenseId = wideFromUtf8(pack.licenseId);
+            item.sourceRepository = wideFromUtf8(pack.sourceRepository);
+            item.upstreamCommit = wideFromUtf8(pack.upstreamCommit);
+            item.licenseScopeEvidence = wideFromUtf8(pack.licenseScopeEvidence);
+            item.numericalProfile = wideFromUtf8(pack.numericalProfile);
+            for (const auto& backend : pack.validatedBackends) {
+                if (!item.validatedBackends.empty()) item.validatedBackends += L"、";
+                item.validatedBackends += wideFromUtf8(backend);
+            }
             const bool sr = std::find(capabilities.tasks.begin(), capabilities.tasks.end(), restoration::Task::superResolution) != capabilities.tasks.end();
             const bool temporal = std::find(capabilities.placements.begin(), capabilities.placements.end(), restoration::Placement::sourceRateBeforeInterpolation) != capabilities.placements.end();
             const bool compression = restoration::supportsStdfCudaModel(pack);
