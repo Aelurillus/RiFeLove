@@ -3,9 +3,10 @@
 ## Current state
 
 There is not yet a public RifeLove application release or a public RifeLove
-model download. The native Model Center can verify packs supplied by the user,
-but it does not download files. Do not treat an old development-preview entry
-or a source-checkpoint URL as a published, ready-to-use RifeLove model.
+model download. The native Model Center can install a ZIP and its adjacent
+distribution manifest after the user has downloaded both files. It does not
+fetch a catalog or download from a host. Do not treat an old development-preview
+entry or a source-checkpoint URL as a published, ready-to-use RifeLove model.
 
 The first distributable candidate is the verified RIFE 4.25 FP32 SDR8 model
 pack. Build its local review artifact with:
@@ -57,7 +58,14 @@ mirror of this package. It remains an unreviewed alternative, not a download
 channel. The official Google Drive and Baidu checkpoint links remain useful
 for model developers, but are not directly importable by the desktop app.
 
-The product goal requires multiple independent, verified download channels.
-Until the package is available through those channels and the installed
-application can guide users through download, verification, and registration,
-model downloads and the public application release remain incomplete.
+The Model Center checks archive and declared-file hashes, extracts only the
+manifest allowlist into a temporary directory, runs the existing schema-v2
+model verifier, and moves the verified pack into the managed user model
+directory before registration. The selected sidecar supplies the integrity
+pins; its hashes do not authenticate the publisher.
+
+The product goal still requires multiple independent, verified download
+channels, an in-app catalog and resumable network downloads. The installed
+application can guide local package installation but cannot yet choose a
+channel or fetch a package. Model downloads and the public application release
+remain incomplete.

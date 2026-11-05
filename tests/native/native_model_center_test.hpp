@@ -191,7 +191,9 @@ void checkLocalModelCenter(Check check) {
             const HWND details = GetDlgItem(center, 1202);
             const auto buttonStyle = [&](int id) { return GetWindowLongPtrW(GetDlgItem(center, id), GWL_STYLE); };
             check((buttonStyle(1203) & BS_OWNERDRAW) != 0 && (buttonStyle(1204) & BS_OWNERDRAW) != 0 &&
-                (buttonStyle(1207) & BS_OWNERDRAW) != 0,
+                (buttonStyle(1207) & BS_OWNERDRAW) != 0 && (buttonStyle(1208) & BS_OWNERDRAW) != 0 &&
+                (buttonStyle(1209) & BS_OWNERDRAW) != 0 && IsWindowVisible(GetDlgItem(center, 1208)) &&
+                IsWindowVisible(GetDlgItem(center, 1209)),
                 "model-center actions use accessible native buttons with Material-style drawing");
             HDC colorDc = GetDC(center);
             if (colorDc) {
@@ -227,7 +229,7 @@ void checkLocalModelCenter(Check check) {
                 draw.hDC = drawDc;
                 draw.rcItem = RECT{0, 0, 180, 40};
                 const auto handled = SendMessageW(center, WM_DRAWITEM, draw.CtlID, reinterpret_cast<LPARAM>(&draw));
-                check(handled != 0 && GetPixel(drawDc, 90, 20) == RGB(162, 231, 203) &&
+                check(handled != 0 && GetPixel(drawDc, 20, 20) == RGB(162, 231, 203) &&
                     GetTextColor(drawDc) == expectedTextColor && GetBkMode(drawDc) == OPAQUE &&
                     GetCurrentObject(drawDc, OBJ_FONT) == expectedFont,
                     "default action renders with the primary Material accent and preserves caller drawing state");
@@ -262,7 +264,7 @@ void checkLocalModelCenter(Check check) {
             GetWindowRect(details, &detailRect); MapWindowPoints(nullptr, center, reinterpret_cast<POINT*>(&detailRect), 2);
             check(listRect.bottom <= detailRect.top && detailRect.bottom < client.bottom,
                 "narrow model center stacks list and details without overlap");
-            for (int id = 1203; id <= 1207; ++id) {
+            for (int id = 1203; id <= 1209; ++id) {
                 RECT rect{}; GetWindowRect(GetDlgItem(center, id), &rect);
                 MapWindowPoints(nullptr, center, reinterpret_cast<POINT*>(&rect), 2);
                 check(rect.left >= 0 && rect.right <= client.right && rect.top > detailRect.bottom && rect.bottom <= client.bottom,

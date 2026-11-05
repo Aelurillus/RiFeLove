@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stop_token>
 #include <string>
@@ -113,6 +114,7 @@ public:
 private:
     static constexpr UINT kNativeEventMessage = WM_APP + 41;
     static constexpr UINT_PTR kInspectionRetryTimer = 41;
+    static constexpr UINT_PTR kModelInstallTimer = 1208;
     static constexpr UINT kQueueEventMessage = WM_APP + 42;
     static constexpr UINT kQueueNoticeMessage = WM_APP + 43;
     static constexpr UINT kHistoryLoadedMessage = WM_APP + 44;
@@ -170,6 +172,8 @@ private:
     static constexpr int kModelUnregister = 1205;
     static constexpr int kModelRefresh = 1206;
     static constexpr int kModelClose = 1207;
+    static constexpr int kModelInstall = 1208;
+    static constexpr int kModelCancelInstall = 1209;
     static constexpr int kHistoryList = 1208;
     static constexpr int kHistoryRetry = 1209;
     static constexpr int kHistoryResume = 1210;
@@ -310,6 +314,9 @@ private:
     void layoutModelCenter();
     void updateModelCenter();
     void updateModelDetails();
+    void startModelPackageInstall(const std::filesystem::path& archive);
+    void cancelModelPackageInstall();
+    void pollModelPackageInstall();
     void showTaskHistory();
     void showComparison();
     void updateTaskHistorySelection();
@@ -430,6 +437,19 @@ private:
     HBRUSH modelCenterBackgroundBrush_ = nullptr;
     HBRUSH modelCenterSurfaceBrush_ = nullptr;
     std::filesystem::path modelCenterSelectedPath_;
+    struct ModelPackageInstallState final {
+        std::uint64_t completedBytes = 0;
+        std::uint64_t totalBytes = 0;
+        std::wstring status;
+        std::optional<std::filesystem::path> installedDirectory;
+        std::wstring failure;
+        bool finished = false;
+    };
+    std::jthread modelInstallThread_;
+    std::atomic<bool> modelInstallActive_{false};
+    std::mutex modelInstallMutex_;
+    ModelPackageInstallState modelInstallState_;
+    bool closeModelCenterWhenInstallEnds_ = false;
     HWND historyWindow_ = nullptr;
     HWND historyList_ = nullptr;
     HWND historyText_ = nullptr;

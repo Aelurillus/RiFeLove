@@ -84,10 +84,11 @@ try {
     $readme = @'
 RifeLove RIFE 4.25 FP32 SDR8 model pack
 
-Install: extract this archive, then open RifeLove's Model Center, choose
-"Register local folder", select the rife-4.25-fp32-sdr8-v3 folder, verify it,
-and set it as the RIFE default. No Python environment or command-line tool is
-required by the installed desktop application.
+Install: keep this archive beside its .distribution.json manifest, open
+RifeLove's Model Center, choose "Install verified package", select this ZIP,
+and wait for checksum and model-pack verification. The app installs the model
+into its managed local model directory and registers it. No Python environment
+or command-line tool is required by the installed desktop application.
 
 License and provenance: the trained model archive is linked by the author of
 Practical-RIFE, whose pinned README states that linked trained model contents
@@ -147,6 +148,7 @@ package integrity; it is not an upstream author signature.
         files = @($fileRecords)
         artifact = [ordered]@{
             fileName = $archiveName
+            rootDirectory = 'rife-4.25-fp32-sdr8-v3'
             sizeBytes = (Get-Item -LiteralPath $archivePath).Length
             sha256 = $archiveHash
         }

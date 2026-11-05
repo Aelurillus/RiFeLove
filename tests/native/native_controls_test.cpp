@@ -1,6 +1,7 @@
 #include "native_app.hpp"
 #include "native_renderer.hpp"
 #include "native_model_center_test.hpp"
+#include "native_package_archive_test.hpp"
 #include "native_data_directory_test.hpp"
 #include "native_compression_test.hpp"
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
@@ -1633,6 +1634,7 @@ int wmain(int argc, wchar_t** argv) {
 #endif
 
     rifelove::native_test::checkLocalModelPreferences(check);
+    rifelove::native_test::checkNativeModelPackageArchive(check);
     rifelove::native_test::checkNativeCompressionContract(check);
     rifelove::native_test::checkNativeDataDirectories(check);
     checkAspectPreservingOutputTargets();

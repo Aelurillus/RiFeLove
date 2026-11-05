@@ -35,7 +35,10 @@ The package manifest lists 22 inference-runtime DLLs:
 
 The same manifest records FFmpeg 8.1.3 libraries, including OpenH264,
 libaom, and Kvazaar. The archive also contains compiler/runtime files,
-Microsoft Visual C++ runtime DLLs, and 19 license/notice files. Those notices
+Microsoft Visual C++ runtime DLLs, and 19 license/notice files. The native
+installer now statically links miniz 3.1.2 for verified ZIP package handling;
+future packages must include its MIT license and source commit in the manifest.
+Those notices
 are useful evidence of what was bundled; their presence alone does not prove
 that each file may be redistributed in this package.
 

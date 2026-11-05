@@ -15,9 +15,11 @@ DirectWrite for high-DPI Chinese text. It has no Qt or QML dependency.
   retry failed jobs, continue interrupted jobs only after checkpoint
   verification, or restart an interrupted job to a separate output path. Queue
   execution and checkpoint rules remain owned by `TaskQueue`.
-- Model Center works offline. It verifies and registers local packs, selects
-  category defaults and unregisters entries without copying or deleting model
-  files.
+- Model Center works offline. It verifies and registers local packs, installs
+  a ZIP package beside its distribution manifest with background progress,
+  cancellation, archive/file hashes, schema-v2 validation and atomic placement
+  in the managed user model directory, selects category defaults and
+  unregisters entries without deleting model files.
 - Comparison opens local source and output frames for timestamp-based
   inspection. It can import completed quality reports, align candidates to
   shared exact review timestamps, and randomize supported multi-candidate
@@ -39,8 +41,10 @@ interactive playback qualification are still pending.
 
 ## Remaining product work
 
-- A trusted model catalog, model downloads and engine-cache controls are not
-  provided by the offline Model Center.
+- A trusted model catalog, in-app network downloads, resumable transfers and
+  engine-cache controls are not provided by the offline Model Center. The new
+  package installer accepts files already downloaded by the user; the manifest
+  hash check does not authenticate its publisher.
 - Automatic denoise, deblur and compression restoration remain optional,
   experimental and default-off. Representative real-footage quality, temporal
   artifact review and broad GPU/driver coverage remain open.
