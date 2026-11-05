@@ -49,6 +49,32 @@ Real-ESRGAN x2plus 的倍率固定为 2。历史相同素材的 TensorRT 记录�
 
 NAFNet 的本机小样本 RIFE+去模糊运行输出 256×144、60 FPS，流水线速度为 0.3999 FPS；报告明确没有参考视频，因此没有 PSNR、SSIM 或 LPIPS。它只证明能运行和恢复队列，不能证明真实画质修复或时间一致性。
 
+## UVG-VCM 4×长间隔实拍评测（2026-11-05）
+
+复用 Floorball Game 原始帧 140–209（SHA-256 `9e7f1d30d4816faa4de3319295af324547099a09938a7fc95ee6fd2e1a6f9df1`），每隔 4 帧取样，以绝对帧号 `140,144,…,208` 构造 18 帧 15 fps 输入。原始帧 140–208 共 69 帧作为 60 fps 参考，其中 51 帧不与输入重合；每组输入之间有 3 个有效非源时刻，17 个为时间中点。源/参考均用固定 Lanczos 路径准备为 1920×1080、10-bit YUV444 FFV1；BT.709 与 TV-range 是评测假设，不是上游公布的摄像机元数据。15 fps 输入、60 fps 参考 SHA-256 分别为 `b39f8391bd29616bd3a2b0faa787b7342b372f344f7fefc8b2d2418ab7104314`、`cd2bf085d5dcc5b5b155d70605dbfab7420980b4748fa33ef174776d07d73a43`。
+
+两版都在同一台 GTX 1660 SUPER（6 GB、compute capability 7.5）、TensorRT FP32、FFV1 `yuv444p10le` 下运行。RIFE 4.25 权重 SHA-256 为 `8905ab350363251e45e1b46fec355042da9514a34941e64c62b82d9c422205d3`，RIFE 4.26 为 `e6df922305d77a7db5685a9f964bae3736cc1f394cd914f34db4c1411e5c0726`。每版生成 72 帧：18 个源帧、51 个 AI 帧和 3 个末端保持帧；评估前将保持帧无损截去，保留与参考对齐的前 69 帧。评估器确认两版 PTS 与参考完全一致，最大目标网格误差 `1/3000` 秒，小于半个输出刻度 `1/2000` 秒；18 个源时刻全部逐像素匹配输入。
+
+| 序列 / 任务 | 模型 | 非源 PSNR (dB) | 非源 SSIM | 非源过渡差分 PSNR (dB) | 非源过渡差分 SSIM | 流水线输出速度 (FPS) | 单次端到端输出速度 (FPS) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Floorball Game 1080p / 15→60 | RIFE 4.25 | 37.0441 | 0.924599 | 35.9115 | 0.896183 | 1.3973 | 1.1997 |
+| Floorball Game 1080p / 15→60 | RIFE 4.26 | 37.1020 | 0.925139 | 35.9746 | 0.896880 | 1.3975 | 0.7466 |
+
+RIFE 4.26 在这一段的 51 个非源样本均值略高：PSNR 多 `0.0578 dB`、SSIM 多 `0.000540`；相邻帧差分均值分别多 `0.0631 dB`、`0.000697`。最低 PSNR 分别为 34.87/34.94 dB。上述差距很小，时间差分也不是运动补偿或感知盲评；单段 1.17 秒素材、51 个同场景样本不能视为 51 个独立场景。候选训练集是否含 Floorball 未知，因此不据此改动 RIFE 4.25 默认选择。
+
+每版只测量一次。报告的流水线速度约 1.397 FPS；4.26 的 TensorRT 初始化日志显示有需要 7 GB 以上显存的 tactic 被跳过，实际 GPU 仅有 6 GB。4.25/4.26 单次端到端时间分别为 60.02/96.44 秒，而流水线墙钟时间均约 51.52 秒；这与 4.26 冷建 TensorRT 引擎的启动开销相符，但没有独立计时字段，不能当作确认的稳定速度差。无论按哪一口径，当前 GTX 1660 SUPER 上该 1080p 4×任务都远低于 60 fps。质量评估报告、两份完整运行报告、准备清单和候选视频留在本机忽略目录 `out/datasets/uvg-vcm/`；仓库只提交方法和摘要，不上传原始视频或生成视频。完整设置见[补帧基准协议中的 4×章节](VFI_BENCHMARK_PROTOCOL.zh-CN.md)。
+
+本机 4×评估产物按 SHA-256 固定如下，原始数据与视频均不提交：
+
+| 产物 | SHA-256 |
+| --- | --- |
+| `prepared-floorball-game-140-209-4x-1080p/prepared-media.json` | `97f4634c797404cd8ff70ae91f97471c2f136adf06d21a37ab517c585ba67cee` |
+| `quality-floorball-game-rife-4.25-vs-4.26-4x-1080p-tensorrt.json` | `9e1f92bcdc683339f5b75f3986f1da2f2d34e4a083a0498f6f4a5dba73cec881` |
+| `candidates/rife-4.25-tensorrt-floorball-4x-1080p-run.json` | `296f40a98f8930da5a154fcb686e4d8a06358cc1edf0f37e1ddce258b39a8a2c` |
+| `candidates/rife-4.26-tensorrt-floorball-4x-1080p-run.json` | `423d88db8bf953ab2a9872f17cba989f9d6e8f108de4148630a518f4c6b19613` |
+| `candidates/rife-4.25-tensorrt-floorball-4x-1080p-valid.mkv` | `ae90f4a366198e8e10ec89e1bbe6a73740aab1ced73cf5631995fa3b04219b7d` |
+| `candidates/rife-4.26-tensorrt-floorball-4x-1080p-valid.mkv` | `0b175ec32d00b9da77cf65e404a1adc5d4349a0a929978bf0fa646039001f271` |
+
 ## 后续研究候选（2026-10-31）
 
 当前 Real-ESRGAN x2plus 是可运行的本机超分基线，不是已经通过真实视频画质、时间一致性或权重再分发验收的正式预设。新推荐只评估一个通用超分候选：`realesr-general-x4v3`（SRVGGNetCompact）。它还没有在本项目下载、导出、注册或验证；不能在界面或发行说明中写成已支持。上游代码为 BSD-3-Clause，但作者链接的 checkpoint 仍需独立确认权重授权和再分发范围。

@@ -60,7 +60,22 @@ py -3 tools/quality/prepare_uvg_vcm_pilot.py `
   --source-range tv
 ```
 
-准备器用偶数帧 `0,2,…,68` 生成 35 帧、30 fps 原片，以原始索引 `0…68` 生成 69 帧、60 fps 参考；34 个奇数索引 `1,3,…,67` 是有效中点。原始索引 69 没有右侧输入帧，RifeLove 端到端输出的末尾保持帧也不纳入质量候选。运行插帧后，将结果限制到与 69 帧参考相同的 PTS，再使用本节的多候选评估器比较。只有明确固定、记录的色彩假设下的分数可复现；原始网页没有为此序列公布色彩元数据。该试点约 1.17 秒且偏机读车牌场景，不构成通用真实视频排名。
+准备器默认每隔 2 帧取样，用局部帧 `0,2,…,68` 生成 35 帧、30 fps 原片，并以原始索引 `0…68` 生成 69 帧、60 fps 参考；34 个奇数索引 `1,3,…,67` 是有效中点。若设置 `--input-rate 15`，则每隔 4 帧取样，以 `0,4,…,68` 生成 18 帧、15 fps 原片；同一参考中有 51 个被两侧输入括住的非源样本，其中 17 个是中点。原始索引 69 没有右侧输入帧，端到端输出在参考窗口后的边界帧也不纳入质量候选。运行插帧后，将结果无损限制到与 69 帧参考相同的 PTS，再使用本节的多候选评估器比较。只有明确固定、记录的色彩假设下的分数可复现；原始网页没有为此序列公布色彩元数据。该试点约 1.17 秒且偏机器视觉场景，不构成通用真实视频排名。
+
+准备同一 Floorball 原始片段的 4×输入时，使用独立输出目录，避免覆盖既有 2×媒体：
+
+```powershell
+py -3 tools/quality/prepare_uvg_vcm_pilot.py `
+  --raw 'out/datasets/uvg-vcm/floorball-game-140-209.yuv' `
+  --sequence 'Floorball Game' `
+  --raw-url 'https://ultravideo.fi/UVG-VCM/FloorballGame/FloorballGame_3840x2160_60fps_yuv444_16bits_420.yuv' `
+  --source-start-frame-index 140 --frame-count 70 `
+  --sequence-total-frame-count 420 --output-profile 1080p `
+  --input-rate 15 `
+  --output-directory 'out/datasets/uvg-vcm/prepared-floorball-game-140-209-4x-1080p' `
+  --ffmpeg 'C:/path/to/ffmpeg.exe' --ffprobe 'C:/path/to/ffprobe.exe' `
+  --source-range tv
+```
 
 把官方包解压到被 Git 忽略的本机 `out/datasets/sintel-trailer-720p/` 后，先生成来源和逐帧哈希清单，再准备媒体：
 
