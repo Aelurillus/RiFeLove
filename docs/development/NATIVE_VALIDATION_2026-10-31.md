@@ -234,3 +234,33 @@ rejected by automatic approval with `blocked by policy` before execution.
 No deletion occurred in that attempt, and it was not retried through another
 tool or agent. Do not count the candidate-size estimate as reclaimed space;
 hard-linked file lengths also do not equal independent physical allocation.
+
+## Processing-enabled native control harness (2026-11-05)
+
+On the merged `9bb3679` source, a fresh native Release configuration enabled
+FFmpeg and ONNX CUDA with the local pinned SDKs. The application target built,
+but the optional processing-control harness initially failed to compile: it
+lacked the JSON include path and still constructed a comparison request using
+an obsolete positional initializer. The harness now uses the same JSON and
+Windows cryptography dependencies as the desktop target, constructs that
+request by named fields, and is registered as `NativeDesktop.ProcessingControls`
+when the processing service is built. Its automatic-denoise navigation fixture
+opens the quality disclosure before checking the exposed controls and restores
+the initial disclosure state afterward.
+
+The full processing-control harness and the CPU-only native control harness
+passed via CTest (2/2). A subsequent full build succeeded; the non-hardware
+CTest run reported 248 passed and two skipped out of 250. The skipped cases
+could not find local RIFE/STDF evaluation packs in this worktree; running those
+two checks separately from the existing model-cache checkout passed 2/2.
+GPU hardware tests were excluded.
+The processing harness also passed its no-argument
+local model, settings and comparison-state fixtures. An explicit comparison
+run decoded the existing tagged synthetic 192×128, 30/120 fps MP4 pair and
+passed paired-time selection, adjacent-frame stepping, slider and EOF checks;
+the reflected/offset display-matrix rejection path was exercised as well.
+Screenshots from the isolated desktop are local under
+`out/ui-readiness-main-20261105/`. They are synthetic control evidence, not
+representative visual-quality, GPU throughput, or release-package acceptance.
+Windows desktop capture timed out twice during the separate live-window
+attempt, so real-display and mixed-DPI visual acceptance remains open.

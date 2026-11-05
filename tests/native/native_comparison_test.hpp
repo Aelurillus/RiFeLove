@@ -365,7 +365,12 @@ void checkNativeComparisonFiles(Check check, Pump pump, Capture capture, HWND ow
         check(video != info.streams.end() && video->displayMatrix == matrix && video->rotationDegrees && *video->rotationDegrees == 0.0,
             "real MP4 probe preserves reflection/offset matrix while reporting zero rotation");
         bool rejected = false;
-        try { (void)NativeComparisonWindow::loadPair({fixture, output, Rational(0), {}, 1}, {}); }
+        NativeComparisonRequest request{};
+        request.source = fixture;
+        request.output = output;
+        request.relativeTime = Rational(0);
+        request.generation = 1;
+        try { (void)NativeComparisonWindow::loadPair(request, {}); }
         catch (const std::exception& error) { rejected = std::string(error.what()).find("display-matrix") != std::string::npos; }
         check(rejected, "real zero-angle reflected/offset video is rejected by comparison before uncorrected pixels are displayed");
     }

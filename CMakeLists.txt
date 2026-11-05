@@ -460,11 +460,16 @@ if(RIFELOVE_BUILD_TESTS)
         apps/native_desktop/native_app.cpp
         apps/native_desktop/native_renderer.cpp)
       target_include_directories(rifelove-native-processing-test PRIVATE src apps/native_desktop)
+      target_include_directories(rifelove-native-processing-test SYSTEM PRIVATE "${RIFELOVE_JSON_INCLUDE}")
       target_compile_definitions(rifelove-native-processing-test PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX RIFELOVE_NATIVE_HAS_PROCESSING=1 RIFELOVE_NATIVE_TESTING=1)
-      target_link_libraries(rifelove-native-processing-test PRIVATE rifelove_application d2d1 dwrite comdlg32 gdi32 ole32 shell32 user32 dwmapi version)
+      target_link_libraries(rifelove-native-processing-test PRIVATE rifelove_application bcrypt crypt32 d2d1 dwrite comdlg32 gdi32 ole32 shell32 user32 dwmapi version)
       if(MINGW)
         target_link_options(rifelove-native-processing-test PRIVATE -municode)
       endif()
+      # The no-argument mode exercises local model and comparison controls
+      # with fixtures; explicit media/GPU workflows remain opt-in.
+      add_test(NAME NativeDesktop.ProcessingControls COMMAND rifelove-native-processing-test)
+      set_tests_properties(NativeDesktop.ProcessingControls PROPERTIES TIMEOUT 90 LABELS "native;local-runtime")
     endif()
   endif()
   add_executable(rifelove-tests tests/unit/rational_test.cpp tests/unit/timeline_test.cpp tests/unit/task_store_test.cpp tests/unit/scene_analysis_test.cpp tests/unit/test_runtime_test.cpp tests/unit/logging_test.cpp tests/unit/encoder_policy_test.cpp)
