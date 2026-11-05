@@ -1720,6 +1720,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     if (!app) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
     case WM_CREATE: {
+        app->modelCenterBackgroundBrush_ = CreateSolidBrush(RGB(12, 15, 21));
+        app->modelCenterSurfaceBrush_ = CreateSolidBrush(RGB(19, 24, 32));
         const auto control = [&](const wchar_t* cls, const wchar_t* label, DWORD style, int id) {
             return CreateWindowExW((id == kModelList || id == kModelDetails) ? WS_EX_CLIENTEDGE : 0,
                 cls, label, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, window,
@@ -1729,14 +1731,79 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, kModelList);
         app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
         SendMessageW(app->modelDetails_, EM_SETLIMITTEXT, 128 * 1024, 0);
-        control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON, kModelRegister);
-        control(L"BUTTON", L"设为该类默认", WS_TABSTOP | BS_PUSHBUTTON, kModelDefault);
-        control(L"BUTTON", L"取消登记", WS_TABSTOP | BS_PUSHBUTTON, kModelUnregister);
-        control(L"BUTTON", L"重新校验", WS_TABSTOP | BS_PUSHBUTTON, kModelRefresh);
-        control(L"BUTTON", L"关闭", WS_TABSTOP | BS_PUSHBUTTON, kModelClose);
+        control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRegister);
+        control(L"BUTTON", L"设为该类默认", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDefault);
+        control(L"BUTTON", L"取消登记", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelUnregister);
+        control(L"BUTTON", L"重新校验", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRefresh);
+        control(L"BUTTON", L"关闭", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelClose);
         app->layoutModelCenter();
         app->updateModelCenter();
         return 0;
+    }
+    case WM_ERASEBKGND: {
+        RECT client{};
+        GetClientRect(window, &client);
+        const auto brush = app->modelCenterBackgroundBrush_ ? app->modelCenterBackgroundBrush_ : GetSysColorBrush(COLOR_WINDOW);
+        FillRect(reinterpret_cast<HDC>(wParam), &client, brush);
+        return 1;
+    }
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
+        const auto dc = reinterpret_cast<HDC>(wParam);
+        const bool surface = message != WM_CTLCOLORSTATIC;
+        SetTextColor(dc, RGB(225, 232, 244));
+        SetBkColor(dc, surface ? RGB(19, 24, 32) : RGB(12, 15, 21));
+        const auto brush = surface ? app->modelCenterSurfaceBrush_ : app->modelCenterBackgroundBrush_;
+        return reinterpret_cast<LRESULT>(brush ? brush : GetSysColorBrush(COLOR_WINDOW));
+    }
+    case WM_DRAWITEM: {
+        const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+        if (!item || item->CtlType != ODT_BUTTON) break;
+        const bool primary = static_cast<int>(item->CtlID) == kModelDefault;
+        const bool disabled = (item->itemState & ODS_DISABLED) != 0;
+        const bool pressed = (item->itemState & ODS_SELECTED) != 0;
+        const bool focused = (item->itemState & ODS_FOCUS) != 0;
+        const COLORREF fill = disabled ? RGB(30, 36, 46) : primary
+            ? (pressed ? RGB(118, 202, 170) : RGB(162, 231, 203))
+            : (pressed ? RGB(37, 49, 63) : RGB(27, 34, 45));
+        const COLORREF text = disabled ? RGB(104, 116, 133) : primary ? RGB(16, 36, 29) : RGB(225, 232, 244);
+        const COLORREF border = disabled ? RGB(39, 46, 57) : primary ? RGB(162, 231, 203) : RGB(57, 69, 86);
+        const int dpi = static_cast<int>(GetDpiForWindow(window));
+        const int edge = MulDiv(10, dpi ? dpi : 96, 96);
+        const int savedDc = SaveDC(item->hDC);
+        const int oldBackgroundMode = SetBkMode(item->hDC, TRANSPARENT);
+        const COLORREF oldTextColor = SetTextColor(item->hDC, text);
+        HPEN pen = CreatePen(PS_SOLID, std::max(1, MulDiv(1, dpi ? dpi : 96, 96)), border);
+        HBRUSH brush = CreateSolidBrush(fill);
+        const auto oldPen = pen ? SelectObject(item->hDC, pen) : nullptr;
+        const auto oldBrush = brush ? SelectObject(item->hDC, brush) : nullptr;
+        RoundRect(item->hDC, item->rcItem.left, item->rcItem.top, item->rcItem.right, item->rcItem.bottom, edge, edge);
+        if (oldPen) SelectObject(item->hDC, oldPen);
+        if (oldBrush) SelectObject(item->hDC, oldBrush);
+        if (pen) DeleteObject(pen);
+        if (brush) DeleteObject(brush);
+        const auto font = reinterpret_cast<HFONT>(SendMessageW(item->hwndItem, WM_GETFONT, 0, 0));
+        const auto oldFont = font ? SelectObject(item->hDC, font) : nullptr;
+        wchar_t label[256]{};
+        GetWindowTextW(item->hwndItem, label, static_cast<int>(std::size(label)));
+        RECT textRect = item->rcItem;
+        DrawTextW(item->hDC, label, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (oldFont) SelectObject(item->hDC, oldFont);
+        if (focused) {
+            RECT focusRect = item->rcItem;
+            InflateRect(&focusRect, -MulDiv(4, dpi ? dpi : 96, 96), -MulDiv(4, dpi ? dpi : 96, 96));
+            DrawFocusRect(item->hDC, &focusRect);
+        }
+        if (savedDc) RestoreDC(item->hDC, savedDc);
+        else {
+            if (oldFont) SelectObject(item->hDC, oldFont);
+            if (oldPen) SelectObject(item->hDC, oldPen);
+            if (oldBrush) SelectObject(item->hDC, oldBrush);
+            if (oldBackgroundMode) SetBkMode(item->hDC, oldBackgroundMode);
+            if (oldTextColor != CLR_INVALID) SetTextColor(item->hDC, oldTextColor);
+        }
+        return TRUE;
     }
     case WM_SIZE:
         app->layoutModelCenter();
@@ -1790,6 +1857,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelDetails_ = nullptr;
         app->modelCenterStatus_ = nullptr;
         if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
+        if (app->modelCenterBackgroundBrush_) { DeleteObject(app->modelCenterBackgroundBrush_); app->modelCenterBackgroundBrush_ = nullptr; }
+        if (app->modelCenterSurfaceBrush_) { DeleteObject(app->modelCenterSurfaceBrush_); app->modelCenterSurfaceBrush_ = nullptr; }
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         break;
     default: break;

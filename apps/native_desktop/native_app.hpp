@@ -420,6 +420,8 @@ private:
     HWND modelDetails_ = nullptr;
     HWND modelCenterStatus_ = nullptr;
     HFONT modelCenterFont_ = nullptr;
+    HBRUSH modelCenterBackgroundBrush_ = nullptr;
+    HBRUSH modelCenterSurfaceBrush_ = nullptr;
     std::filesystem::path modelCenterSelectedPath_;
     HWND historyWindow_ = nullptr;
     HWND historyList_ = nullptr;

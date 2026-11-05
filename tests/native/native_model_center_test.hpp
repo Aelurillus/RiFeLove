@@ -188,6 +188,55 @@ void checkLocalModelCenter(Check check) {
         check(center != nullptr && GetDlgItem(center, 1201) && GetDlgItem(center, 1202), "model center has a real native list and readable details");
         if (center) {
             const HWND list = GetDlgItem(center, 1201);
+            const HWND details = GetDlgItem(center, 1202);
+            const auto buttonStyle = [&](int id) { return GetWindowLongPtrW(GetDlgItem(center, id), GWL_STYLE); };
+            check((buttonStyle(1203) & BS_OWNERDRAW) != 0 && (buttonStyle(1204) & BS_OWNERDRAW) != 0 &&
+                (buttonStyle(1207) & BS_OWNERDRAW) != 0,
+                "model-center actions use accessible native buttons with Material-style drawing");
+            HDC colorDc = GetDC(center);
+            if (colorDc) {
+                SendMessageW(center, WM_CTLCOLORSTATIC, reinterpret_cast<WPARAM>(colorDc), reinterpret_cast<LPARAM>(GetDlgItem(center, 1200)));
+                const bool statusColors = GetBkColor(colorDc) == RGB(12, 15, 21) && GetTextColor(colorDc) == RGB(225, 232, 244);
+                SendMessageW(center, WM_CTLCOLOREDIT, reinterpret_cast<WPARAM>(colorDc), reinterpret_cast<LPARAM>(details));
+                const bool detailColors = GetBkColor(colorDc) == RGB(19, 24, 32) && GetTextColor(colorDc) == RGB(225, 232, 244);
+                check(statusColors && detailColors, "model-center status and detail surfaces use the native dark palette");
+                ReleaseDC(center, colorDc);
+            } else {
+                check(false, "create model-center color verification context");
+            }
+            BITMAPINFO bitmapInfo{};
+            bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bitmapInfo.bmiHeader.biWidth = 180;
+            bitmapInfo.bmiHeader.biHeight = -40;
+            bitmapInfo.bmiHeader.biPlanes = 1;
+            bitmapInfo.bmiHeader.biBitCount = 32;
+            bitmapInfo.bmiHeader.biCompression = BI_RGB;
+            HDC drawDc = CreateCompatibleDC(nullptr);
+            void* pixels = nullptr;
+            HBITMAP buttonBitmap = drawDc ? CreateDIBSection(drawDc, &bitmapInfo, DIB_RGB_COLORS, &pixels, nullptr, 0) : nullptr;
+            if (drawDc && buttonBitmap && pixels) {
+                const auto oldBitmap = SelectObject(drawDc, buttonBitmap);
+                const COLORREF expectedTextColor = RGB(244, 12, 222);
+                SetTextColor(drawDc, expectedTextColor);
+                SetBkMode(drawDc, OPAQUE);
+                const auto expectedFont = GetCurrentObject(drawDc, OBJ_FONT);
+                DRAWITEMSTRUCT draw{};
+                draw.CtlType = ODT_BUTTON;
+                draw.CtlID = 1204;
+                draw.hwndItem = GetDlgItem(center, 1204);
+                draw.hDC = drawDc;
+                draw.rcItem = RECT{0, 0, 180, 40};
+                const auto handled = SendMessageW(center, WM_DRAWITEM, draw.CtlID, reinterpret_cast<LPARAM>(&draw));
+                check(handled != 0 && GetPixel(drawDc, 90, 20) == RGB(162, 231, 203) &&
+                    GetTextColor(drawDc) == expectedTextColor && GetBkMode(drawDc) == OPAQUE &&
+                    GetCurrentObject(drawDc, OBJ_FONT) == expectedFont,
+                    "default action renders with the primary Material accent and preserves caller drawing state");
+                SelectObject(drawDc, oldBitmap);
+            } else {
+                check(false, "create model-center button render target");
+            }
+            if (buttonBitmap) DeleteObject(buttonBitmap);
+            if (drawDc) DeleteDC(drawDc);
             const auto select = [&](const auto& path) {
                 SendMessageW(list, LB_SETCURSEL, find(app, path), 0);
                 SendMessageW(center, WM_COMMAND, MAKEWPARAM(1201, LBN_SELCHANGE), reinterpret_cast<LPARAM>(list));
@@ -195,7 +244,6 @@ void checkLocalModelCenter(Check check) {
             select(unsupported);
             check(!IsWindowEnabled(GetDlgItem(center, 1204)), "default action is visibly disabled for unsupported models");
             select(rife);
-            const HWND details = GetDlgItem(center, 1202);
             std::wstring text(static_cast<std::size_t>(GetWindowTextLengthW(details)) + 1, L'\0');
             GetWindowTextW(details, text.data(), static_cast<int>(text.size()));
             check(text.find(rife.wstring()) != std::wstring::npos && text.find(L"bt709-sdr8") != std::wstring::npos &&
