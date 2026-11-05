@@ -264,3 +264,33 @@ Screenshots from the isolated desktop are local under
 representative visual-quality, GPU throughput, or release-package acceptance.
 Windows desktop capture timed out twice during the separate live-window
 attempt, so real-display and mixed-DPI visual acceptance remains open.
+
+## Native start-to-output smoke test (2026-11-05)
+
+The processing-enabled control harness built from `b146752` was staged in a
+new isolated directory with the existing verified RIFE 4.25 v3 pack and local
+GPU runtime. An initial attempt correctly refused to start because the runtime
+was not in the application's discovery directory; after staging the runtime,
+the harness imported the source, selected 60 FPS and H.264 NVENC, and activated
+the native Start control. It reported `completed`, `h264_nvenc` and 120 output
+frames. Inference was configured as `auto` (TensorRT preferred); this run did
+not independently record which inference provider was actually selected.
+
+The synthetic input was an existing 192×128 BT.709 H.264 clip, 60 frames at
+30 FPS over two seconds. The output was 192×128 H.264 `yuv420p` TV-range
+BT.709, 120 frames at 60 FPS over two seconds. A separate FFmpeg decode of the
+complete output returned no errors. Source SHA-256:
+`c3cf55a40b84191283474bab6fd001bd605e6c70b3907d8755c5d598340848b4`;
+model ONNX SHA-256:
+`8905ab350363251e45e1b46fec355042da9514a34941e64c62b82d9c422205d3`;
+output SHA-256:
+`f2c51160b5bc221e387bf18bab58b2cf00e52a8fd5f2f0160d24dbbd13d53132`.
+The machine reported a GTX 1660 SUPER, 6 GiB and driver 560.94. Output, fixture
+and an imported-window capture remain local under
+`out/native-processing-e2e-20261105/`; they are not release artifacts.
+
+The test drives real native controls on an isolated Windows desktop but uses a
+test executable, a synthetic short clip, and locally staged dependencies. It
+does not establish perceptual quality, representative throughput, long-video
+reliability, interactive desktop accessibility, mixed-DPI behavior, or a clean
+machine's packaged installation. Those remain separate release checks.
