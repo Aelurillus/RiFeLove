@@ -283,6 +283,13 @@ private:
         std::filesystem::path directory;
         std::wstring name;
         std::wstring version;
+        std::wstring modelSha256;
+        std::wstring licenseId;
+        std::wstring sourceRepository;
+        std::wstring upstreamCommit;
+        std::wstring licenseScopeEvidence;
+        std::wstring numericalProfile;
+        std::wstring validatedBackends;
         std::wstring capabilities;
         std::wstring profiles;
         std::wstring verification;
