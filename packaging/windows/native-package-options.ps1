@@ -116,6 +116,42 @@ function Resolve-NativeModelBundleSelection {
     }
 }
 
+function Resolve-NativeInferenceRuntimeSelection {
+    param(
+        [Parameter(Mandatory=$true)][string[]]$AvailableFileNames,
+        [switch]$CudaOnly
+    )
+    $common = @('onnxruntime.dll','onnxruntime_providers_shared.dll','onnxruntime_providers_cuda.dll')
+    $cuda = @(
+        'cudart64_12.dll','cublas64_12.dll','cublasLt64_12.dll','cufft64_11.dll','cufftw64_11.dll','nvblas64_12.dll',
+        'cudnn64_9.dll','cudnn_adv64_9.dll','cudnn_cnn64_9.dll','cudnn_engines_precompiled64_9.dll',
+        'cudnn_engines_runtime_compiled64_9.dll','cudnn_graph64_9.dll','cudnn_heuristic64_9.dll','cudnn_ops64_9.dll'
+    )
+    $tensorRt = @(
+        'onnxruntime_providers_tensorrt.dll','nvinfer_10.dll','nvinfer_builder_resource_10.dll',
+        'nvinfer_plugin_10.dll','nvonnxparser_10.dll'
+    )
+    $required = @($common + $cuda)
+    if (-not $CudaOnly) { $required += $tensorRt }
+
+    $available = @{}
+    foreach ($name in $AvailableFileNames) { $available[[IO.Path]::GetFileName($name)] = $true }
+    $missing = @($required | Where-Object { -not $available.ContainsKey($_) })
+    if ($missing.Count -gt 0) {
+        throw "Inference runtime selection is missing required files: $($missing -join ', ')"
+    }
+
+    $selected = @($AvailableFileNames)
+    if ($CudaOnly) { $selected = @($selected | Where-Object { $_ -notin $tensorRt }) }
+    [pscustomobject]@{
+        profile = if ($CudaOnly) { 'cuda-only' } else { 'full-tensorrt' }
+        files = @($selected | Sort-Object -Unique)
+        requiredFiles = $required
+        providers = if ($CudaOnly) { @('CUDAExecutionProvider') } else { @('TensorRTExecutionProvider','CUDAExecutionProvider') }
+        includesTensorRt = -not $CudaOnly
+    }
+}
+
 function Get-NativeExcludedModelRoots {
     param([Parameter(Mandatory=$true)][object]$Selection)
     $roots = @()
