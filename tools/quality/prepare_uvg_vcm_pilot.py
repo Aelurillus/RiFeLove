@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a local 2x interpolation pilot from the licensed UVG-VCM Karting Time sequence."""
+"""Prepare a local 2x interpolation pilot from a licensed UVG-VCM raw YUV segment."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from fractions import Fraction
@@ -14,26 +15,21 @@ from pathlib import Path
 from typing import Any
 
 
-DATASET_ID = "uvg-vcm-karting-time-4k60-pilot-v1"
+DATASET_ID_PREFIX = "uvg-vcm"
 DATASET_PAGE = "https://ultravideo.fi/UVG-VCM/index.html"
-RAW_URL = (
+DEFAULT_SEQUENCE = "Karting Time"
+DEFAULT_RAW_URL = (
     "https://ultravideo.fi/UVG-VCM/KartingTime/"
     "KartingTime_3840x2160_60fps_yuv444_16bits_70.yuv"
 )
 LICENSE_ID = "CC-BY-4.0"
 LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
-RAW_FILE_NAME = "KartingTime_3840x2160_60fps_yuv444_16bits_70.yuv"
 RAW_WIDTH = 3_840
 RAW_HEIGHT = 2_160
 RAW_FPS = 60
-RAW_FRAMES = 70
 RAW_BYTES_PER_SAMPLE = 2
 RAW_PLANES = 3
 RAW_FRAME_BYTES = RAW_WIDTH * RAW_HEIGHT * RAW_PLANES * RAW_BYTES_PER_SAMPLE
-RAW_FILE_BYTES = RAW_FRAME_BYTES * RAW_FRAMES
-SOURCE_FRAMES = 35
-REFERENCE_FRAMES = 69
-VALID_MIDPOINT_REFERENCE_INDEXES = list(range(1, 68, 2))
 OUTPUT_PROFILES = {"720p": (1_280, 720), "1080p": (1_920, 1_080)}
 SOURCE_RATE = "30/1"
 REFERENCE_RATE = "60/1"
@@ -116,6 +112,8 @@ def ffmpeg_command(
     *,
     mode: str,
     input_range: str,
+    source_frames: int,
+    reference_frames: int,
     width: int,
     height: int,
     force: bool,
@@ -136,13 +134,13 @@ def ffmpeg_command(
     if mode == "source":
         command += [
             "-vf", f"select=not(mod(n\\,2)),{filters},settb=expr=1/30,setpts=N",
-            "-frames:v", str(SOURCE_FRAMES), "-r", SOURCE_RATE.split("/")[0],
+            "-frames:v", str(source_frames), "-r", SOURCE_RATE.split("/")[0],
             "-fps_mode", "cfr", "-enc_time_base", "1:30",
         ]
     elif mode == "reference":
         command += [
             "-vf", f"{filters},settb=expr=1/60,setpts=N",
-            "-frames:v", str(REFERENCE_FRAMES), "-r", REFERENCE_RATE.split("/")[0],
+            "-frames:v", str(reference_frames), "-r", REFERENCE_RATE.split("/")[0],
             "-fps_mode", "cfr", "-enc_time_base", "1:60",
         ]
     else:
@@ -158,7 +156,15 @@ def ffmpeg_command(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--raw", type=Path, required=True, help="locally acquired UVG-VCM Karting Time .yuv file")
+    parser.add_argument("--raw", type=Path, required=True, help="locally acquired UVG-VCM raw YUV segment")
+    parser.add_argument("--sequence", default=DEFAULT_SEQUENCE, help="sequence name as listed on the official dataset page")
+    parser.add_argument("--raw-url", default=DEFAULT_RAW_URL, help="official UVG-VCM raw sequence URL used to acquire this segment")
+    parser.add_argument("--source-start-frame-index", type=int, default=0,
+                        help="zero-based first frame index within the full upstream sequence")
+    parser.add_argument("--frame-count", type=int, default=70,
+                        help="number of consecutive 4K60 frames in the local raw segment; must be even")
+    parser.add_argument("--sequence-total-frame-count", type=int,
+                        help="total frame count of the full upstream sequence, when published")
     parser.add_argument("--output-directory", type=Path, required=True, help="local directory for prepared media")
     parser.add_argument("--ffmpeg", type=Path, required=True)
     parser.add_argument("--ffprobe", type=Path, required=True)
@@ -178,10 +184,30 @@ def main() -> int:
     ffprobe = args.ffprobe.resolve(strict=True)
     output_directory = args.output_directory.resolve()
     output_width, output_height = OUTPUT_PROFILES[args.output_profile]
-    if not raw.is_file() or raw.name != RAW_FILE_NAME:
-        raise ValueError(f"raw input must be the official {RAW_FILE_NAME} asset")
-    if raw.stat().st_size != RAW_FILE_BYTES:
-        raise ValueError(f"raw input must contain exactly {RAW_FILE_BYTES} bytes, got {raw.stat().st_size}")
+    if not raw.is_file():
+        raise ValueError("raw input must be a local regular file")
+    if not args.raw_url.startswith("https://ultravideo.fi/UVG-VCM/"):
+        raise ValueError("raw URL must point to the official UVG-VCM dataset page")
+    if not args.sequence.strip():
+        raise ValueError("sequence name must not be empty")
+    if args.source_start_frame_index < 0:
+        raise ValueError("source start frame index must be non-negative")
+    if args.frame_count < 4 or args.frame_count % 2:
+        raise ValueError("frame count must be an even number of at least 4")
+    if args.sequence_total_frame_count is not None:
+        segment_end = args.source_start_frame_index + args.frame_count
+        if args.sequence_total_frame_count < segment_end:
+            raise ValueError("the selected raw segment extends past the upstream sequence frame count")
+    source_frames = args.frame_count // 2
+    reference_frames = args.frame_count - 1
+    valid_midpoint_indexes = list(range(args.source_start_frame_index + 1,
+                                        args.source_start_frame_index + args.frame_count - 1, 2))
+    excluded_frame_index = args.source_start_frame_index + args.frame_count - 1
+    expected_raw_bytes = RAW_FRAME_BYTES * args.frame_count
+    raw_byte_start = RAW_FRAME_BYTES * args.source_start_frame_index
+    raw_byte_end = raw_byte_start + expected_raw_bytes - 1
+    if raw.stat().st_size != expected_raw_bytes:
+        raise ValueError(f"raw input must contain exactly {expected_raw_bytes} bytes for {args.frame_count} frames, got {raw.stat().st_size}")
     if not ffmpeg.is_file() or not ffprobe.is_file():
         raise ValueError("FFmpeg and FFprobe must be local executable files")
 
@@ -201,14 +227,15 @@ def main() -> int:
         for key, mode in (("source", "source"), ("reference", "reference")):
             print(f"Preparing {key}: {temporary_paths[key].name}", flush=True)
             run(ffmpeg_command(ffmpeg, raw, temporary_paths[key], mode=mode,
-                               input_range=args.source_range, width=output_width,
+                               input_range=args.source_range, source_frames=source_frames,
+                               reference_frames=reference_frames, width=output_width,
                                height=output_height, force=False))
 
         probed = {key: probe_video(ffprobe, path) for key, path in temporary_paths.items()}
-        verify_video(temporary_paths["source"], probed["source"], frames=SOURCE_FRAMES,
+        verify_video(temporary_paths["source"], probed["source"], frames=source_frames,
                      rate=SOURCE_RATE, width=output_width, height=output_height)
         verify_video(temporary_paths["reference"], probed["reference"],
-                     frames=REFERENCE_FRAMES, rate=REFERENCE_RATE,
+                     frames=reference_frames, rate=REFERENCE_RATE,
                      width=output_width, height=output_height)
 
         ffmpeg_version = tool_version(ffmpeg)
@@ -217,18 +244,23 @@ def main() -> int:
         for key, temporary_path in temporary_paths.items():
             os.replace(temporary_path, final_paths[key])
 
+        slug = re.sub(r"[^a-z0-9]+", "-", args.sequence.lower()).strip("-")
+        dataset_id = f"{DATASET_ID_PREFIX}-{slug}-frames-{args.source_start_frame_index}-{excluded_frame_index}-v1"
         prepared = {
             "schemaVersion": 1,
-            "datasetId": DATASET_ID,
+            "datasetId": dataset_id,
             "dataset": "UVG-VCM",
-            "sequence": "Karting Time",
+            "sequence": args.sequence,
             "datasetPage": DATASET_PAGE,
             "rawSource": {
-                "url": RAW_URL,
+                "url": args.raw_url,
                 "file": raw.name,
                 "bytes": raw.stat().st_size,
                 "sha256": raw_sha256,
                 "upstreamChecksumPublished": False,
+                "sourceFrameRangeInclusive": [args.source_start_frame_index, excluded_frame_index],
+                "sourceByteRangeInclusive": [raw_byte_start, raw_byte_end],
+                "sequenceTotalFrameCount": args.sequence_total_frame_count,
                 "license": LICENSE_ID,
                 "licenseUrl": LICENSE_URL,
                 "requiredCitation": (
@@ -240,7 +272,7 @@ def main() -> int:
                     "width": RAW_WIDTH,
                     "height": RAW_HEIGHT,
                     "frameRate": REFERENCE_RATE,
-                    "frameCount": RAW_FRAMES,
+                    "segmentFrameCount": args.frame_count,
                     "pixelFormat": "yuv444p16le",
                 },
             },
@@ -255,12 +287,20 @@ def main() -> int:
                 "outputProfile": args.output_profile,
                 "outputSize": {"width": output_width, "height": output_height},
                 "scaler": "FFmpeg scale flags=lanczos+accurate_rnd+bitexact",
-                "sourceFrames": "even upstream frame indexes 0..68, retimed to 30/1 fps",
-                "referenceFrames": "upstream frame indexes 0..68 at 60/1 fps",
-                "validMidpointReferenceIndexes": VALID_MIDPOINT_REFERENCE_INDEXES,
-                "validMidpointCount": len(VALID_MIDPOINT_REFERENCE_INDEXES),
-                "excludedUpstreamFrameIndexes": [69],
-                "exclusionReason": "frame 69 is after the final input frame and is not bracketed for interpolation",
+                "sourceFrames": (
+                    f"even local frame indexes 0..{args.frame_count - 2}, representing upstream indexes "
+                    f"{args.source_start_frame_index}..{excluded_frame_index - 1}, retimed to 30/1 fps"
+                ),
+                "referenceFrames": (
+                    f"local frame indexes 0..{args.frame_count - 2}, representing upstream indexes "
+                    f"{args.source_start_frame_index}..{excluded_frame_index - 1} at 60/1 fps"
+                ),
+                "validMidpointReferenceIndexes": valid_midpoint_indexes,
+                "validMidpointCount": len(valid_midpoint_indexes),
+                "excludedUpstreamFrameIndexes": [excluded_frame_index],
+                "exclusionReason": (
+                    f"frame {excluded_frame_index} is after the final input frame and is not bracketed for interpolation"
+                ),
                 "precisionNote": "The source page states 16-bit YUV but does not publish color range, matrix, transfer, or primaries; the explicit assumptions above define this SDR benchmark transform, not verified camera metadata.",
             },
             "preparer": {
@@ -271,9 +311,9 @@ def main() -> int:
             "ffprobe": {"path": str(ffprobe), "version": ffprobe_version, "sha256": sha256_file(ffprobe)},
             "files": {},
             "limitations": [
-                "This is a 70-frame, approximately 1.17-second single-scene pilot, not a representative video ranking.",
+                f"This is a {args.frame_count}-frame segment ({args.frame_count / RAW_FPS:.2f} seconds) from one scene, not a representative video ranking.",
                 "The fixed SDR BT.709 conversion is an evaluation assumption because the upstream raw file has no published colorimetry metadata.",
-                "Only 34 bracketed midpoint samples are valid; the final unbracketed high-rate frame is excluded.",
+                f"Only {len(valid_midpoint_indexes)} bracketed midpoint samples are valid; the final unbracketed high-rate frame is excluded.",
                 "The dataset is machine-vision oriented and does not cover the full consumer-video content mix.",
                 "A model comparison still needs blind visual review and additional licensed real footage.",
             ],
