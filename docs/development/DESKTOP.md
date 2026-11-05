@@ -1,4 +1,6 @@
-# Local Qt desktop
+# Legacy local Qt desktop
+
+> This page describes the historical Qt/CLI development preview. The current desktop package is native Win32; legacy package scripts now stop unless the AllowLegacyPreview switch is supplied explicitly. Use [the native local bundle](LOCAL.md) for the current package.
 
 The Qt/QML desktop now has a single-file Studio and a persistent local Task Queue. The queue accepts multiple files or folders (optional recursive scan), screens media against the active RIFE color contract, deduplicates sources, allocates non-overwriting names, and reports skipped HDR/unsupported inputs. It stores tasks in SQLite under the Windows local application data directory (or `--data-dir`) and stores last-used FPS, model, runtime, output, inference backend, encoder and container settings in a local `preferences.ini`. The inference choice can prefer TensorRT with CUDA fallback, require CUDA only or require TensorRT; processing stays FP32 pending FP16 qualification. The QML controls expose sequential start, safe pause/resume, stop, per-task cancellation, failed retry, interrupted restart-from-zero and opening completed output folders. Studio and queue rows estimate total output frames and remaining time from source duration and target frame rate; they label this estimate separately from measured processing FPS. Source files are preserved. Services own media and GPU work on background threads; QML owns no FFmpeg, CUDA or ONNX contexts.
 
@@ -9,7 +11,7 @@ This is still a development workflow, not the complete product. The offline Mode
 On this workstation, build and launch the self-contained app folder with:
 
 ```powershell
-.\packaging\windows\package-local.ps1
+.\packaging\windows\package-local.ps1 -AllowLegacyPreview
 ```
 
 The script writes `out/RifeLove-local/`, deploys Qt and FFmpeg runtime files, copies the desktop program and selected local model packs, creates first-run local preferences, launches Home, Studio and Model Center smoke checks, and records local model/backend qualification. Run `out/RifeLove-local/RifeLove.exe` to start the desktop app. No CLI executable is part of the user-facing product package. The folder is ignored by Git because it contains build outputs and model weights.
