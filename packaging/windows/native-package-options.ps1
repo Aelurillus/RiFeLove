@@ -88,20 +88,26 @@ function Set-NativePackageDataModeMetadata {
 function Resolve-NativeModelBundleSelection {
     param(
         [switch]$BaseModelsOnly,
+        [switch]$RifeOnly,
         [switch]$IncludeTemporalRestoration,
         [switch]$IncludeCompressionRestoration,
         [switch]$IncludeDeblurRestoration
     )
-    $includeTemporal = if ($BaseModelsOnly) { [bool]$IncludeTemporalRestoration } else { $true }
-    $includeCompression = if ($BaseModelsOnly) { [bool]$IncludeCompressionRestoration } else { $true }
+    if ($RifeOnly -and ($BaseModelsOnly -or $IncludeTemporalRestoration -or $IncludeCompressionRestoration -or $IncludeDeblurRestoration)) {
+        throw 'RifeOnly cannot be combined with other model selection switches.'
+    }
+    $includeTemporal = if ($RifeOnly) { $false } elseif ($BaseModelsOnly) { [bool]$IncludeTemporalRestoration } else { $true }
+    $includeCompression = if ($RifeOnly) { $false } elseif ($BaseModelsOnly) { [bool]$IncludeCompressionRestoration } else { $true }
     $includeDeblur = [bool]$IncludeDeblurRestoration
-    $modelIds = @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2')
+    $modelIds = @('rife-4.25-fp32-sdr8-v3')
+    if (-not $RifeOnly) { $modelIds += 'realesrgan-x2plus-sdr8-v2' }
     if ($includeTemporal) { $modelIds += 'fastdvdnet-clipped-five-frame-sdr8-eval' }
     if ($includeCompression) { $modelIds += 'stdf-r3-y7-sdr8-local-eval' }
     if ($includeDeblur) { $modelIds += 'nafnet-gopro-deblur-sdr8-fp32-eval' }
     [pscustomobject]@{
-        mode = if ($BaseModelsOnly) { 'base' } else { 'full' }
-        baseModels = @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2')
+        mode = if ($RifeOnly) { 'rife-only' } elseif ($BaseModelsOnly) { 'base' } else { 'full' }
+        includeSuperResolution = -not $RifeOnly
+        baseModels = @($modelIds | Where-Object { $_ -in @('rife-4.25-fp32-sdr8-v3', 'realesrgan-x2plus-sdr8-v2') })
         includeTemporalRestoration = $includeTemporal
         includeCompressionRestoration = $includeCompression
         requireCompressionRestoration = [bool]$IncludeCompressionRestoration
@@ -131,7 +137,10 @@ function Get-NativeExcludedModelRoots {
             'licenses/Model-nafnet-gopro-deblur-sdr8-fp32-eval'
         )
     }
-    if ($Selection.mode -ceq 'base') {
+    if (-not $Selection.includeSuperResolution) {
+        $roots += @('models/realesrgan-x2plus-sdr8-v2', 'licenses/Model-realesrgan-x2plus-sdr8-v2')
+    }
+    if ($Selection.mode -in @('base', 'rife-only')) {
         # A base bundle has no recovery data to migrate, so a hidden legacy
         # RIFE checkpoint is not copied as a second interpolation model.
         $roots += @(
@@ -196,7 +205,7 @@ function Test-NativeRelativePathExcluded {
           [Parameter(Mandatory=$true)][AllowEmptyCollection()][string[]]$ExcludedRoots,
           [object]$Selection = $null)
     $relative = $RelativePath.Replace('\','/').TrimStart('/')
-    if ($null -ne $Selection -and $Selection.mode -ceq 'base' -and $relative.StartsWith('models/',[StringComparison]::OrdinalIgnoreCase)) {
+    if ($null -ne $Selection -and $Selection.mode -in @('base', 'rife-only') -and $relative.StartsWith('models/',[StringComparison]::OrdinalIgnoreCase)) {
         $modelName = ($relative -split '/')[1]
         if ($modelName -cne 'default-model.txt' -and $Selection.modelIds -notcontains $modelName) { return $true }
     }

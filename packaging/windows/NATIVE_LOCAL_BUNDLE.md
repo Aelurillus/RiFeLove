@@ -33,6 +33,32 @@ pwsh -File packaging/windows/package-native-local.ps1 `
 
 ## 显式基础包与可选实验模型
 
+两个打包脚本还支持 `-RifeOnly`：在全新目录中只选择 RIFE 4.25 v3，
+不读取或捆绑超分、降噪、压缩修复或去模糊模型。它不能与
+`-BaseModelsOnly` 或任何 `-Include...` 模型开关同时使用。默认模型仍是
+RIFE；未捆绑修复模型的配置路径为 `null`，清单、校验表和包内说明只列实际
+文件。此选项不复制旧包用户数据或用户登记模型，也不修改旧包。现有默认
+四模型、本机基础包和显式实验模型选项保持原样。
+
+```powershell
+pwsh -NoProfile -File packaging/windows/package-native-local.ps1 `
+  -BuildDirectory build/windows-release `
+  -OutputDirectory out/RifeLoveNative-local-rife-only `
+  -RifeOnly
+
+pwsh -NoProfile -File packaging/windows/package-native-reuse-local.ps1 `
+  -SourceDirectory out/RifeLoveNative-local-rife-only `
+  -BuildDirectory build/windows-release `
+  -OutputDirectory out/RifeLoveNative-local-rife-only-portable `
+  -RifeOnly -PortableMode
+```
+
+完整打包可通过 `-CodecDepsRoot` 指定已有 OpenH264、Kvazaar 和 libaom
+源码许可的 `buildtrees` 目录，默认仍为当前仓库的 `work/codec-deps/buildtrees`。
+复用脚本要求新 EXE 的依赖导入与源包一致，否则应重新完整打包，不能忽略检查。
+RIFE-only 是本机候选模式；它本身不证明 NVIDIA、Microsoft、编解码器等所有
+依赖具备公开再分发条件，也不代替客户端、长视频和干净机器验收。
+
 两个脚本都支持 `-BaseModelsOnly`：只捆绑一个 RIFE 4.25 v3 插帧包和一个 Real-ESRGAN x2plus v2 超分包。FastDVDnet、STDF-R3 和重复的旧 RIFE v2 不再是基础包的前置条件；未选择的实验模型不会读取描述文件、图、许可证或来源/验证侧车，也不会因为源包校验清单仍列出已缺失的实验文件而阻止基础包生成。源清单路径仍须通过格式、重复项和目录边界检查。
 
 ```powershell

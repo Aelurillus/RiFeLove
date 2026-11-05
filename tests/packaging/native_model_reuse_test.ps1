@@ -173,6 +173,12 @@ Assert-Rejected { New-HardLinkChecked $graph $link } 'already exists' 'Existing 
 # descriptor, license, or checksum target is opened. These are fake graphs;
 # they prove bundle/data contracts only, never inference quality.
 $baseSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly
+$rifeOnlySelection = Resolve-NativeModelBundleSelection -RifeOnly
+Assert-Equal 'rife-only' $rifeOnlySelection.mode 'RIFE-only bundle has an explicit mode'
+Assert-Equal 1 @($rifeOnlySelection.modelIds).Count 'RIFE-only selects just the interpolation model'
+Assert-Equal $false $rifeOnlySelection.includeSuperResolution 'RIFE-only excludes super resolution'
+Assert-Rejected { Resolve-NativeModelBundleSelection -RifeOnly -IncludeTemporalRestoration } 'cannot be combined' 'RIFE-only rejects ambiguous additional models'
+Assert-Rejected { Resolve-NativeModelBundleSelection -RifeOnly -BaseModelsOnly } 'cannot be combined' 'RIFE-only and base modes are mutually exclusive'
 $fourSelection = Resolve-NativeModelBundleSelection
 $temporalSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeTemporalRestoration
 $compressionSelection = Resolve-NativeModelBundleSelection -BaseModelsOnly -IncludeCompressionRestoration
@@ -192,6 +198,8 @@ $srFixture = New-ModelFixture 'realesrgan-x2plus-sdr8-v2' (Join-Path $testRoot '
 $missing = Join-Path $testRoot 'excluded-cache-does-not-exist'
 $basePacks = @(Get-NativeFullModelPacks $baseSelection $rifeFixture $srFixture $missing $missing)
 Assert-Equal 2 $basePacks.Count 'Full packager base mode does not require excluded caches'
+$rifeOnlyPacks = @(Get-NativeFullModelPacks $rifeOnlySelection $rifeFixture $missing $missing $missing)
+Assert-Equal 1 $rifeOnlyPacks.Count 'RIFE-only full packaging does not open missing restoration caches'
 Assert-Equal 4 @(Get-NativeFullModelPacks $fourSelection $rifeFixture $srFixture $localTemporal $localCompression).Count 'Full packager default still validates all four packs'
 Assert-Equal 3 @(Get-NativeFullModelPacks $temporalSelection $rifeFixture $srFixture $localTemporal $missing).Count 'Full packager can include temporal only'
 Assert-Equal 3 @(Get-NativeFullModelPacks $compressionSelection $rifeFixture $srFixture $missing $localCompression).Count 'Full packager can include compression only'
@@ -231,6 +239,10 @@ Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $baseSour
 Assert-Rejected { Get-NativeOptionalRestorationPacks @{ models = @() } $testRoot $missing '' $compressionSelection } 'missing' 'Explicitly selected missing STDF is never silently omitted'
 $baseFiles = @(Get-SafeFiles $baseSource $baseExcluded $baseSource $baseSelection)
 Assert-Equal 12 $baseFiles.Count 'Base copy plan contains only two six-file model/license packs'
+$rifeOnlyExcluded = @(Get-NativeExcludedModelRoots $rifeOnlySelection)
+$rifeOnlyFiles = @(Get-SafeFiles $baseSource $rifeOnlyExcluded $baseSource $rifeOnlySelection)
+Assert-Equal 6 $rifeOnlyFiles.Count 'RIFE-only reuse plan contains only the RIFE model and license'
+Assert-Equal 0 @($rifeOnlyFiles | Where-Object { $_.FullName -match 'realesrgan|fastdvdnet|stdf-r3|nafnet|[\\/]data[\\/]' }).Count 'RIFE-only excludes all restoration models and user data'
 Assert-Equal 0 @($baseFiles | Where-Object { $_.FullName -match 'fastdvdnet|stdf-r3|rife-4.25-fp32-sdr8-v2[\\/]|user-custom|legacy-models|[\\/]data[\\/]' }).Count 'Excluded models, metadata and user data stay outside base copy plan'
 $baseOutput = Join-Path $testRoot 'staged-base-bundle'
 foreach ($file in $baseFiles) {
@@ -259,6 +271,8 @@ foreach ($relative in @("models/$temporalId/model.onnx", "models/$compressionId/
 Write-Fixture $checksumFixture ($checksumLines -join "`n")
 $selectedChecksums = Read-NativeSourceChecksums $checksumFixture $baseExcluded $baseSelection
 Assert-Equal 12 $selectedChecksums.Count 'Excluded missing checksum targets cannot block base bundle'
+$rifeOnlyChecksums = Read-NativeSourceChecksums $checksumFixture $rifeOnlyExcluded $rifeOnlySelection
+Assert-Equal 6 $rifeOnlyChecksums.Count 'RIFE-only checksum plan excludes all restoration files and licenses'
 foreach ($relative in $selectedChecksums.Keys) {
     Assert-Equal $true (Test-Path -LiteralPath (Resolve-ManifestPath $relative) -PathType Leaf) 'Every selected checksum target exists'
 }
