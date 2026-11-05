@@ -18,6 +18,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <sstream>
@@ -26,6 +27,7 @@
 #include <tuple>
 
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+#include "native_package_archive.hpp"
 #include <nlohmann/json.hpp>
 #include "media/encoder_policy.hpp"
 #include "media/media_engine.hpp"
@@ -436,6 +438,8 @@ NativeApp::~NativeApp() {
     callbackWindow_.store(nullptr);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     comparisonWindow_.reset();
+    modelInstallThread_.request_stop();
+    if (modelInstallThread_.joinable()) modelInstallThread_.join();
     if (modelCenterWindow_ && IsWindow(modelCenterWindow_)) DestroyWindow(modelCenterWindow_);
     if (modelCenterFont_) DeleteObject(modelCenterFont_);
     if (historyWindow_ && IsWindow(historyWindow_)) DestroyWindow(historyWindow_);
@@ -1719,6 +1723,9 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     }
     if (!app) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
+    case WM_TIMER:
+        if (wParam == kModelInstallTimer) { app->pollModelPackageInstall(); return 0; }
+        break;
     case WM_CREATE: {
         app->modelCenterBackgroundBrush_ = CreateSolidBrush(RGB(12, 15, 21));
         app->modelCenterSurfaceBrush_ = CreateSolidBrush(RGB(19, 24, 32));
@@ -1732,6 +1739,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
         SendMessageW(app->modelDetails_, EM_SETLIMITTEXT, 128 * 1024, 0);
         control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRegister);
+        control(L"BUTTON", L"安装验证包…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelInstall);
+        control(L"BUTTON", L"取消安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelCancelInstall);
         control(L"BUTTON", L"设为该类默认", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDefault);
         control(L"BUTTON", L"取消登记", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelUnregister);
         control(L"BUTTON", L"重新校验", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRefresh);
@@ -1760,7 +1769,7 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
         if (!item || item->CtlType != ODT_BUTTON) break;
-        const bool primary = static_cast<int>(item->CtlID) == kModelDefault;
+        const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelInstall;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
         const bool focused = (item->itemState & ODS_FOCUS) != 0;
@@ -1836,10 +1845,42 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         }
         if (HIWORD(wParam) != BN_CLICKED) break;
         const auto index = static_cast<std::size_t>(SendMessageW(app->modelList_, LB_GETCURSEL, 0, 0));
-        if (id == kModelClose || id == IDCANCEL) { DestroyWindow(window); return 0; }
+        if (id == kModelClose || id == IDCANCEL) {
+            if (app->modelInstallThread_.joinable()) {
+                app->closeModelCenterWhenInstallEnds_ = true;
+                if (app->modelInstallActive_.load()) {
+                    app->cancelModelPackageInstall();
+                    app->modelCenterNotice_ = L"正在安全取消模型安装；现有模型仍可使用。";
+                    app->updateModelDetails();
+                } else app->pollModelPackageInstall();
+            } else DestroyWindow(window);
+            return 0;
+        }
         if (id == kModelRegister && app->modelChangesAllowed()) {
             const auto directory = app->browseForFolder(L"登记本机模型目录（包含 model.json）；原文件保留不变");
             if (!directory.empty()) (void)app->registerLocalModel(directory);
+        } else if (id == kModelInstall && app->modelChangesAllowed() && !app->modelInstallActive_.load()) {
+            std::array<wchar_t, 32768> selected{};
+            OPENFILENAMEW dialog{};
+            dialog.lStructSize = sizeof(dialog);
+            dialog.hwndOwner = window;
+            dialog.lpstrFilter = L"RifeLove 模型包 (*.zip)\0*.zip\0ZIP 文件 (*.zip)\0*.zip\0\0";
+            dialog.lpstrFile = selected.data();
+            dialog.nMaxFile = static_cast<DWORD>(selected.size());
+            dialog.lpstrTitle = L"选择模型 ZIP 包（需与 .distribution.json 清单放在同一目录）";
+            dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+            if (GetOpenFileNameW(&dialog)) {
+                auto archive = std::filesystem::path(selected.data());
+                auto manifest = archive;
+                manifest.replace_extension(L".distribution.json");
+                const DWORD attributes = GetFileAttributesW(manifest.c_str());
+                if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+                    MessageBoxW(window, L"未找到与 ZIP 同名的 .distribution.json 清单。请从同一模型下载渠道同时取得两个文件。",
+                        L"缺少模型清单", MB_OK | MB_ICONWARNING);
+                } else app->startModelPackageInstall(archive);
+            }
+        } else if (id == kModelCancelInstall) {
+            app->cancelModelPackageInstall();
         } else if (id == kModelDefault) (void)app->setDefaultLocalModel(index);
         else if (id == kModelUnregister) (void)app->unregisterLocalModel(index);
         else if (id == kModelRefresh && app->modelChangesAllowed()) {
@@ -1849,9 +1890,17 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         return 0;
     }
     case WM_CLOSE:
-        DestroyWindow(window);
+        if (app->modelInstallThread_.joinable()) {
+            app->closeModelCenterWhenInstallEnds_ = true;
+            if (app->modelInstallActive_.load()) {
+                app->cancelModelPackageInstall();
+                app->modelCenterNotice_ = L"正在安全取消模型安装；现有模型仍可使用。";
+                app->updateModelDetails();
+            } else app->pollModelPackageInstall();
+        } else DestroyWindow(window);
         return 0;
     case WM_NCDESTROY:
+        KillTimer(window, kModelInstallTimer);
         app->modelCenterWindow_ = nullptr;
         app->modelList_ = nullptr;
         app->modelDetails_ = nullptr;
@@ -1873,7 +1922,7 @@ void NativeApp::layoutModelCenter() {
     if (!modelCenterFont_) modelCenterFont_ = CreateFontW(-MulDiv(10, dpi ? dpi : 96, 72), 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    for (int id = 1200; id <= kModelClose; ++id) {
+    for (int id = 1200; id <= kModelCancelInstall; ++id) {
         const auto child = GetDlgItem(modelCenterWindow_, id);
         if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(modelCenterFont_), TRUE);
     }
@@ -1881,7 +1930,7 @@ void NativeApp::layoutModelCenter() {
     GetClientRect(modelCenterWindow_, &client);
     const int margin = px(16), gap = px(12);
     const int width = std::max(1, static_cast<int>(client.right) - margin * 2);
-    const bool narrow = width < px(740);
+    const bool narrow = width < px(900);
     const int buttonHeight = px(34);
     const int buttonRows = narrow ? 2 : 1;
     const int buttonsTop = std::max(px(180), static_cast<int>(client.bottom) - margin - buttonRows * (buttonHeight + gap) + gap);
@@ -1899,8 +1948,9 @@ void NativeApp::layoutModelCenter() {
         move(modelList_, margin, contentTop, listWidth, contentHeight);
         move(modelDetails_, margin + listWidth + gap, contentTop, width - listWidth - gap, contentHeight);
     }
-    const std::array<int, 5> buttons{kModelRegister, kModelDefault, kModelUnregister, kModelRefresh, kModelClose};
-    const int columns = narrow ? 3 : 5;
+    const std::array<int, 7> buttons{kModelRegister, kModelInstall, kModelCancelInstall, kModelDefault,
+        kModelUnregister, kModelRefresh, kModelClose};
+    const int columns = narrow ? 4 : 7;
     const int buttonWidth = (width - (columns - 1) * gap) / columns;
     for (std::size_t index = 0; index < buttons.size(); ++index)
         move(GetDlgItem(modelCenterWindow_, buttons[index]), margin + static_cast<int>(index % columns) * (buttonWidth + gap),
@@ -1969,15 +2019,25 @@ void NativeApp::updateModelDetails() {
     const auto index = static_cast<std::size_t>(SendMessageW(modelList_, LB_GETCURSEL, 0, 0));
     const LocalModel* item = index < localModels_.size() ? &localModels_[index] : nullptr;
     const bool editable = modelPreferencesWritable_ && modelChangesAllowed();
-    EnableWindow(GetDlgItem(modelCenterWindow_, kModelRegister), editable);
+    const bool installing = modelInstallActive_.load();
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelRegister), editable && !installing);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelInstall), editable && !installing);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelCancelInstall), installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelDefault), editable && item && item->usable);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelUnregister), editable && item);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelRefresh), modelChangesAllowed());
-    std::wstring status = L"完全离线 · " + std::to_wstring(localModels_.size()) + L" 个本地目录。仅登记，不复制或删除原文件。\r\n";
+    std::wstring status = L"完全离线 · " + std::to_wstring(localModels_.size()) + L" 个本地目录。可登记外部目录，或安装经过清单校验的 ZIP 包。\r\n";
     status += L"完整性通过仅代表本地文件哈希一致，不认证发布者或画质。\r\n";
-    status += modelChangesAllowed() ? modelCenterNotice_ : L"正在检查视频或运行任务；模型更改暂不可用。";
+    if (installing) {
+        std::lock_guard lock(modelInstallMutex_);
+        status += modelInstallState_.status;
+        if (modelInstallState_.totalBytes != 0) {
+            const auto percent = std::min<std::uint64_t>(100, modelInstallState_.completedBytes * 100 / modelInstallState_.totalBytes);
+            status += L" · " + std::to_wstring(percent) + L"%";
+        }
+    } else status += modelChangesAllowed() ? modelCenterNotice_ : L"正在检查视频或运行任务；模型更改暂不可用。";
     SetWindowTextW(modelCenterStatus_, status.c_str());
-    std::wstring details = L"暂无已登记模型。\r\n\r\n选择“登记本地目录…”并指定包含 model.json 的本机模型包目录。";
+    std::wstring details = L"暂无已登记模型。\r\n\r\n选择“安装验证包…”并提供 ZIP 与同目录的 .distribution.json 清单，可将模型安装到 RifeLove 托管目录。也可登记一个已解压的本机目录。";
     if (item) {
         modelCenterSelectedPath_ = item->directory;
         const wchar_t* kind = item->kind == 0 ? L"RIFE 插帧" : item->kind == 1 ? L"超分辨率" : item->kind == 2 ? L"时域降噪" : item->kind == 3 ? L"压缩修复 · STDF 本机评估" : item->kind == 4 ? L"实验性独立去模糊" : L"其他 / 尚未支持";
@@ -3234,6 +3294,222 @@ bool NativeApp::saveModelPreferences(const NativeModelPreferences& preferences) 
         modelCenterNotice_ = L"模型设置保存失败；更改未生效。请检查详情中用户数据目录的写入权限。";
         updateModelDetails();
         return false;
+    }
+}
+
+void NativeApp::startModelPackageInstall(const std::filesystem::path& archive) {
+    if (!modelPreferencesWritable_ || !dataDirectory_.writable || !dataDirectory_.preferencesReady ||
+        !modelChangesAllowed() || modelInstallActive_.load()) return;
+    if (modelInstallThread_.joinable()) modelInstallThread_.join();
+    auto manifestPath = archive;
+    manifestPath.replace_extension(L".distribution.json");
+    {
+        std::lock_guard lock(modelInstallMutex_);
+        modelInstallState_ = {};
+        modelInstallState_.status = L"准备校验模型包…";
+    }
+    modelInstallActive_.store(true);
+    try {
+        modelInstallThread_ = std::jthread([this, archive, manifestPath](std::stop_token stopToken) {
+            std::optional<std::filesystem::path> installed;
+            std::wstring failure;
+            std::wstring status;
+            try {
+                if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
+                (void)checkedNativeModelDirectory(manifestPath.parent_path(), false);
+                const DWORD manifestAttributes = GetFileAttributesW(manifestPath.c_str());
+                if (manifestAttributes == INVALID_FILE_ATTRIBUTES || (manifestAttributes &
+                    (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+                    throw std::runtime_error("Distribution manifest must be a regular local file");
+                const auto manifestBytes = inference::readLocalFile(manifestPath, 1024 * 1024);
+                const std::string manifestText(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size());
+                const auto manifest = nlohmann::json::parse(manifestText);
+                if (!manifest.is_object() || manifest.at("schemaVersion") != 1)
+                    throw std::invalid_argument("Unsupported model distribution manifest version");
+
+                const auto boundedString = [](const nlohmann::json& object, const char* name, std::size_t limit) {
+                    const auto& value = object.at(name);
+                    if (!value.is_string()) throw std::invalid_argument(std::string("Invalid model distribution field: ") + name);
+                    const auto text = value.get<std::string>();
+                    if (text.empty() || text.size() > limit || text.find('\0') != std::string::npos)
+                        throw std::invalid_argument(std::string("Invalid model distribution field: ") + name);
+                    return text;
+                };
+                const auto safeComponent = [](const std::string& value) {
+                    if (value.empty() || value.size() > 128 ||
+                        !((value.front() >= 'a' && value.front() <= 'z') || (value.front() >= 'A' && value.front() <= 'Z') ||
+                          (value.front() >= '0' && value.front() <= '9'))) return false;
+                    return value != "." && value != ".." && std::all_of(value.begin(), value.end(), [](char ch) {
+                        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                            (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.';
+                    });
+                };
+                const auto validHash = [](const std::string& value) {
+                    return value.size() == 64 && std::all_of(value.begin(), value.end(), [](char ch) {
+                        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+                    });
+                };
+
+                const auto packageId = boundedString(manifest, "packageId", 128);
+                if (!safeComponent(packageId)) throw std::invalid_argument("Invalid model package identity");
+                const auto& modelMetadata = manifest.at("model");
+                const auto modelId = boundedString(modelMetadata, "id", 128);
+                const auto modelVersion = boundedString(modelMetadata, "version", 128);
+                const auto modelFamily = boundedString(modelMetadata, "family", 64);
+                const auto licenseId = boundedString(modelMetadata, "license", 128);
+                const auto modelSha256 = boundedString(modelMetadata, "modelSha256", 64);
+                if (modelFamily != "rife" || !safeComponent(modelId) || !safeComponent(modelVersion) || !validHash(modelSha256))
+                    throw std::invalid_argument("This Model Center installer accepts only a declared RIFE model pack");
+
+                const auto& artifact = manifest.at("artifact");
+                const auto archiveName = boundedString(artifact, "fileName", 256);
+                if (archiveName != nativeModelUtf8(archive.filename().wstring()))
+                    throw std::invalid_argument("The selected ZIP file name does not match its distribution manifest");
+                NativePackageArchivePlan plan;
+                plan.rootDirectory = boundedString(artifact, "rootDirectory", 128);
+                plan.archiveSizeBytes = artifact.at("sizeBytes").get<std::uint64_t>();
+                plan.archiveSha256 = boundedString(artifact, "sha256", 64);
+                if (!validHash(plan.archiveSha256)) throw std::invalid_argument("Invalid model archive SHA-256");
+                plan.maximumUncompressedBytes = 512ULL * 1024 * 1024;
+
+                const std::array<std::string, 5> requiredFiles{
+                    "LICENSE.txt", "model.json", "model.onnx", "source-manifest.json", "validation.json"};
+                const auto& fileEntries = manifest.at("files");
+                if (!fileEntries.is_array() || fileEntries.size() != requiredFiles.size())
+                    throw std::invalid_argument("The model manifest does not list the exact files required by the RIFE pack");
+                std::set<std::string> seenFiles;
+                for (const auto& entry : fileEntries) {
+                    const auto path = boundedString(entry, "path", 128);
+                    if (std::find(requiredFiles.begin(), requiredFiles.end(), path) == requiredFiles.end() || !seenFiles.insert(path).second)
+                        throw std::invalid_argument("The model manifest contains an unrecognized or duplicate file");
+                    const auto size = entry.at("sizeBytes").get<std::uint64_t>();
+                    const auto digest = boundedString(entry, "sha256", 64);
+                    if (size == 0 || size > plan.maximumUncompressedBytes || !validHash(digest))
+                        throw std::invalid_argument("The model manifest contains an invalid file size or SHA-256");
+                    plan.files.push_back({path, size, digest});
+                }
+                if (seenFiles.size() != requiredFiles.size())
+                    throw std::invalid_argument("The model manifest is missing a required RIFE pack file");
+
+                auto modelsRoot = dataDirectory_.directory / L"Models";
+                prepareWritableNativeDataDirectory(modelsRoot);
+                (void)checkedNativeModelDirectory(modelsRoot, false);
+                const auto stage = uniqueNativeDataPath(modelsRoot, L".model-install-");
+                const auto progress = [this](NativePackageArchiveProgress value) {
+                    std::lock_guard lock(modelInstallMutex_);
+                    modelInstallState_.completedBytes = value.completedBytes;
+                    modelInstallState_.totalBytes = value.totalBytes;
+                    modelInstallState_.status = value.phase == "archive" ? L"正在校验归档 SHA-256" :
+                        value.phase == "extract" ? L"正在安全解压到暂存目录" : L"正在校验模型文件 SHA-256";
+                };
+                const auto modelDirectory = extractNativeModelPackageArchive(archive, plan, stage, stopToken, progress);
+                struct StageCleanup final {
+                    std::filesystem::path path;
+                    ~StageCleanup() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
+                } cleanup{stage};
+                if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
+                {
+                    std::lock_guard lock(modelInstallMutex_);
+                    modelInstallState_.completedBytes = 0;
+                    modelInstallState_.totalBytes = 0;
+                    modelInstallState_.status = L"正在校验 RIFE 模型元数据与 schema-v2 契约";
+                }
+                const auto verified = inference::loadModelPack(modelDirectory);
+                if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
+                if (verified.schemaVersion != 2 || !verified.metadataIntegrityVerified || verified.family != modelFamily ||
+                    verified.id != modelId || verified.version != modelVersion || verified.sha256 != modelSha256 ||
+                    verified.licenseId != licenseId)
+                    throw std::runtime_error("The extracted RIFE pack does not match its manifest identity and schema-v2 metadata");
+
+                const auto managedName = modelId.substr(0, 48) + "-" + modelVersion.substr(0, 32) + "-" + verified.sha256.substr(0, 12);
+                if (!safeComponent(managedName)) throw std::invalid_argument("The verified model identity cannot form a safe managed directory");
+                const auto destination = modelsRoot / std::filesystem::path(managedName);
+                const DWORD existing = GetFileAttributesW(destination.c_str());
+                if (existing != INVALID_FILE_ATTRIBUTES) {
+                    (void)checkedNativeModelDirectory(destination, false);
+                    {
+                        std::lock_guard lock(modelInstallMutex_);
+                        modelInstallState_.status = L"正在重新校验托管目录中的已安装版本";
+                    }
+                    const auto installedPack = inference::loadModelPack(destination);
+                    if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
+                    if (installedPack.sha256 != verified.sha256 || installedPack.id != verified.id || installedPack.version != verified.version)
+                        throw std::runtime_error("A different model already occupies the managed version directory");
+                    installed = destination;
+                    status = L"此模型版本已安装；已重新校验现有文件。";
+                } else {
+                    if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
+                    if (!MoveFileExW(modelDirectory.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH))
+                        throw std::runtime_error("Cannot atomically publish the verified model into the managed directory");
+                    installed = destination;
+                    status = L"模型包已验证并原子安装。";
+                }
+            } catch (const NativePackageInstallCancelled&) {
+                failure = L"安装已取消；暂存文件已清理，现有模型未更改。";
+            } catch (const std::exception& error) {
+                failure = wideFromUtf8(error.what());
+            } catch (...) {
+                failure = L"模型包安装失败；现有模型未更改。";
+            }
+            {
+                std::lock_guard lock(modelInstallMutex_);
+                modelInstallState_.installedDirectory = installed;
+                modelInstallState_.failure = failure;
+                modelInstallState_.status = status;
+                modelInstallState_.finished = true;
+            }
+            modelInstallActive_.store(false);
+        });
+        if (!modelCenterWindow_ || SetTimer(modelCenterWindow_, kModelInstallTimer, 120, nullptr) == 0) {
+            modelInstallThread_.request_stop();
+            if (modelInstallThread_.joinable()) modelInstallThread_.join();
+            modelInstallActive_.store(false);
+            throw std::runtime_error("Cannot start the model installation progress timer");
+        }
+        modelCenterNotice_ = L"正在后台校验模型包；取消不会影响已安装模型。";
+        updateModelDetails();
+    } catch (const std::exception& error) {
+        modelInstallActive_.store(false);
+        modelCenterNotice_ = L"无法启动模型安装：" + wideFromUtf8(error.what());
+        updateModelDetails();
+    }
+}
+
+void NativeApp::cancelModelPackageInstall() {
+    if (modelInstallThread_.joinable()) modelInstallThread_.request_stop();
+    if (modelInstallActive_.load()) {
+        std::lock_guard lock(modelInstallMutex_);
+        modelInstallState_.status = L"正在取消并清理暂存文件…";
+    }
+    if (modelCenterWindow_) updateModelDetails();
+}
+
+void NativeApp::pollModelPackageInstall() {
+    if (!modelCenterWindow_) return;
+    if (modelInstallActive_.load()) { updateModelDetails(); return; }
+    KillTimer(modelCenterWindow_, kModelInstallTimer);
+    if (modelInstallThread_.joinable()) modelInstallThread_.join();
+    std::optional<std::filesystem::path> installed;
+    std::wstring failure;
+    std::wstring status;
+    {
+        std::lock_guard lock(modelInstallMutex_);
+        installed = modelInstallState_.installedDirectory;
+        failure = modelInstallState_.failure;
+        status = modelInstallState_.status;
+    }
+    if (installed) {
+        modelCenterSelectedPath_ = *installed;
+        if (modelChangesAllowed() && registerLocalModel(*installed)) {
+            modelCenterNotice_ = status + L" 已登记到模型中心。";
+        } else {
+            modelCenterNotice_ = status + L" 当前任务结束后，可在此登记该目录：\r\n" + installed->wstring();
+        }
+    } else if (!failure.empty()) modelCenterNotice_ = L"模型安装未完成：" + failure;
+    updateModelCenter();
+    if (closeModelCenterWhenInstallEnds_ && modelCenterWindow_) {
+        closeModelCenterWhenInstallEnds_ = false;
+        DestroyWindow(modelCenterWindow_);
     }
 }
 

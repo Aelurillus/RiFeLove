@@ -633,6 +633,8 @@ try {
     $licenseTarget = Join-Path $staging "licenses"
     New-Item -ItemType Directory -Path $licenseTarget | Out-Null
     Copy-FileChecked (Join-Path $repositoryRoot "LICENSE") (Join-Path $licenseTarget "RifeLove-MIT.txt")
+    $minizSource = Resolve-ExistingDirectory (Join-Path $build "_deps/miniz-src") "miniz 3.1.2 源码"
+    Copy-FileChecked (Join-Path $minizSource "LICENSE") (Join-Path $licenseTarget "miniz-MIT.txt")
     $ffmpegSourceRoot = Join-Path $CodecLicenseRoot "ffmpeg-8.1.3"
     Copy-FileChecked (Resolve-CodecLicense $CodecLicenseRoot "ffmpeg-8.1.3/LICENSE.md" "FFmpeg 许可") (Join-Path $licenseTarget "FFmpeg-LICENSE.md")
     Copy-FileChecked (Resolve-CodecLicense $CodecLicenseRoot "ffmpeg-8.1.3/COPYING.LGPLv2.1" "FFmpeg LGPL 许可") (Join-Path $licenseTarget "FFmpeg-LGPL-2.1.txt")
@@ -683,6 +685,7 @@ try {
         executableSha256 = (Get-FileHash -LiteralPath (Join-Path $staging "RifeLoveNative.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
         qtIncluded = $false; cliIncluded = $false; ossEnabled = $false; userMediaIncluded = $false; userDataIncluded = $false
         compilerRuntime = $compilerIdentity
+        nativePackageLibraries = @(@{ name = "miniz"; version = "3.1.2"; sourceCommit = "77d0dce8627735138c51770d1799a1ef48f2117d"; licensePath = "licenses/miniz-MIT.txt" })
         modelBundleMode = $modelSelection.mode
         ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; runtimeSha256 = $ffmpegRuntimeHashes; configuration = $ffmpegSdk.configuration; linkInputs = $ffmpegSdk.linkInputs; nvenc = "integrated in isolated SDK; H.264 NVENC and software fallback require hardware/workload validation"; x86asm = $ffmpegX86asmDescription; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
         inferenceRuntime = [ordered]@{ profile = $runtimeSelection.profile; source = $runtimeSourceDescription; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = if ($runtimeSelection.includesTensorRt) { $versionLines[0] } else { $null }; sourceSha256 = if ($runtimeSelection.includesTensorRt) { $versionLines[1] } else { $null }; providers = $runtimeSelection.providers }
