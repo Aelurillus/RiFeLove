@@ -361,3 +361,44 @@ output frames. This used a test executable and locally staged GPU runtime; it
 did not automate the folder-picker dialog or publish the archive. Archive and
 outputs remain under `out/rife-model-release-prep-20261105/`. Checksums show
 consistency with the locally pinned acquisition, not an author-published hash.
+
+## Export-format readiness and high-bit-depth NVENC (2026-11-06)
+
+The import/preflight path now probes the pixel format implied by the selected
+container. An 8-bit YUV 4:4:4 fixture that cannot open MPEG-4 at its source
+layout is accepted for MP4 after the normal 8-bit `yuv420p` conversion; an
+explicit incompatible output layout is rejected. A 10-bit MP4-family output is
+blocked before processing with an actionable message instead of being reduced
+to 8-bit. The native readiness harness verifies that switching the same source
+to MKV enables the source-preserving path. The screenshot
+`out/export-format-qa-20261105/blocked-10bit-mp4-v4.bmp` was inspected after
+fixing its test preset reset.
+
+The source-built FFmpeg on this machine exposes 10-bit 4:4:4 input to HEVC
+NVENC as `yuv444p10msble`; the bit depth, chroma layout and color tags are
+preserved, while a normal decoder reports `yuv444p10le`. Automatic MKV
+encoding now tries HEVC NVENC (and AV1 NVENC where available) after H.264
+NVENC rejects the source layout, then retains software fallbacks. The writer
+records the encoder input format while final-output validation checks the
+decoded output format. MP4/MOV/M4V automatic H.264 behavior remains unchanged.
+
+On the GTX 1660 SUPER 6 GB, a locally prepared 1280x720, 35-frame, BT.709
+`yuv444p10le` source completed through the native Start-control flow in about
+12 seconds including test startup. The persisted result recorded HEVC NVENC,
+70 output frames, 34 AI-generated frames, 34 inference calls and one held
+frame. Independent `ffprobe` reported HEVC Range Extensions, 1280x720,
+`yuv444p10le`, 60 FPS and BT.709 limited-range tags; a separate full-file
+decode completed without errors. The output SHA-256 is
+`2b19b2f4e06a2ba4ee0bed3b3a73a68f344016f3906f92061de5a81f8fe0a42e`.
+This is one short local sample, not a representative throughput or visual
+quality benchmark. Before the hardware path was added, the same 35-frame input did
+not finish within the 120-second software-AV1 smoke-test window, showing why
+software fallback can be slow at this precision and resolution.
+
+The 8-bit 4:4:4 to MP4 H.264 fixture independently decoded as `yuv420p`, 60
+FPS, BT.709. A 192x128 10-bit 4:4:4 MKV fixture independently decoded as AV1
+`yuv444p10le` when tested on a software encoder path. The focused CTest set
+passed 8/8; the complete configured CTest suite passed 258/258, with two
+model-bundle-dependent tests skipped. These checks do not qualify
+all GPUs/drivers, long videos, 10-bit 4:2:2 fallback performance, HDR, or real
+content interpolation quality.

@@ -2,6 +2,7 @@
 #include "application/job_serialization.hpp"
 #include "common/output_target.hpp"
 #include "media/rife_color.hpp"
+#include "media/encoder_policy.hpp"
 #include "restoration/model_pack.hpp"
 #include "timeline/encoding_time_base.hpp"
 #include <algorithm>
@@ -216,7 +217,17 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         job.settings.encoding.gopSize = platform.gopSizeFrames;
                     }
                     const auto& encoding = job.settings.encoding;
-                    if (encoding.encoder != "auto") {
+                    const auto outputPixelFormat = media::effectiveOutputPixelFormat(job.output,encoding.encoder,
+                        video->color.pixelFormat,encoding.pixelFormat);
+                    // The writer and final validator do not accept a 10-bit
+                    // source reduced to 8-bit output. Reject before loading a
+                    // model even if the encoder itself can open that format.
+                    if (outputPixelFormat == "yuv420p" && video->color.bitDepth > 8) {
+                        result.rejected.push_back({source,ImportRejection::unsupportedColor,
+                            "10-bit source cannot be reduced to 8-bit output; try an MKV export with a compatible encoder"});
+                        valid = false;
+                    }
+                    if (valid && encoding.encoder != "auto") {
                         // Probe the frame the writer will encode, after model scaling
                         // or a per-source target, using the final export parameters.
                         // Source-only probes can accept an unusable encoder/size pair
@@ -227,7 +238,7 @@ ImportResult importVideos(TaskQueue& queue, const ImportRequest& request, std::s
                         outputVideo.width = targetWidth > 0 ? targetWidth : video->width * scale / denominator;
                         outputVideo.height = targetHeight > 0 ? targetHeight : video->height * scale / denominator;
                         media::EncoderProbeSettings probe;
-                        probe.pixelFormat = encoding.pixelFormat;
+                        probe.pixelFormat = outputPixelFormat;
                         probe.timeBase = encoding.timeBase ? *encoding.timeBase : encodingTimeBase(video->timeBase,job.settings.targetRate);
                         probe.frameRate = job.settings.targetRate;
                         probe.bitRate = encoding.bitRate;

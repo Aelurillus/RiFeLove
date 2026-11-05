@@ -750,11 +750,15 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
     }
     if (!batch && !sourceColorSupported_) add(L"色彩配置");
     const auto output = currentOutput();
+    const bool exportYuv420p = media::automaticOutputPixelFormat(utf8(output)) == "yuv420p";
+    if (!batch && sourceInspected_ && exportYuv420p && sourceColor_.bitDepth > 8)
+        add(L"10 位源片不能转为 8 位输出；可尝试 MKV 自动编码");
+    const auto& capabilities = exportYuv420p ? encoderCapabilitiesYuv420p_ : encoderCapabilities_;
     bool selectedEncoderAvailable = encoderAvailable_;
     const int encoderIndex = encoderCombo_ ? static_cast<int>(SendMessageW(encoderCombo_, CB_GETCURSEL, 0, 0)) : 0;
     if (encoderIndex == 0) {
         selectedEncoderAvailable = false;
-        for (const auto& capability : encoderCapabilities_) {
+        for (const auto& capability : capabilities) {
             if (media::isAutomaticEncoderCandidate(utf8(output), capability.encoder) && capability.contextOpened) {
                 selectedEncoderAvailable = true;
                 break;
@@ -762,10 +766,10 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
         }
     } else if (encoderIndex == 1 || encoderIndex == 2) {
         const char* selectedEncoder = encoderIndex == 1 ? "h264_nvenc" : "libopenh264";
-        const auto capability = std::find_if(encoderCapabilities_.begin(), encoderCapabilities_.end(), [&](const auto& item) {
+        const auto capability = std::find_if(capabilities.begin(), capabilities.end(), [&](const auto& item) {
             return item.encoder == selectedEncoder;
         });
-        selectedEncoderAvailable = capability != encoderCapabilities_.end() && capability->contextOpened;
+        selectedEncoderAvailable = capability != capabilities.end() && capability->contextOpened;
     }
     if (!batch && !selectedEncoderAvailable) add(L"视频编码器");
     if (!batch && !deviceAvailable_) add(L"CUDA 设备");
@@ -869,7 +873,10 @@ NativeApp::StartReadiness NativeApp::evaluateStartReadiness() const {
     if (closing_) add(L"正在关闭");
 
     result.ready = blockers.empty();
-    if (result.ready) result.status = L"检查完成，可以开始";
+    if (result.ready) {
+        result.status = !batch && sourceInspected_ && exportYuv420p && sourceColor_.pixelFormat != "yuv420p"
+            ? L"检查完成；输出将转为 8 位 4:2:0" : L"检查完成，可以开始";
+    }
     else {
         result.status = L"还需设置：";
         for (std::size_t i = 0; i < blockers.size(); ++i) {
@@ -1582,6 +1589,7 @@ void NativeApp::setSourcePath(const std::filesystem::path& source) {
         sourceColorSupported_ = false;
         encoderAvailable_ = false;
         encoderCapabilities_.clear();
+        encoderCapabilitiesYuv420p_.clear();
         deviceAvailable_ = false;
         mediaSummary_.clear();
         state_.encoderSummary.clear();
@@ -1599,6 +1607,7 @@ void NativeApp::setSourcePath(const std::filesystem::path& source) {
     sourceColorSupported_ = false;
     encoderAvailable_ = false;
     encoderCapabilities_.clear();
+    encoderCapabilitiesYuv420p_.clear();
     deviceAvailable_ = false;
     state_.encoderSummary.clear();
     mediaSummary_.clear();
@@ -3390,9 +3399,13 @@ void NativeApp::handleProcessingEvent(application::ProcessingEvent event) {
         } else deviceSummary_ = L"CUDA 不可用";
         bool encoderUsable = false;
         encoderCapabilities_ = event.encoderCapabilities;
+        encoderCapabilitiesYuv420p_ = event.encoderCapabilitiesYuv420p;
         encoderAvailable_ = false;
         if (!event.encoderCapabilities.empty()) {
             for (const auto& capability : event.encoderCapabilities) {
+                if (capability.contextOpened) { encoderUsable = true; break; }
+            }
+            if (!encoderUsable) for (const auto& capability : event.encoderCapabilitiesYuv420p) {
                 if (capability.contextOpened) { encoderUsable = true; break; }
             }
             encoderAvailable_ = encoderUsable;
@@ -3718,6 +3731,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
                 sourceColorSupported_ = false;
                 encoderAvailable_ = false;
                 encoderCapabilities_.clear();
+                encoderCapabilitiesYuv420p_.clear();
                 deviceAvailable_ = false;
                 mediaSummary_.clear();
                 state_.encoderSummary.clear();
@@ -3834,6 +3848,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             deviceAvailable_ = false;
             state_.encoderSummary.clear();
             encoderCapabilities_.clear();
+            encoderCapabilitiesYuv420p_.clear();
             const auto source = currentSource();
             if (queuedInputs_.empty() || queuedInputs_.front() != source) {
                 queuedInputs_.clear();

@@ -163,6 +163,76 @@ TEST(BatchImportDimensions, PreflightUsesTheSameDerivedClockAsTheWriter) {
     EXPECT_TRUE(accepted.rejected.empty());
 }
 
+TEST(BatchImportDimensions, PreflightUsesTheOutputContainerPixelFormat) {
+    using namespace rifelove;
+    using namespace rifelove::application;
+    using namespace rifelove::tests::platform_import;
+    Fixture fixture;
+    const auto source = fixture.directory / "source-444.mkv";
+    writeSource(source,176,144,true);
+    const auto stream = media::MediaEngine::probe(source.string()).streams.front();
+    ASSERT_EQ(stream.color.pixelFormat,"yuv444p");
+    ASSERT_FALSE(media::MediaEngine::probeEncoder("mpeg4",stream,Rational(30)).contextOpened);
+    media::EncoderProbeSettings outputProbe; outputProbe.pixelFormat = "yuv420p";
+    ASSERT_TRUE(media::MediaEngine::probeEncoderWithSettings("mpeg4",stream,outputProbe).contextOpened);
+
+    ImportRequest request;
+    request.inputs = {source}; request.outputDirectory = fixture.directory;
+    request.settings.modelDirectory = fixture.directory / "rife";
+    request.settings.runtimeDirectory = fixture.directory / "runtime";
+    request.settings.settings.targetRate = Rational(30);
+    request.settings.settings.encoding.encoder = "mpeg4";
+    TaskQueue queue(fixture.directory / "container-pixel-format.sqlite");
+    request.container = "mkv";
+    const auto preservesSource = importVideos(queue,request);
+    ASSERT_EQ(preservesSource.rejected.size(),1U);
+    EXPECT_EQ(preservesSource.rejected.front().reason,ImportRejection::unsupportedEncoder);
+    request.container = "mp4";
+    const auto converted = importVideos(queue,request);
+    EXPECT_EQ(converted.taskIds.size(),1U);
+    EXPECT_TRUE(converted.rejected.empty());
+    request.settings.settings.encoding.pixelFormat = "yuv444p";
+    const auto explicitFormat = importVideos(queue,request);
+    ASSERT_EQ(explicitFormat.rejected.size(),1U);
+    EXPECT_EQ(explicitFormat.rejected.front().reason,ImportRejection::unsupportedEncoder);
+
+    const auto tenBit = fixture.directory / "source-10bit-444.mkv";
+    writeSource(tenBit,176,144,true,true);
+    ASSERT_EQ(media::MediaEngine::probe(tenBit.string()).streams.front().color.bitDepth,10);
+    // The default legacy fixture declares only SDR8. Give this non-executable
+    // test graph a v2 SDR10 declaration so import reaches the output check.
+    using Json = nlohmann::json;
+    const auto modelRoot = fixture.directory / "rife";
+    const auto writeJson = [](const std::filesystem::path& path, const Json& value) {
+        std::ofstream file(path,std::ios::binary); file << value.dump();
+        if (!file) throw std::runtime_error("Cannot write test model metadata");
+    };
+    const auto graphHash = digest(modelRoot / "model.onnx");
+    const Json profiles = Json::array({"bt709-sdr8","bt709-sdr10"});
+    const Json backends = Json::array({"fixture-cpu"});
+    writeJson(modelRoot / "source-manifest.json",{{"license","MIT"},
+        {"upstreamRepository","https://example.invalid/test"},{"upstreamCommit","fixture"}});
+    writeJson(modelRoot / "validation.json",{{"status","passed_fixture"},{"model_sha256",graphHash},
+        {"numerical_profile","sdr8"},{"validated_backends",backends},
+        {"supported_input_profiles",profiles},{"cases",Json::array({{{"passed",true}}})}});
+    const Json capabilities{{"inputLayout","NCHW"},{"dtype","float32"},{"batch",1},{"channels",3},
+        {"inputRange",Json::array({0.0,1.0})},{"spatialMultiple",64},{"timestepShape",Json::array({1,1,1,1})},
+        {"dynamicTimestep",true},{"dynamicSpatial",true},{"supportedInputProfiles",profiles},{"hdrQualified",false}};
+    writeJson(modelRoot / "model.json",{{"schemaVersion",2},{"id","test-rife"},{"family","rife"},
+        {"version","1"},{"modelFile","model.onnx"},{"sha256",graphHash},
+        {"license",{{"id","MIT"},{"file","LICENSE.txt"},{"sha256",digest(modelRoot / "LICENSE.txt")}}},
+        {"provenance",{{"manifestFile","source-manifest.json"},{"manifestSha256",digest(modelRoot / "source-manifest.json")}}},
+        {"capabilities",capabilities},{"validation",{{"reportFile","validation.json"},
+            {"reportSha256",digest(modelRoot / "validation.json")},{"numericalProfile","sdr8"},{"validatedBackends",backends}}}});
+    request.inputs = {tenBit};
+    request.settings.settings.encoding.pixelFormat.clear();
+    request.settings.settings.encoding.encoder = "auto";
+    const auto reducedDepth = importVideos(queue,request);
+    ASSERT_EQ(reducedDepth.rejected.size(),1U);
+    EXPECT_EQ(reducedDepth.rejected.front().reason,ImportRejection::unsupportedColor);
+    EXPECT_TRUE(reducedDepth.taskIds.empty());
+}
+
 TEST(BatchPlatformBitrate, UsesEachSourceHeightAndTargetRate) {
     using namespace rifelove::application;
     EXPECT_EQ(platformBitrateKbps(PlatformBitrate::youtube, 720, 30), 5000);

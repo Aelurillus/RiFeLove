@@ -2,6 +2,7 @@
 #include "application/job_serialization.hpp"
 #include "common/logging.hpp"
 #include "inference/onnx_cuda_backend.hpp"
+#include "media/encoder_policy.hpp"
 #include "media/rife_color.hpp"
 #include "restoration/model_pack.hpp"
 #include "restoration/onnx_cuda_backend.hpp"
@@ -264,8 +265,20 @@ bool ProcessingService::inspect(std::string source, Callback callback) {
         for (const auto& stream : event.media->streams) if (stream.index == event.media->preferredVideoStream) {
             try { event.sourceInputProfile = media::rifeSdrInputProfile(stream.color); event.sourceColorSupported = true; }
             catch (const std::exception&) {}
-            constexpr std::array<const char*,4> encoderNames{"h264_nvenc","libopenh264","libkvazaar","libaom-av1"};
-            for (const auto* name : encoderNames) event.encoderCapabilities.push_back(media::MediaEngine::probeEncoder(name,stream,{},stop));
+            constexpr std::array<const char*,6> encoderNames{"h264_nvenc","hevc_nvenc","av1_nvenc","libopenh264","libkvazaar","libaom-av1"};
+            for (const auto* name : encoderNames) {
+                media::EncoderProbeSettings probe;
+                probe.pixelFormat = media::automaticHardwareEncoderPixelFormat(name,stream.color.pixelFormat);
+                event.encoderCapabilities.push_back(media::MediaEngine::probeEncoderWithSettings(name,stream,probe,stop));
+            }
+            if (stream.color.pixelFormat == "yuv420p") {
+                event.encoderCapabilitiesYuv420p = event.encoderCapabilities;
+            } else {
+                media::EncoderProbeSettings outputProbe;
+                outputProbe.pixelFormat = "yuv420p";
+                for (const auto* name : {"h264_nvenc", "libopenh264"})
+                    event.encoderCapabilitiesYuv420p.push_back(media::MediaEngine::probeEncoderWithSettings(name,stream,outputProbe,stop));
+            }
         }
         if (stop.stop_requested()) throw std::runtime_error("Inspection cancelled");
         try { event.device = gpu::CudaDevice().info(); }
