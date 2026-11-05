@@ -1,6 +1,6 @@
 # RifeLove 补帧客观与盲评协议
 
-**版本：0.2 · 日期：2026-11-03 · 状态：Sintel 镜头分组对照已运行（22 段、21 个跨镜插值样本已分离）；训练/验证切分、盲评和真实素材验收仍未完成。**
+**版本：0.3 · 日期：2026-11-06 · 状态：Sintel 镜头分组对照与 UVG-VCM Winter Drive 短片段试点已运行；训练/验证切分、盲评和用户实拍素材验收仍未完成。**
 
 本文规定候选补帧模型进入 RifeLove 预设或改变默认模型前，如何比较画质、时间稳定性、速度、显存和许可。本文不宣布任何候选获胜；论文数字、合成短片和本机历史记录都不能代替按本协议完成的对照。
 
@@ -54,6 +54,23 @@
 #### 15→60 4×实拍评测（2026-11-05）
 
 2026-11-05 完成 Floorball Game 同一帧段的 15→60、1080p TensorRT FP32 对照：18 帧输入、69 帧参考、51 个非源参考点；RIFE 4.25/4.26 的非源 PSNR/SSIM 均值为 37.0441 dB/0.924599 与 37.1020 dB/0.925139，源时刻全部匹配，结果 PTS 与参考逐帧一致。单次流水线速度均约 1.397 输出帧/秒；4.26 的一次端到端时间受 TensorRT 初始化影响，不能作为稳态速度结论。4.26 的均值优势有限，单段结果不改变默认模型；详见[本机 4×评测记录](LOCAL_MODEL_SELECTION.md)。
+
+### 2.3 UVG-VCM Winter Drive 短片段试点
+
+[UVG-VCM 官方页](https://ultravideo.fi/UVG-VCM/index.html)说明数据集包含 20 段未压缩序列并采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)，并请引用 T. Partanen, M. Anttila, R. Kortelahti, G. Gautier, A. Mercat, J. Vanne, “UVG-VCM: Benchmarking dataset for machine-oriented visual data compression,” Proc. Int. Conf. Qual. Multimedia Exper.（2026）。本试点只从 [Winter Drive 官方 3840×2160、60 fps、YUV 4:4:4、16-bit 序列](https://ultravideo.fi/UVG-VCM/WinterDrive/WinterDrive_3840x2160_60fps_yuv444_16bits_600.yuv)取连续第 210–279 帧；原始局部文件为 3,483,648,000 字节，SHA-256 `85bea84c1690d850e6a52d4368050c27c05740e7c42cfe3c46d3b91b59186c54`，保存在被 Git 忽略的 `out/datasets/uvg-vcm/`，不随本仓库再分发。网页未声明这段原始 YUV 的色彩矩阵或范围；本次准备时显式假设 BT.709 limited，把素材变换到 1920×1080 `yuv444p10le`。这一假设是评测预处理，不是上游元数据。
+
+准备后源片为 35 帧、30 fps，SHA-256 `a53f9639260feff4c7f4cf7dbf3c14e6b878534b6bd717879fa805c8c9a4e856`；真值为 69 帧、60 fps，SHA-256 `14dabe7b64612a68fdf7091de061f2ae8b67016271302f6688d75a0e00cbd3d4`。两者为 1920×1080 BT.709 limited `yuv444p10le`。RifeLove 管线各生成 70 帧（35 原帧、34 AI 中点、1 个末尾保持帧）；对照文件仅去掉该边界保持帧，评估器确认候选与真值 69 个 PTS 完全一致。此处理只用于对齐比较，不改变管线原始报告。
+
+| 候选 | 权重 SHA-256 | 非源帧 PSNR 均值 / 中位数 / 最低值 | 非源帧 SSIM 均值 / 中位数 / 最低值 | 相邻帧差分 PSNR / SSIM 均值 |
+| --- | --- | --- | --- | --- |
+| RIFE 4.25 FP32 SDR8 | `8905ab350363251e45e1b46fec355042da9514a34941e64c62b82d9c422205d3` | 40.332 / 40.325 / 38.84 dB | 0.953322 / 0.953891 / 0.942445 | 40.336 dB / 0.956099 |
+| RIFE 4.26 FP32 SDR8 | `e6df922305d77a7db5685a9f964bae3736cc1f394cd914f34db4c1411e5c0726` | 40.392 / 40.385 / 38.78 dB | 0.953823 / 0.954387 / 0.942564 | 40.397 dB / 0.956513 |
+
+每版有 34 个非源中点、35 个逐像素匹配的源帧。4.26 的平均 PSNR 高 0.060 dB、SSIM 高 0.000501；但最低 PSNR 低 0.06 dB。差异很小，且 PSNR/SSIM 与未做运动补偿的相邻帧差分都不能单独判定观感，也未计算 LPIPS。当前证据不足以据此更换 4.25 默认值或宣布 4.26 普遍更优；下一步仍需多场景、分组保留集和匿名全速盲评。
+
+运行使用本机 GTX 1660 SUPER、TensorRT+CUDA 推理后端、FFV1 无损编码及 FFmpeg 8.1.3；两个模型均无推理或编码器回退。由于质量试验采用 FFV1、源解码为软件路径，且只做单次顺序运行，端到端用时（4.25：51.36 秒；4.26：45.50 秒）不能作为日常编码速度排名。管线报告的全流程时间分别为 42.64 秒和 42.55 秒；本结果不代表当前发行版的性能验收。
+
+可复核报告留在本机忽略目录 `out/datasets/uvg-vcm/candidates/winter-drive-210-279/quality-winter-drive-4.25-vs-4.26.json`，SHA-256 为 `1b2b841d15baaf41333cfb3907cfd37da2950fe0760668a18d7da002488f4a10`。评估脚本 SHA-256 为 `6b8c874b16ec89bf2561caa5942de07361b81752b845daefc3b40d94e01da684`。补帧由旧本机 CLI `build/windows-release/rifelove-cli.exe` 执行（文件时间 2026-10-26，SHA-256 `bd80e4bd9c83a1f1979159b02122d16c279cb2964f12f49c7ca00feb773d97e6`）；因此该对照仅作模型研究记录，不是 `origin/main` 当前流水线或发行包的验收结果。最低分帧索引 51（0-based，约 0.85 秒）应作为后续视觉复核线索，不是自动伪影判断。
 
 ## 3. 固定时间轴与运行设置
 
@@ -117,3 +134,4 @@ PSNR、SSIM、LPIPS、光流差分和人工偏好都不是单独的绝对画质�
 - 2026-11-04 候选复核后，SPEED 权重页标示 Apache-2.0，但作者代码仓库没有 LICENSE，故本机执行与集成暂缓；GTX 1660 SUPER 的 BF16 路径也不适用，FP16/FP32 显存、速度、导出和质量尚未验证。LDF-VFI 的代码和权重页标示 Apache-2.0，但官方 8× quick start 约需 20 GB 显存，超出当前 6 GB 工作站。详情见[本机模型选择记录](LOCAL_MODEL_SELECTION.md)。
 - 当前工作树已实现原生 schema v1/v2 质量报告导入、共享复核点随机匿名盲评、媒体 SHA-256 核对、评分导出及按当前 Windows 用户加密的盲评会话恢复；2026-11-03 Windows 原生桌面目标编译链接成功。真实报告导入、窗口交互、重启恢复、DPI 与播放帧率尚未验收，因此盲评流程仍未通过产品验收。
 - 当前只有一个动画 trailer 上的两候选对照；虽已完成 22 段逐镜头评测，仍未完成独立的训练/验证镜头切分、盲评或真实视频验证。不得据此更新通用模型排名或称默认模型已通过新的质量验收。
+
