@@ -98,13 +98,92 @@ payload=<base64 of the exact UTF-8 JSON bytes>
 signature=<base64 of the 64-byte IEEE P1363 signature>
 ```
 
-`tools/model_catalog/Sign-ModelCatalog.ps1` validates the catalog shape and
-channel hosts, signs the exact payload bytes, and verifies the signature
-locally before writing the envelope. A version-1 catalog has one recommended
-RIFE entry, a SHA-256 and byte-size pin for its distribution manifest, and at
+`tools/model_catalog/Sign-ModelCatalog.ps1` requires the exact finalized
+distribution manifest and a fresh anonymous read-back receipt, validates that
+their package identity and channels match the catalog, signs the exact payload
+bytes, confirms that the publisher certificate's public point matches the
+trust root compiled into the client, and verifies the signature locally before
+writing the envelope. A version-1 catalog has one recommended RIFE entry, a
+SHA-256 and byte-size pin for its distribution manifest, and at
 least two HTTPS archive channels on distinct hosts. The app fetches the
 catalog only after the user chooses “安装官方推荐模型”; it then verifies the
 catalog, downloads the pinned manifest, checks the entry identity, and uses
 the existing archive and model-pack verifier. The Cloudflare Pages and GitHub
 Raw catalog URLs are compiled as fallback sources. Publishing the signed file
 and reading the same bytes back anonymously are still release gates.
+
+## Repeatable publication procedure
+
+The publication scripts are intentionally separate from account login and file
+upload. Their network operations are anonymous HTTPS GETs; they never read a
+publisher credential. Keep the channel file, generated read-back receipts, and
+the signing key outside the source repository.
+
+1. Upload the exact ZIP from `out/model-distribution` to two durable HTTPS
+   hosts. Do not use expiring query-string links. Prepare a local `channels.json`
+   with each host's public archive and `.distribution.json` URLs:
+
+   ```json
+   [
+     {
+       "name": "GitHub Releases",
+       "archiveUrl": "https://github.com/Aelurillus/RiFeLove/releases/download/<release>/RifeLove-RIFE-4.25-FP32-SDR8-v3.zip",
+       "manifestUrl": "https://github.com/Aelurillus/RiFeLove/releases/download/<release>/RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json"
+     },
+     {
+       "name": "Cloudflare Pages",
+       "archiveUrl": "https://rifelove-updatelog.pages.dev/model-distribution/RifeLove-RIFE-4.25-FP32-SDR8-v3.zip",
+       "manifestUrl": "https://rifelove-updatelog.pages.dev/model-distribution/RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json"
+     }
+   ]
+   ```
+
+2. Have the tool anonymously download each hosted ZIP, stream its SHA-256,
+   compare the full byte count and hash to the local candidate, and only then
+   write a separate finalized sidecar with state `archive-channels-verified`.
+   That state means the archive read-backs passed; it does not claim the sidecar
+   or catalog has been published. The tool refuses to overwrite outputs:
+
+   ```powershell
+   $release = '.\out\model-distribution\public-candidate'
+   .\tools\model_catalog\Set-ModelReleaseChannels.ps1 `
+     -DistributionManifestPath '.\out\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json' `
+     -ArchivePath '.\out\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.zip' `
+     -ChannelsPath "$release\channels.json" `
+     -OutputManifestPath "$release\RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json"
+   ```
+
+3. Upload that exact finalized sidecar to every `manifestUrl`. Then verify
+   anonymous read-backs of both the ZIP and sidecar from every host and build
+   the native catalog payload plus a local audit receipt:
+
+   ```powershell
+   .\tools\model_catalog\New-ModelCatalogPayload.ps1 `
+     -DistributionManifestPath "$release\RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json" `
+     -ArchivePath '.\out\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.zip' `
+     -OutputPayloadPath "$release\catalog.payload.json" `
+     -ReadbackReceiptPath "$release\model-readback.json"
+   .\tools\model_catalog\Sign-ModelCatalog.ps1 `
+     -PayloadPath "$release\catalog.payload.json" `
+     -DistributionManifestPath "$release\RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json" `
+     -ReadbackReceiptPath "$release\model-readback.json" `
+     -OutputPath "$release\catalog.signed.txt"
+   ```
+
+4. Publish the signed envelope to both catalog fallback paths already compiled
+   into the native client. Verify both public URLs return the exact local
+   envelope bytes before enabling the official install action in a release:
+
+   ```powershell
+   .\tools\model_catalog\Confirm-ModelCatalogPublication.ps1 `
+     -EnvelopePath "$release\catalog.signed.txt" `
+     -ReadbackReceiptPath "$release\catalog-readback.json"
+   ```
+
+`Set-ModelReleaseChannels.ps1` proves only the anonymous archive read-backs at
+the time it runs. `New-ModelCatalogPayload.ps1` independently checks both
+archive and finalized-manifest bytes from every channel immediately before
+payload generation. The final catalog confirmation checks both client fallback
+URLs. A successful local script run does not upload files, approve third-party
+runtime redistribution, or qualify the Windows application release; those
+remain separate gates in `WINDOWS_REDISTRIBUTION_AUDIT.md`.
