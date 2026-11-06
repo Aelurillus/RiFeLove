@@ -190,28 +190,36 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
         drawPill(state.processing ? L"●  正在处理" : L"●  完全本地", px(l.right - 126), px(30), px(l.right), px(60), D2D1::ColorF(0x1B2C27), accent);
 
         const float bodyWidth = l.right - l.left;
-        cardAt(l.left, 104, bodyWidth, 224, D2D1::ColorF(0x141B25), 16);
-        text(L"AI 帧插值", l.left + 28, 125, bodyWidth - 56, 22, 11, accent, true);
-        text(L"让每一段运动，更流畅。", l.left + 28, 151, bodyWidth - 56, 38, l.singleColumn ? 21 : 27, white, true);
+        cardAt(l.left, 104, bodyWidth, l.homeHeroHeight, D2D1::ColorF(0x141B25), 16);
+        text(L"AI 帧插值", l.left + 28, l.compactHome ? 118 : 125, bodyWidth - 56, 22, 11, accent, true);
+        text(L"让每一段运动，更流畅。", l.left + 28, l.compactHome ? 143 : 151,
+            bodyWidth - 56, l.compactHome ? 31 : 38, l.compactHome ? 21 : (l.singleColumn ? 21 : 27), white, true);
         text(state.processing
                 ? std::to_wstring(state.outputFrames) + L" 帧已输出 · " +
                     std::to_wstring(static_cast<int>(state.processingFps * 10.0) / 10.0) + L" 处理 FPS"
-                : L"选择视频后，RifeLove 会先检查素材、模型与运行环境，再生成新的中间帧。",
-             l.left + 30, 202, bodyWidth - 60, 44, 12, muted, false, true);
-        text(state.processing && !state.status.empty() ? state.status :
-             L"原始视频保持不变 · 推理与导出都在本机完成", l.left + 30, 242, bodyWidth - 60, 22, 10, muted);
+                : L"选择视频后，RifeLove 会检查素材、模型与运行环境，再生成新的中间帧。",
+             l.left + 30, l.compactHome ? 179 : 202, bodyWidth - 60, l.compactHome ? 32 : 44,
+             l.compactHome ? 10 : 12, muted, false, true);
+        if (!l.compactHome) {
+            text(state.processing && !state.status.empty() ? state.status :
+                 L"原始视频保持不变 · 推理与导出都在本机完成", l.left + 30, 242, bodyWidth - 60, 22, 10, muted);
+        }
 
-        const float gap = 14.0F;
-        const float cardWidth = (bodyWidth - gap * 2.0F) / 3.0F;
-        const float cardsTop = l.height < 520.0F ? 338.0F : 350.0F;
-        const float cardHeight = std::max(120.0F, std::min(176.0F, l.height - cardsTop - 20.0F));
-        const auto readinessCard = [&](float x, const wchar_t* eyebrow, const wchar_t* heading,
+        const auto readinessCard = [&](float x, float y, float width, float height,
+            const wchar_t* eyebrow, const wchar_t* heading, const wchar_t* compactHeading,
             const std::wstring& detail, bool ready) {
-            cardAt(x, cardsTop, cardWidth, cardHeight);
-            text(eyebrow, x + 16, cardsTop + 16, cardWidth - 32, 18, 9, muted, true);
-            text(heading, x + 16, cardsTop + 40, cardWidth - 32, 24, 14, white, true);
-            text(ready ? L"已就绪" : L"需要设置", x + 16, cardsTop + 69, cardWidth - 32, 20, 10, ready ? accent : warning, true);
-            text(detail, x + 16, cardsTop + 96, cardWidth - 32, cardHeight - 106, 10, muted, false, true);
+            cardAt(x, y, width, height);
+            if (l.compactHome) {
+                text(compactHeading, x + 14, y + 7, 126, 18, 11, white, true);
+                text(ready ? L"已就绪" : L"需要设置", x + 14, y + 26, 126, 14, 9,
+                    ready ? accent : warning, true);
+                text(detail, x + 150, y + 6, width - 164, height - 12, 10, muted, false, true);
+                return;
+            }
+            text(eyebrow, x + 16, y + 16, width - 32, 18, 9, muted, true);
+            text(heading, x + 16, y + 40, width - 32, 24, 14, white, true);
+            text(ready ? L"已就绪" : L"需要设置", x + 16, y + 69, width - 32, 20, 10, ready ? accent : warning, true);
+            text(detail, x + 16, y + 96, width - 32, height - 106, 10, muted, false, true);
         };
         std::wstring deviceDetail = L"导入视频后检查 NVIDIA GPU、CUDA 驱动与可用编码器。";
         if (state.deviceReady || state.encoderReady) {
@@ -222,16 +230,32 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
                 deviceDetail += state.encoderSummary;
             }
         }
-        readinessCard(l.left, L"01  ·  硬件", L"设备与编码",
-            deviceDetail, state.deviceReady && state.encoderReady);
-        readinessCard(l.left + cardWidth + gap, L"02  ·  MODEL", L"RIFE 模型",
-            state.modelReady ? (state.modelSummary.empty() ? L"默认模型已通过本机完整性校验。" : state.modelSummary)
-                : L"在本地模型中心安装并验证 RIFE 模型。",
-            state.modelReady);
-        readinessCard(l.left + (cardWidth + gap) * 2.0F, L"03  ·  RUNTIME", L"推理运行库",
-            state.runtimeReady ? (state.runtimeSummary.empty() ? L"本地推理运行库已就绪。" : state.runtimeSummary)
-                : L"选择本地 CUDA / TensorRT 运行库。",
-            state.runtimeReady);
+        const auto modelDetail = state.modelReady
+            ? (state.modelSummary.empty() ? L"默认模型已通过本机完整性校验。" : state.modelSummary)
+            : L"在本地模型中心安装并验证 RIFE 模型。";
+        const auto runtimeDetail = state.runtimeReady
+            ? (state.runtimeSummary.empty() ? L"本地推理运行库已就绪。" : state.runtimeSummary)
+            : L"选择本地 CUDA / TensorRT 运行库。";
+        if (l.compactHome) {
+            const std::array<const wchar_t*, 3> headings{L"01  设备与编码", L"02  RIFE 模型", L"03  推理运行库"};
+            const std::array<std::wstring, 3> details{deviceDetail, modelDetail, runtimeDetail};
+            const std::array<bool, 3> ready{state.deviceReady && state.encoderReady, state.modelReady, state.runtimeReady};
+            for (std::size_t index = 0; index < headings.size(); ++index) {
+                const float rowTop = l.homeReadinessTop + static_cast<float>(index) *
+                    (l.homeReadinessHeight + l.homeReadinessGap);
+                readinessCard(l.left, rowTop, bodyWidth, l.homeReadinessHeight, L"", L"", headings[index],
+                    details[index], ready[index]);
+            }
+        } else {
+            readinessCard(l.left, l.homeReadinessTop, l.homeReadinessWidth, l.homeReadinessHeight,
+                L"01  ·  硬件", L"设备与编码", L"", deviceDetail, state.deviceReady && state.encoderReady);
+            readinessCard(l.left + l.homeReadinessWidth + l.homeReadinessGap, l.homeReadinessTop,
+                l.homeReadinessWidth, l.homeReadinessHeight, L"02  ·  MODEL", L"RIFE 模型", L"",
+                modelDetail, state.modelReady);
+            readinessCard(l.left + (l.homeReadinessWidth + l.homeReadinessGap) * 2.0F, l.homeReadinessTop,
+                l.homeReadinessWidth, l.homeReadinessHeight, L"03  ·  RUNTIME", L"推理运行库", L"",
+                runtimeDetail, state.runtimeReady);
+        }
         if (l.height >= 640.0F) {
             cardAt(l.left, 548, bodyWidth, 120, D2D1::ColorF(0x111720), 14);
             text(L"从视频到成片", l.left + 20, 566, 170, 22, 12, white, true);

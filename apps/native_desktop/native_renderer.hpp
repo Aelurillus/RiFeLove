@@ -87,12 +87,20 @@ struct NativeLayout {
     float resourceButtonsTop = 410;
     bool singleColumn = false;
     bool qualityExpanded = false;
+    bool compactHome = false;
     float exportOffset = 0;
     float contentEnd = 778 + qualityControlsHeight;
     bool compactImport = false;
     float sourceActionsTop = 116;
     float sourceInputTop = 182;
     float scroll = 0;
+    float homeHeroHeight = 224;
+    float homeStartTop = 266;
+    float homeStartHeight = 46;
+    float homeReadinessTop = 350;
+    float homeReadinessHeight = 176;
+    float homeReadinessGap = 14;
+    float homeReadinessWidth = 0;
     // Export card and HWND controls use the same 20-DIP content inset.
     [[nodiscard]] float exportCardLeft() const { return singleColumn ? left : split + 20.0F; }
     [[nodiscard]] float exportCardWidth() const { return right - exportCardLeft(); }
@@ -120,6 +128,26 @@ struct NativeLayout {
         value.compactImport = value.split - value.left < 440.0F;
         value.sourceActionsTop = value.compactImport ? 150.0F : 116.0F;
         value.sourceInputTop = value.compactImport ? 194.0F : 182.0F;
+        // Home has a different, shorter responsive layout from the scrollable
+        // Studio. Stack readiness summaries before their text becomes cramped.
+        const float homeWidth = value.right - value.left;
+        value.compactHome = homeWidth < 620.0F;
+        if (value.compactHome) {
+            value.homeHeroHeight = 164.0F;
+            value.homeStartTop = 216.0F;
+            value.homeStartHeight = 42.0F;
+            value.homeReadinessTop = 280.0F;
+            value.homeReadinessGap = 8.0F;
+            value.homeReadinessHeight = std::clamp(
+                (height - value.homeReadinessTop - 16.0F - value.homeReadinessGap * 2.0F) / 3.0F,
+                44.0F, 80.0F);
+            value.homeReadinessWidth = homeWidth;
+        } else {
+            value.homeReadinessTop = height < 520.0F ? 338.0F : 350.0F;
+            value.homeReadinessHeight = std::max(120.0F,
+                std::min(176.0F, height - value.homeReadinessTop - 20.0F));
+            value.homeReadinessWidth = (homeWidth - value.homeReadinessGap * 2.0F) / 3.0F;
+        }
         value.dock = height - (value.singleColumn ? 138.0F : 100.0F);
         value.contentBottom = value.dock - 14.0F;
         // Keep both resource buttons inside short windows at high DPI.
