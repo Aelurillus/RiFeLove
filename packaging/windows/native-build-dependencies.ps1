@@ -151,7 +151,8 @@ function Get-NativeCompilerRuntimeIdentity {
 }
 
 function Assert-NativeInferenceRuntimeIdentity {
-    param([Parameter(Mandatory=$true)]$Selection)
+    param([Parameter(Mandatory=$true)]$Selection,
+          [string[]]$RequiredFileNames = @(), [switch]$CudaOnly)
     $reference = [string]$Selection.cache['RIFELOVE_TENSORRT_RUNTIME_DIR']
     if ([string]::IsNullOrWhiteSpace($reference) -or -not (Test-Path -LiteralPath $reference -PathType Container)) {
         throw 'The selected build has no available RIFELOVE_TENSORRT_RUNTIME_DIR reference. Reconfigure with the reviewed runtime before packaging.'
@@ -166,11 +167,25 @@ function Assert-NativeInferenceRuntimeIdentity {
     }
     $referenceNames = @(Get-ChildItem -LiteralPath $reference -File -Filter '*.dll' | ForEach-Object Name | Sort-Object)
     $candidateNames = @(Get-ChildItem -LiteralPath $candidate -File -Filter '*.dll' | ForEach-Object Name | Sort-Object)
-    if ($referenceNames.Count -eq 0 -or $candidateNames.Count -ne $referenceNames.Count -or
-        (Compare-Object -ReferenceObject $referenceNames -DifferenceObject $candidateNames)) {
-        throw 'Selected inference runtime DLL inventory differs from the runtime recorded in the build.'
+    if ($CudaOnly) {
+        $identityNames = @($RequiredFileNames | Sort-Object -Unique)
+        if ($identityNames.Count -eq 0) {
+            throw 'CUDA-only runtime identity requires the selected CUDA DLL inventory.'
+        }
+        $missingReference = @($identityNames | Where-Object { $_ -notin $referenceNames })
+        $missingCandidate = @($identityNames | Where-Object { $_ -notin $candidateNames })
+        if ($missingReference.Count -gt 0 -or $missingCandidate.Count -gt 0) {
+            $missing = @($missingReference + $missingCandidate | Sort-Object -Unique)
+            throw "CUDA-only inference runtime is missing selected DLLs: $($missing -join ', ')"
+        }
+    } else {
+        if ($referenceNames.Count -eq 0 -or $candidateNames.Count -ne $referenceNames.Count -or
+            (Compare-Object -ReferenceObject $referenceNames -DifferenceObject $candidateNames)) {
+            throw 'Selected inference runtime DLL inventory differs from the runtime recorded in the build.'
+        }
+        $identityNames = $referenceNames
     }
-    foreach ($name in @($referenceNames) + @('tensorrt-runtime.version')) {
+    foreach ($name in $identityNames) {
         $selected = Join-Path $candidate $name
         $recorded = Join-Path $reference $name
         foreach ($path in @($selected,$recorded)) {
@@ -180,6 +195,18 @@ function Assert-NativeInferenceRuntimeIdentity {
         if ($reference -ine $candidate -and
             (Get-FileHash -LiteralPath $selected -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $recorded -Algorithm SHA256).Hash) {
             throw "Inference runtime identity mismatch for $name; overrides must match the runtime recorded in the build."
+        }
+    }
+    if (-not $CudaOnly) {
+        $selected = Join-Path $candidate 'tensorrt-runtime.version'
+        $recorded = Join-Path $reference 'tensorrt-runtime.version'
+        foreach ($path in @($selected,$recorded)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Inference runtime identity file missing: $path" }
+            if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Inference runtime identity file cannot be a link: $path" }
+        }
+        if ($reference -ine $candidate -and
+            (Get-FileHash -LiteralPath $selected -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $recorded -Algorithm SHA256).Hash) {
+            throw 'Inference runtime identity mismatch for tensorrt-runtime.version; overrides must match the runtime recorded in the build.'
         }
     }
 }
