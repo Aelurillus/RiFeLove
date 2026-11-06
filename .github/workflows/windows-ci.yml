@@ -67,7 +67,7 @@ jobs:
           tests/model_validation/test_automatic_detail_gpu_e2e.py -q
 
   release-site-model-channel:
-    name: Model Pages staging / signed-catalog contracts
+    name: Release publishing / signed-model contracts
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
@@ -75,5 +75,5 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate model Pages asset staging
-        run: node --test tools/release/model-pages-assets.test.mjs
+      - name: Validate release publisher and model distribution contracts
+        run: npm run test --prefix release-site
