@@ -65,3 +65,15 @@ jobs:
           tests/model_validation/test_stdf_real_luma_quality.py
           tests/model_validation/test_nafnet_video_quality.py
           tests/model_validation/test_automatic_detail_gpu_e2e.py -q
+
+  release-site-model-channel:
+    name: Model Pages staging / signed-catalog contracts
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate model Pages asset staging
+        run: node --test tools/release/model-pages-assets.test.mjs

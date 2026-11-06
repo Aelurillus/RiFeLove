@@ -112,6 +112,64 @@ the existing archive and model-pack verifier. The Cloudflare Pages and GitHub
 Raw catalog URLs are compiled as fallback sources. Publishing the signed file
 and reading the same bytes back anonymously are still release gates.
 
+## Cloudflare Pages model mirror
+
+The model mirror uses the existing `rifelove-updatelog` Pages project at the
+paths already bound into the client. A model-only deployment would replace the
+update-log site, so `tools/release/build-site.mjs` accepts an external staging
+directory and builds the update-log files together with the verified model
+assets. Normal `npm run build` remains update-log-only unless
+`RIFELOVE_MODEL_PAGES_STAGE` is set.
+
+Cloudflare Pages limits an individual site asset to 25 MiB. The current model
+ZIP is 21,121,121 bytes; the builder checks this limit and the archive hash
+before it copies anything into `release-site/dist`. Use a different large-file
+host for a future model package that exceeds that limit.
+
+After the model has passed the release gates above, first publish the ZIP to
+the Pages channel so its stable URL can be anonymously verified. Keep the
+candidate manifest local during this bootstrap deployment:
+
+```powershell
+$release = '.\out\model-distribution\public-candidate'
+$bootstrap = Join-Path $release 'pages-bootstrap'
+New-Item -ItemType Directory -Force "$bootstrap\model-distribution" | Out-Null
+Copy-Item '.\out\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.zip' `
+  "$bootstrap\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.zip"
+Copy-Item '.\out\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json' `
+  "$bootstrap\model-distribution\RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json"
+$env:RIFELOVE_MODEL_PAGES_STAGE = (Resolve-Path $bootstrap).Path
+$env:RIFELOVE_MODEL_PAGES_MODE = 'archive-bootstrap'
+npm run --prefix release-site build
+npm run --prefix release-site deploy
+Remove-Item Env:RIFELOVE_MODEL_PAGES_STAGE
+Remove-Item Env:RIFELOVE_MODEL_PAGES_MODE
+```
+
+The bootstrap mode accepts only a hash-matched local RIFE candidate and places
+only its ZIP at the public path; it does not copy the local manifest or enable
+the signed-catalog install action. The full-channel build accepts only the
+finalized manifest and a catalog envelope that verifies against the native
+trust root and matches that manifest. Stage the final tree as follows after
+channel read-backs and catalog signing:
+
+```text
+<stage>/
+  model-distribution/
+    RifeLove-RIFE-4.25-FP32-SDR8-v3.zip
+    RifeLove-RIFE-4.25-FP32-SDR8-v3.distribution.json
+  model-catalog/
+    v1/catalog.signed.txt
+```
+
+Then set `RIFELOVE_MODEL_PAGES_STAGE` to `<stage>`, set
+`RIFELOVE_MODEL_PAGES_MODE` to `final`, and run the same build and deploy
+commands. The final build also checks that two to five distinct HTTPS hosts are
+declared, the Pages URLs match these exact paths, and the signed catalog pins
+the staged archive and sidecar. It retains the update-log page and adds
+immutable caching for versioned model files plus short caching for the catalog.
+After deployment, run the anonymous read-back tools in the procedure below.
+
 ## Repeatable publication procedure
 
 The publication scripts are intentionally separate from account login and file
