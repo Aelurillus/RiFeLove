@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace rifelove::native_desktop {
 
@@ -205,8 +206,17 @@ public:
     void discardTarget() noexcept;
 
 private:
+    struct TextFormatCacheEntry {
+        float sizeDips = 0.0F;
+        DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
+        bool wrap = false;
+        ComPtr<IDWriteTextFormat> format;
+        ComPtr<IDWriteInlineObject> ellipsis;
+    };
+
     [[nodiscard]] bool ensureResources(HWND window);
     [[nodiscard]] bool draw(HWND window, const NativeRenderState& state);
+    [[nodiscard]] TextFormatCacheEntry* getTextFormat(float size, bool bold, bool wrap);
     void drawText(const std::wstring& text, float left, float top, float right, float bottom,
         float size, D2D1::ColorF color, bool bold = false, bool wrap = false);
     void fillCard(float left, float top, float right, float bottom, D2D1::ColorF color, float radius = 12.0F);
@@ -217,6 +227,7 @@ private:
     ComPtr<ID2D1RenderTarget> renderTarget_;
     ComPtr<ID2D1SolidColorBrush> brush_;
     ComPtr<IDWriteFactory> writeFactory_;
+    std::vector<TextFormatCacheEntry> textFormats_;
     HWND targetWindow_ = nullptr;
     UINT targetWidth_ = 0;
     UINT targetHeight_ = 0;

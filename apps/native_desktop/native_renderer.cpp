@@ -28,7 +28,9 @@ bool NativeRenderer::ensureResources(HWND window) {
             reinterpret_cast<IUnknown**>(writeFactory_.put())))) return false;
     }
     const UINT dpi = GetDpiForWindow(window);
-    scale_ = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+    const float nextScale = static_cast<float>(dpi ? dpi : 96U) / 96.0F;
+    if (nextScale != scale_) textFormats_.clear();
+    scale_ = nextScale;
     RECT client{};
     GetClientRect(window, &client);
     const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
@@ -74,24 +76,39 @@ void NativeRenderer::drawPill(const std::wstring& text, float left, float top, f
         12.0F, textColor, false, false);
 }
 
+NativeRenderer::TextFormatCacheEntry* NativeRenderer::getTextFormat(float size, bool bold, bool wrap) {
+    const float sizeDips = dip(size, scale_);
+    const auto weight = bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
+    const auto cached = std::find_if(textFormats_.begin(), textFormats_.end(), [&](const auto& entry) {
+        return entry.sizeDips == sizeDips && entry.weight == weight && entry.wrap == wrap;
+    });
+    if (cached != textFormats_.end()) return &*cached;
+
+    TextFormatCacheEntry entry;
+    entry.sizeDips = sizeDips;
+    entry.weight = weight;
+    entry.wrap = wrap;
+    if (FAILED(writeFactory_->CreateTextFormat(L"Microsoft YaHei UI", nullptr, weight,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, sizeDips,
+        L"zh-CN", entry.format.put()))) return nullptr;
+    entry.format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    entry.format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    entry.format->SetWordWrapping(wrap ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+    if (!wrap && SUCCEEDED(writeFactory_->CreateEllipsisTrimmingSign(entry.format.get(), entry.ellipsis.put()))) {
+        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        entry.format->SetTrimming(&trimming, entry.ellipsis.get());
+    }
+    textFormats_.push_back(std::move(entry));
+    return &textFormats_.back();
+}
+
 void NativeRenderer::drawText(const std::wstring& text, float left, float top, float right, float bottom,
     float size, D2D1::ColorF color, bool bold, bool wrap) {
     if (text.empty()) return;
-    ComPtr<IDWriteTextFormat> format;
-    if (FAILED(writeFactory_->CreateTextFormat(L"Microsoft YaHei UI", nullptr,
-        bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, dip(size, scale_),
-        L"zh-CN", format.put()))) return;
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    format->SetWordWrapping(wrap ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
-    ComPtr<IDWriteInlineObject> ellipsis;
-    if (!wrap && SUCCEEDED(writeFactory_->CreateEllipsisTrimmingSign(format.get(), ellipsis.put()))) {
-        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-        format->SetTrimming(&trimming, ellipsis.get());
-    }
+    auto* format = getTextFormat(size, bold, wrap);
+    if (!format) return;
     brush_->SetColor(color);
-    renderTarget_->DrawText(text.c_str(), static_cast<UINT32>(text.size()), format.get(),
+    renderTarget_->DrawText(text.c_str(), static_cast<UINT32>(text.size()), format->format.get(),
         D2D1::RectF(left, top, right, bottom), brush_.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
