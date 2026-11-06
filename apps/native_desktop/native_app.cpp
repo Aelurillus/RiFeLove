@@ -1002,6 +1002,9 @@ void NativeApp::createControls() {
     rejectionDetailsButton_ = createButton(L"拒绝明细", kRejectionDetails);
     statusDetailsButton_ = createButton(L"查看详情", kStatusDetails);
     historyButton_ = createButton(L"任务历史", kTaskHistory);
+    homeButton_ = createButton(L"主页", kHome);
+    studioButton_ = createButton(L"插帧工作室", kStudio);
+    homeStartButton_ = createButton(L"开始插帧", kHomeStart);
     comparisonButton_ = createButton(L"逐帧比较", kComparison);
     automaticDenoiseButton_ = createButton(L"自动降噪：关", kAutomaticDenoise);
     denoiseAdjustmentEdit_ = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
@@ -1100,7 +1103,7 @@ void NativeApp::createControls() {
     ShowWindow(outputSizeLabel_, SW_HIDE);
     ShowWindow(outputSizeCombo_, SW_HIDE);
     setFonts();
-    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, qualityDisclosureButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) {
+    for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, qualityDisclosureButton_, startButton_, cancelButton_, pauseResumeButton_, rejectionDetailsButton_, historyButton_, homeButton_, studioButton_, homeStartButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_}) {
         if (!control) continue;
         const auto original = SetWindowLongPtrW(control, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&NativeApp::scrollChildProcedure));
         SetPropW(control, L"RifeLoveScrollChildProc", reinterpret_cast<HANDLE>(original));
@@ -1116,7 +1119,7 @@ void NativeApp::setFonts() {
     font_ = CreateFontW(height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
         L"Microsoft YaHei UI");
-    const std::array<HWND, 50> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, qualityDisclosureButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, statusDetailsButton_, historyButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
+    const std::array<HWND, 53> controls{sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_, encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, modelButton_, runtimeButton_, advancedButton_, qualityDisclosureButton_, startButton_, pauseResumeButton_, cancelButton_, rejectionDetailsButton_, statusDetailsButton_, historyButton_, homeButton_, studioButton_, homeStartButton_, comparisonButton_, automaticDenoiseButton_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_, temporalRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, restorationCombo_, outputSizeCombo_,
         sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_, platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_};
     for (const auto control : controls) if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
     for (const auto combo : {rateCombo_, encoderCombo_, platformCombo_, temporalRestorationCombo_, deblurRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, restorationCombo_, outputSizeCombo_}) {
@@ -1191,6 +1194,41 @@ void NativeApp::layoutControls() {
     // type scale and none inherits a mismatching STATIC background.
     for (const auto label : {sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelLabel_,
         platformLabel_, shutterLabel_, samplesLabel_, temporalRestorationLabel_, restorationLabel_, outputSizeLabel_}) ShowWindow(label, SW_HIDE);
+    move(homeButton_, layout.singleColumn ? 8 : 12, 135, layout.side - (layout.singleColumn ? 16 : 24), 40, true, true);
+    move(studioButton_, layout.singleColumn ? 8 : 12, 181, layout.side - (layout.singleColumn ? 16 : 24), 40, true, true);
+    SetWindowTextW(homeButton_, L"主页");
+    SetWindowTextW(studioButton_, layout.singleColumn ? L"插帧" : L"插帧工作室");
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    SetWindowTextW(historyButton_, layout.singleColumn ? L"记录" : L"任务历史");
+    move(historyButton_, layout.singleColumn ? 8 : 12, 227, layout.side - (layout.singleColumn ? 16 : 24), 40, taskQueue_ != nullptr, true);
+#else
+    ShowWindow(historyButton_, SW_HIDE);
+#endif
+    if (homePage_) {
+        for (const auto control : {sourceEdit_, sourceButton_, sourceFolderButton_, outputEdit_, outputButton_, rateCombo_, rateCustomEdit_,
+            encoderCombo_, platformCombo_, motionBlurCheck_, shutterEdit_, samplesEdit_, advancedButton_, qualityDisclosureButton_,
+            temporalRestorationCombo_, deblurRestorationCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_,
+            restorationCombo_, outputSizeCombo_, shutterLabel_, samplesLabel_, restorationLabel_, outputSizeLabel_, temporalRestorationLabel_,
+            modelLabel_, platformLabel_, sourceLabel_, outputLabel_, rateLabel_, encoderLabel_, modelButton_, runtimeButton_, startButton_,
+            cancelButton_, pauseResumeButton_, rejectionDetailsButton_, statusDetailsButton_, comparisonButton_, automaticDenoiseButton_,
+            denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_,
+            automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_}) {
+            if (!control) continue;
+            SetPropW(control, L"RifeLoveFocusEligible", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(0)));
+            ShowWindow(control, SW_HIDE);
+        }
+        SetWindowTextW(modelButton_, layout.singleColumn ? L"模型" : L"本地模型中心");
+        SetWindowTextW(runtimeButton_, layout.singleColumn ? L"运行" : L"选择运行库");
+        move(modelButton_, layout.singleColumn ? 8 : 18, layout.resourceButtonsTop,
+            layout.side - (layout.singleColumn ? 16 : 36), 32, true, true);
+        move(runtimeButton_, layout.singleColumn ? 8 : 18, layout.resourceButtonsTop + 40,
+            layout.side - (layout.singleColumn ? 16 : 36), 32, true, true);
+        SetWindowTextW(homeStartButton_, L"进入插帧工作室");
+        move(homeStartButton_, layout.left + 28, 266, std::min(220.0F, layout.right - layout.left - 56), 46, true, true);
+        ShowScrollBar(window_, SB_VERT, FALSE);
+        return;
+    }
+    move(homeStartButton_, layout.left, 0, 1, 1, false, true);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     SetWindowTextW(sourceFolderButton_, layout.compactImport ? L"文件夹" : L"导入文件夹");
     move(sourceFolderButton_, layout.compactImport ? left + 114 : layout.split - 244,
@@ -1246,7 +1284,7 @@ void NativeApp::layoutControls() {
     move(comparisonButton_, right - 250, 28, 112, 34, true, true);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     SetWindowTextW(historyButton_, layout.singleColumn ? L"记录" : L"任务历史");
-    move(historyButton_, layout.singleColumn ? 8 : 12, 188, layout.side - (layout.singleColumn ? 16 : 24), 42, taskQueue_ != nullptr, true);
+    move(historyButton_, layout.singleColumn ? 8 : 12, 227, layout.side - (layout.singleColumn ? 16 : 24), 40, taskQueue_ != nullptr, true);
 #else
     ShowWindow(historyButton_, SW_HIDE);
 #endif
@@ -1340,7 +1378,7 @@ void NativeApp::ensureControlVisible(HWND control) {
 }
 
 bool NativeApp::focusNextControl(bool reverse) {
-    const std::array<HWND, 39> order{sourceButton_, sourceFolderButton_, sourceEdit_, motionBlurCheck_, qualityDisclosureButton_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
+    const std::array<HWND, 42> order{homeButton_, studioButton_, homeStartButton_, sourceButton_, sourceFolderButton_, sourceEdit_, motionBlurCheck_, qualityDisclosureButton_, automaticDenoiseButton_, temporalRestorationCombo_, denoiseAdjustmentEdit_, denoiseAdjustmentResetButton_, deblurRestorationCombo_, automaticDetailButton_, detailAdjustmentEdit_, detailAdjustmentResetButton_, restorationCombo_, outputSizeCombo_, compressionRestorationCombo_, compressionStrengthCombo_, compressionTilingCheck_, automaticCompressionButton_, compressionAdjustmentEdit_, compressionAdjustmentResetButton_,
         advancedButton_, shutterEdit_, samplesEdit_, platformCombo_, rateCombo_, rateCustomEdit_, encoderCombo_, outputEdit_, outputButton_,
         modelButton_, runtimeButton_, comparisonButton_, historyButton_, statusDetailsButton_, pauseResumeButton_, cancelButton_, startButton_, rejectionDetailsButton_};
     const auto found = std::find(order.begin(), order.end(), GetFocus());
@@ -1386,6 +1424,13 @@ void NativeApp::updateView() {
     state_.runtimeSummary = runtimeSummary_;
     state_.deviceSummary = deviceSummary_;
     state_.platformSummary = platformSummary_;
+#ifdef RIFELOVE_NATIVE_HAS_PROCESSING
+    state_.deviceReady = deviceAvailable_;
+    state_.encoderReady = encoderAvailable_;
+#else
+    state_.deviceReady = false;
+    state_.encoderReady = false;
+#endif
     const auto rateSelection = static_cast<int>(SendMessageW(rateCombo_, CB_GETCURSEL, 0, 0));
     const auto rateText = rateSelection >= 0 && rateSelection < static_cast<int>(kTargetRates.size())
         ? std::to_wstring(kTargetRates[static_cast<std::size_t>(rateSelection)]) : controlText(rateCustomEdit_);
@@ -1487,6 +1532,7 @@ void NativeApp::updateView() {
 #endif
     state_.advancedExpanded = advancedExpanded_;
     state_.qualityExpanded = qualityExpanded_;
+    state_.homePage = homePage_;
     state_.automaticTemporalDenoise = automaticTemporalDenoise_;
     state_.automaticDetailRestoration = automaticDetailRestoration_;
     state_.automaticCompressionRestoration = automaticCompressionRestoration_;
@@ -1498,6 +1544,16 @@ void NativeApp::updateView() {
         InvalidateRect(window_, nullptr, FALSE);
         updateButtonState();
     }
+}
+
+void NativeApp::setHomePage(bool visible) {
+    if (homePage_ == visible) return;
+    homePage_ = visible;
+    state_.scrollOffset = 0.0F;
+    layoutControls();
+    updateView();
+    const HWND target = homePage_ ? homeButton_ : sourceButton_;
+    if (target && IsWindowVisible(target) && IsWindowEnabled(target)) SetFocus(target);
 }
 
 void NativeApp::updateButtonState() {
@@ -1583,6 +1639,7 @@ void NativeApp::toggleAdvancedSettings() {
 
 void NativeApp::setSourcePath(const std::filesystem::path& source) {
     if (source.empty()) return;
+    if (homePage_) setHomePage(false);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
     queuedInputs_.clear();
     queuedInputs_.push_back(source);
@@ -4382,9 +4439,10 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         InvalidateRect(window_, nullptr, FALSE);
         return 0;
     case WM_MOUSEWHEEL:
-        scrollSettings(-GET_WHEEL_DELTA_WPARAM(wParam) / 3);
+        if (!homePage_) scrollSettings(-GET_WHEEL_DELTA_WPARAM(wParam) / 3);
         return 0;
     case WM_VSCROLL: {
+        if (homePage_) return 0;
         const int action = LOWORD(wParam);
         if (action == SB_LINEUP) scrollSettings(-32);
         else if (action == SB_LINEDOWN) scrollSettings(32);
@@ -4499,6 +4557,9 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         }
         if (HIWORD(wParam) == BN_CLICKED) {
             switch (LOWORD(wParam)) {
+            case kHome: setHomePage(true); return 0;
+            case kStudio:
+            case kHomeStart: setHomePage(false); return 0;
             case kSelectSource: selectSource(); return 0;
             case kSelectSourceFolder: selectSourceFolder(); return 0;
             case kSelectOutput: selectOutput(); return 0;
@@ -4562,6 +4623,7 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             }
         }
         if (LOWORD(wParam) == kSourceEdit && HIWORD(wParam) == EN_CHANGE) {
+            if (homePage_) setHomePage(false);
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
             ++sourceGeneration_;
             sourceInspected_ = false;
@@ -4699,12 +4761,13 @@ LRESULT NativeApp::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const bool pressed = !disabled && (item->itemState & ODS_SELECTED) != 0;
         const bool focused = (item->itemState & ODS_FOCUS) != 0;
-        const bool accentButton = item->CtlID == kStart || item->CtlID == kSelectSource || item->CtlID == kSelectOutput;
-        const COLORREF color = disabled ? RGB(38, 49, 63) : accentButton ?
+        const bool accentButton = item->CtlID == kStart || item->CtlID == kHomeStart || item->CtlID == kSelectSource || item->CtlID == kSelectOutput;
+        const bool activeNavigation = (item->CtlID == kHome && homePage_) || (item->CtlID == kStudio && !homePage_);
+        const COLORREF color = disabled ? RGB(38, 49, 63) : activeNavigation ? RGB(33, 53, 47) : accentButton ?
             (pressed ? RGB(118, 202, 170) : RGB(145, 224, 192)) :
             (pressed ? RGB(43, 74, 101) : RGB(34, 56, 82));
-        const COLORREF textColor = disabled ? RGB(125, 140, 157) : accentButton ? RGB(16, 36, 44) : RGB(242, 247, 255);
-        const bool sidebarButton = item->CtlID == kSelectModel || item->CtlID == kSelectRuntime;
+        const COLORREF textColor = disabled ? RGB(125, 140, 157) : activeNavigation ? RGB(162, 231, 203) : accentButton ? RGB(16, 36, 44) : RGB(242, 247, 255);
+        const bool sidebarButton = item->CtlID == kSelectModel || item->CtlID == kSelectRuntime || item->CtlID == kHome || item->CtlID == kStudio;
         const bool dockButton = item->CtlID == kStart || item->CtlID == kPauseResume || item->CtlID == kCancel;
         HBRUSH surface = CreateSolidBrush(sidebarButton ? RGB(16, 20, 28) : dockButton ? RGB(12, 15, 21) : RGB(19, 24, 32));
         FillRect(item->hDC, &item->rcItem, surface);

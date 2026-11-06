@@ -51,10 +51,13 @@ struct NativeRenderState {
     bool processing = false;
     bool processingAvailable = false;
     bool sourceReady = false;
+    bool deviceReady = false;
+    bool encoderReady = false;
     bool modelReady = false;
     bool runtimeReady = false;
     bool advancedExpanded = false;
     bool qualityExpanded = false;
+    bool homePage = false;
     bool automaticTemporalDenoise = false;
     bool automaticDetailRestoration = false;
     bool automaticCompressionRestoration = false;

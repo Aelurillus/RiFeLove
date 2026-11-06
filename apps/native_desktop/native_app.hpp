@@ -160,6 +160,9 @@ private:
     static constexpr int kDetailAdjustmentEdit = 1038;
     static constexpr int kDetailAdjustmentReset = 1039;
     static constexpr int kQualityDisclosure = 1040;
+    static constexpr int kHome = 1041;
+    static constexpr int kStudio = 1042;
+    static constexpr int kHomeStart = 1043;
     static constexpr int kShutterLabel = 1106;
     static constexpr int kSamplesLabel = 1107;
     static constexpr int kRestorationLabel = 1109;
@@ -218,6 +221,7 @@ private:
     bool focusNextControl(bool reverse);
     void ensureControlVisible(HWND control);
     void updateView();
+    void setHomePage(bool visible);
     void updateButtonState();
     void showStatusDetails();
     void toggleAdvancedSettings();
@@ -371,6 +375,9 @@ private:
     HWND restorationLabel_ = nullptr;
     HWND outputSizeLabel_ = nullptr;
     HWND temporalRestorationLabel_ = nullptr;
+    HWND homeButton_ = nullptr;
+    HWND studioButton_ = nullptr;
+    HWND homeStartButton_ = nullptr;
     HWND modelButton_ = nullptr;
     HWND runtimeButton_ = nullptr;
     HWND startButton_ = nullptr;
@@ -417,6 +424,11 @@ private:
     std::atomic<bool> closing_{false};
     bool advancedExpanded_ = false;
     bool qualityExpanded_ = false;
+#ifdef RIFELOVE_NATIVE_TESTING
+    bool homePage_ = false;
+#else
+    bool homePage_ = true;
+#endif
     bool automaticTemporalDenoise_ = false;
     bool automaticDetailRestoration_ = false;
     bool automaticCompressionRestoration_ = false;
