@@ -504,8 +504,12 @@ $ffmpegSdk = Read-FfmpegSdkIdentity $build $ffmpeg
 Assert-NoLinkTree $ffmpeg
 Assert-NoLinkTree $runtime
 Assert-NoLinkTree $mingw
+$runtimeSourceFiles = @(Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll" | Sort-Object Name)
+$runtimeSelection = Resolve-NativeInferenceRuntimeSelection -AvailableFileNames @($runtimeSourceFiles | ForEach-Object Name) -CudaOnly:$CudaOnly
+$runtimeFiles = @($runtimeSourceFiles | Where-Object { $runtimeSelection.files -contains $_.Name })
+$requiredRuntimeFiles = @($runtimeSelection.requiredFiles)
 $compilerIdentity = Get-NativeCompilerRuntimeIdentity $dependencySelection
-Assert-NativeInferenceRuntimeIdentity $dependencySelection
+Assert-NativeInferenceRuntimeIdentity $dependencySelection -RequiredFileNames @($runtimeFiles | ForEach-Object Name) -CudaOnly:$CudaOnly
 
 $ffmpegFiles = @(
     "avcodec-62.dll", "avformat-62.dll", "avutil-60.dll", "swresample-6.dll", "swscale-9.dll",
@@ -514,15 +518,14 @@ $ffmpegFiles = @(
 foreach ($name in $ffmpegFiles) { Resolve-ExistingFile (Join-Path $ffmpeg "bin/$name") "FFmpeg 运行库" | Out-Null }
 $ffmpegRuntimeHashes = Assert-FfmpegRuntimeIdentity -SdkRoot $ffmpeg -RuntimeDirectory $build -FileNames $ffmpegFiles
 $ffmpegX86asmDescription = if ($ffmpegSdk.configuration.x86asmEnabled) { "enabled; end-to-end throughput remains workload-specific" } else { "disabled; CPU throughput remains unqualified" }
-$runtimeSourceFiles = @(Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll" | Sort-Object Name)
-$runtimeSelection = Resolve-NativeInferenceRuntimeSelection -AvailableFileNames @($runtimeSourceFiles | ForEach-Object Name) -CudaOnly:$CudaOnly
-$runtimeFiles = @($runtimeSourceFiles | Where-Object { $runtimeSelection.files -contains $_.Name })
-$requiredRuntimeFiles = @($runtimeSelection.requiredFiles)
 $versionFile = Join-Path $runtime "tensorrt-runtime.version"
-if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) { throw "缺少 TensorRT 运行库版本/校验侧车：$versionFile" }
-$versionLines = @(Get-Content -LiteralPath $versionFile | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($versionLines.Count -lt 2 -or $versionLines[0] -notmatch '^\d+\.\d+\.\d+\.\d+$' -or $versionLines[1] -notmatch '^[0-9a-fA-F]{64}$') {
-    throw "TensorRT 运行库版本侧车格式无效，必须包含版本和来源 SHA-256：$versionFile"
+$versionLines = @()
+if ($runtimeSelection.includesTensorRt) {
+    if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) { throw "缺少 TensorRT 运行库版本/校验侧车：$versionFile" }
+    $versionLines = @(Get-Content -LiteralPath $versionFile | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($versionLines.Count -lt 2 -or $versionLines[0] -notmatch '^\d+\.\d+\.\d+\.\d+$' -or $versionLines[1] -notmatch '^[0-9a-fA-F]{64}$') {
+        throw "TensorRT 运行库版本侧车格式无效，必须包含版本和来源 SHA-256：$versionFile"
+    }
 }
 $runtimeSourceDescription = if ($runtimeSelection.includesTensorRt) { 'local TensorRT/ONNX Runtime CUDA SDK' } else { 'local ONNX Runtime CUDA SDK' }
 $mingwFiles = @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
