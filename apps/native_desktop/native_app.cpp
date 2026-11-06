@@ -31,7 +31,9 @@
 #ifdef RIFELOVE_NATIVE_HAS_PROCESSING
 #include "native_package_archive.hpp"
 #include "native_model_download.hpp"
+#include "native_model_catalog.hpp"
 #include <nlohmann/json.hpp>
+#include <winhttp.h>
 #include "media/encoder_policy.hpp"
 #include "media/media_engine.hpp"
 #include "media/rife_color.hpp"
@@ -1801,7 +1803,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         SendMessageW(app->modelDownloadUrl_, EM_SETLIMITTEXT, 32768, 0);
         SendMessageW(app->modelDownloadUrl_, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(L"ZIP 地址 | 清单地址；多个镜像用分号分隔"));
-        control(L"BUTTON", L"下载并安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
+        control(L"BUTTON", L"手动镜像安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
+        control(L"BUTTON", L"安装官方推荐模型", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelOfficial);
         app->modelSearch_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, kModelSearch);
         SendMessageW(app->modelSearch_, EM_SETLIMITTEXT, 256, 0);
         SendMessageW(app->modelSearch_, EM_SETCUEBANNER, TRUE,
@@ -1951,7 +1954,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
             return TRUE;
         }
         if (item->CtlType != ODT_BUTTON) break;
-        const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelDownload;
+        const bool primary = static_cast<int>(item->CtlID) == kModelDefault ||
+            static_cast<int>(item->CtlID) == kModelDownload || static_cast<int>(item->CtlID) == kModelOfficial;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
         const bool focused = (item->itemState & ODS_FOCUS) != 0;
@@ -2049,6 +2053,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         if (id == kModelRegister && app->modelChangesAllowed()) {
             const auto directory = app->browseForFolder(L"登记本机模型目录（包含 model.json）；原文件保留不变");
             if (!directory.empty()) (void)app->registerLocalModel(directory);
+        } else if (id == kModelOfficial && app->modelChangesAllowed() && !app->modelInstallActive_.load()) {
+            app->startModelPackageInstall({}, {}, true);
         } else if (id == kModelDownload && app->modelChangesAllowed() && !app->modelInstallActive_.load()) {
             const auto input = app->controlText(app->modelDownloadUrl_);
             std::vector<ModelPackageMirror> mirrors;
@@ -2162,7 +2168,7 @@ void NativeApp::layoutModelCenter() {
     if (!modelCenterHeadingFont_) modelCenterHeadingFont_ = CreateFontW(-MulDiv(11, dpi ? dpi : 96, 72), 0, 0, 0, FW_SEMIBOLD,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    for (int id = 1200; id <= kModelSearch; ++id) {
+    for (int id = 1200; id <= kModelOfficial; ++id) {
         const auto child = GetDlgItem(modelCenterWindow_, id);
         const bool heading = id == kModelListHeading || id == kModelDetailsHeading;
         const auto font = heading && modelCenterHeadingFont_ ? modelCenterHeadingFont_ : modelCenterFont_;
@@ -2176,7 +2182,8 @@ void NativeApp::layoutModelCenter() {
     const int buttonHeight = px(34);
     const int buttonRows = 2;
     const int buttonsTop = std::max(px(180), static_cast<int>(client.bottom) - margin - buttonRows * (buttonHeight + gap) + gap);
-    const int headingTop = px(120), headingHeight = px(20);
+    const bool compactDownloadRow = width < px(640);
+    const int headingTop = px(compactDownloadRow ? 160 : 120), headingHeight = px(20);
     const int contentTop = headingTop + headingHeight + px(6);
     const int contentBottom = std::max(contentTop + px(60), buttonsTop - gap);
     const int contentHeight = std::max(px(60), contentBottom - contentTop);
@@ -2185,9 +2192,19 @@ void NativeApp::layoutModelCenter() {
     };
     move(modelCenterStatus_, margin, px(12), width, px(56));
     const int downloadButtonWidth = px(148);
-    const int downloadButtonLeft = margin + width - downloadButtonWidth;
-    move(modelDownloadUrl_, margin, px(76), width - downloadButtonWidth - gap, px(34));
-    move(GetDlgItem(modelCenterWindow_, kModelDownload), downloadButtonLeft, px(76), downloadButtonWidth, px(34));
+    const int officialButtonWidth = px(174);
+    if (compactDownloadRow) {
+        const int halfWidth = (width - gap) / 2;
+        move(GetDlgItem(modelCenterWindow_, kModelOfficial), margin, px(76), halfWidth, px(34));
+        move(GetDlgItem(modelCenterWindow_, kModelDownload), margin + halfWidth + gap, px(76), halfWidth, px(34));
+        move(modelDownloadUrl_, margin, px(118), width, px(34));
+    } else {
+        const int officialButtonLeft = margin + width - downloadButtonWidth - officialButtonWidth - gap;
+        const int downloadButtonLeft = margin + width - downloadButtonWidth;
+        move(modelDownloadUrl_, margin, px(76), width - downloadButtonWidth - officialButtonWidth - gap * 2, px(34));
+        move(GetDlgItem(modelCenterWindow_, kModelOfficial), officialButtonLeft, px(76), officialButtonWidth, px(34));
+        move(GetDlgItem(modelCenterWindow_, kModelDownload), downloadButtonLeft, px(76), downloadButtonWidth, px(34));
+    }
     if (narrow) {
         const int listHeight = std::max(px(48), contentHeight * 2 / 5);
         const int detailsHeadingTop = contentTop + listHeight + gap;
@@ -2308,6 +2325,7 @@ void NativeApp::updateModelDetails() {
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelRegister), editable && !installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelInstall), editable && !installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelDownload), editable && !installing);
+    EnableWindow(GetDlgItem(modelCenterWindow_, kModelOfficial), editable && !installing);
     EnableWindow(modelDownloadUrl_, editable && !installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelCancelInstall), installing);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelDefault), editable && item && item->usable);
@@ -2318,7 +2336,7 @@ void NativeApp::updateModelDetails() {
         ? std::to_wstring(localModels_.size()) + L" 个已登记模型；支持本地安装与 HTTPS 镜像下载。\r\n"
         : std::to_wstring(modelCenterVisibleIndexes_.size()) + L" / " + std::to_wstring(localModels_.size()) +
             L" 个已登记模型匹配筛选条件。\r\n";
-    status += L"SHA-256 检查文件完整性，不认证发布者或画质。\r\n";
+    status += L"官方目录签名认证发布者；手动镜像的 SHA-256 只校验文件完整性。\r\n";
     if (installing) {
         std::lock_guard lock(modelInstallMutex_);
         status += modelInstallState_.status;
@@ -3592,12 +3610,13 @@ bool NativeApp::saveModelPreferences(const NativeModelPreferences& preferences) 
     }
 }
 
-void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, std::vector<ModelPackageMirror> mirrors) {
+void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, std::vector<ModelPackageMirror> mirrors,
+                                        bool fetchOfficialCatalog) {
     if (!modelPreferencesWritable_ || !dataDirectory_.writable || !dataDirectory_.preferencesReady ||
         !modelChangesAllowed() || modelInstallActive_.load()) return;
     if (modelInstallThread_.joinable()) modelInstallThread_.join();
     auto manifestPath = archive;
-    if (!mirrors.empty()) manifestPath.clear();
+    if (!mirrors.empty() || fetchOfficialCatalog) manifestPath.clear();
     else manifestPath.replace_extension(L".distribution.json");
     {
         std::lock_guard lock(modelInstallMutex_);
@@ -3605,9 +3624,9 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
         modelInstallState_.status = L"准备校验模型包…";
     }
     modelInstallActive_.store(true);
-    const bool downloading = !mirrors.empty();
+    const bool downloading = !mirrors.empty() || fetchOfficialCatalog;
     try {
-        modelInstallThread_ = std::jthread([this, archive, manifestPath, mirrors = std::move(mirrors)](std::stop_token stopToken) {
+        modelInstallThread_ = std::jthread([this, archive, manifestPath, mirrors = std::move(mirrors), fetchOfficialCatalog](std::stop_token stopToken) mutable {
             std::optional<std::filesystem::path> installed;
             std::wstring failure;
             std::wstring status;
@@ -3616,10 +3635,151 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
                 auto resolvedArchive = archive;
                 auto resolvedManifestPath = manifestPath;
                 std::vector<std::filesystem::path> downloadedManifests;
-                if (!mirrors.empty()) {
+                std::vector<std::filesystem::path> downloadedCatalogs;
+                std::optional<ModelPackageMirror> selectedMirror;
+                const auto boundedString = [](const nlohmann::json& object, const char* name, std::size_t limit) {
+                    const auto& value = object.at(name);
+                    if (!value.is_string()) throw std::invalid_argument(std::string("Invalid model distribution field: ") + name);
+                    const auto text = value.get<std::string>();
+                    if (text.empty() || text.size() > limit || text.find('\0') != std::string::npos)
+                        throw std::invalid_argument(std::string("Invalid model distribution field: ") + name);
+                    return text;
+                };
+                const auto safeComponent = [](const std::string& value) {
+                    if (value.empty() || value.size() > 128 ||
+                        !((value.front() >= 'a' && value.front() <= 'z') || (value.front() >= 'A' && value.front() <= 'Z') ||
+                          (value.front() >= '0' && value.front() <= '9'))) return false;
+                    return value != "." && value != ".." && std::all_of(value.begin(), value.end(), [](char ch) {
+                        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                            (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.';
+                    });
+                };
+                const auto validHash = [](const std::string& value) {
+                    return value.size() == 64 && std::all_of(value.begin(), value.end(), [](char ch) {
+                        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+                    });
+                };
+                if (!mirrors.empty() || fetchOfficialCatalog) {
                     const auto downloadsRoot = dataDirectory_.directory / L"ModelDownloads";
                     prepareWritableNativeDataDirectory(downloadsRoot);
                     (void)checkedNativeModelDirectory(downloadsRoot, false);
+                    if (fetchOfficialCatalog) {
+                        constexpr std::array<std::wstring_view, 2> catalogSources{
+                            L"https://rifelove-updatelog.pages.dev/model-catalog/v1/catalog.signed.txt",
+                            L"https://raw.githubusercontent.com/Aelurillus/RiFeLove/main/model-catalog/v1/catalog.signed.txt"
+                        };
+                        const auto catalogCandidate = downloadsRoot / L"official-model-catalog.signed.txt";
+                        std::wstring catalogFailures;
+                        for (std::size_t sourceIndex = 0; sourceIndex < catalogSources.size(); ++sourceIndex) {
+                            mirrors.clear();
+                            try {
+                                if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
+                                {
+                                    std::lock_guard lock(modelInstallMutex_);
+                                    modelInstallState_.completedBytes = 0;
+                                    modelInstallState_.totalBytes = 0;
+                                    modelInstallState_.status = L"正在获取并验签官方模型目录（来源 " +
+                                        std::to_wstring(sourceIndex + 1) + L"）";
+                                }
+                                const auto reportCatalogProgress = [this](NativeModelDownloadProgress value) {
+                                    std::lock_guard lock(modelInstallMutex_);
+                                    modelInstallState_.completedBytes = value.completedBytes;
+                                    modelInstallState_.totalBytes = value.totalBytes;
+                                    modelInstallState_.status = L"正在下载官方模型目录；尚未开始模型安装";
+                                };
+                                downloadNativeModelFile(std::wstring(catalogSources[sourceIndex]), catalogCandidate,
+                                    0, {}, 384 * 1024, stopToken, reportCatalogProgress);
+                                const auto catalogBytes = inference::readLocalFile(catalogCandidate, 384 * 1024);
+                                const std::string envelope(reinterpret_cast<const char*>(catalogBytes.data()), catalogBytes.size());
+                                const auto payload = verifyOfficialNativeModelCatalog(envelope);
+                                const auto catalog = nlohmann::json::parse(payload);
+                                if (!catalog.is_object() || catalog.at("schemaVersion") != 1)
+                                    throw std::invalid_argument("Unsupported official model catalog version");
+                                const auto& catalogModels = catalog.at("models");
+                                if (!catalogModels.is_array() || catalogModels.empty() || catalogModels.size() > 32)
+                                    throw std::invalid_argument("The signed official model catalog has no valid model list");
+                                const nlohmann::json* recommendedModel = nullptr;
+                                std::size_t recommendedCount = 0;
+                                for (const auto& entry : catalogModels) {
+                                    if (!entry.is_object()) throw std::invalid_argument("Invalid model entry in signed official catalog");
+                                    const auto recommended = entry.find("recommended");
+                                    if (recommended == entry.end() || !recommended->is_boolean())
+                                        throw std::invalid_argument("Official catalog entries must declare their recommendation status");
+                                    if (recommended->get<bool>()) { recommendedModel = &entry; ++recommendedCount; }
+                                }
+                                if (!recommendedModel || recommendedCount != 1)
+                                    throw std::invalid_argument("The official catalog must identify exactly one recommended model");
+                                const auto family = boundedString(*recommendedModel, "family", 32);
+                                const auto packageId = boundedString(*recommendedModel, "packageId", 128);
+                                const auto modelId = boundedString(*recommendedModel, "id", 128);
+                                const auto modelVersion = boundedString(*recommendedModel, "version", 128);
+                                const auto modelSha = boundedString(*recommendedModel, "modelSha256", 64);
+                                if (family != "rife" || !safeComponent(packageId) || !safeComponent(modelId) ||
+                                    !safeComponent(modelVersion) || !validHash(modelSha))
+                                    throw std::invalid_argument("The recommended catalog entry is not a supported RIFE model pack");
+                                const auto& manifestPin = recommendedModel->at("manifest");
+                                if (!manifestPin.is_object()) throw std::invalid_argument("Invalid signed distribution manifest pin");
+                                const auto manifestSize = manifestPin.at("sizeBytes").get<std::uint64_t>();
+                                const auto manifestSha = boundedString(manifestPin, "sha256", 64);
+                                if (manifestSize == 0 || manifestSize > 1024 * 1024 || !validHash(manifestSha))
+                                    throw std::invalid_argument("The signed distribution manifest pin is invalid");
+                                const auto& channelEntries = recommendedModel->at("channels");
+                                if (!channelEntries.is_array() || channelEntries.size() < 2 || channelEntries.size() > 5)
+                                    throw std::invalid_argument("The official model needs two to five independent download channels");
+                                std::set<std::wstring> channelHosts;
+                                for (const auto& channel : channelEntries) {
+                                    if (!channel.is_object()) throw std::invalid_argument("Invalid official model download channel");
+                                    ModelPackageMirror mirror;
+                                    mirror.channelName = wideFromUtf8(boundedString(channel, "name", 64));
+                                    const auto archiveText = boundedString(channel, "archiveUrl", 8192);
+                                    const auto manifestText = boundedString(channel, "manifestUrl", 8192);
+                                    if (!archiveText.starts_with("https://") || !manifestText.starts_with("https://") ||
+                                        archiveText.find('#') != std::string::npos || manifestText.find('#') != std::string::npos)
+                                        throw std::invalid_argument("Official model download channels must use direct HTTPS URLs");
+                                    mirror.archiveUrl = wideFromUtf8(archiveText);
+                                    mirror.manifestUrl = wideFromUtf8(manifestText);
+                                    mirror.expectedManifestSizeBytes = manifestSize;
+                                    mirror.expectedManifestSha256 = manifestSha;
+                                    mirror.expectedPackageId = packageId;
+                                    mirror.expectedModelId = modelId;
+                                    mirror.expectedModelVersion = modelVersion;
+                                    mirror.expectedModelSha256 = modelSha;
+                                    URL_COMPONENTS components{};
+                                    components.dwStructSize = sizeof(components);
+                                    std::array<wchar_t, 256> host{};
+                                    components.lpszHostName = host.data();
+                                    components.dwHostNameLength = static_cast<DWORD>(host.size());
+                                    if (!WinHttpCrackUrl(mirror.archiveUrl.c_str(), static_cast<DWORD>(mirror.archiveUrl.size()),
+                                            ICU_REJECT_USERPWD, &components) || components.nScheme != INTERNET_SCHEME_HTTPS ||
+                                        components.dwHostNameLength == 0 || components.dwHostNameLength >= host.size())
+                                        throw std::invalid_argument("Official model channel URL is malformed or contains credentials");
+                                    std::wstring hostName(host.data(), components.dwHostNameLength);
+                                    std::transform(hostName.begin(), hostName.end(), hostName.begin(), [](wchar_t ch) {
+                                        return static_cast<wchar_t>(towlower(ch));
+                                    });
+                                    channelHosts.insert(std::move(hostName));
+                                    mirrors.push_back(std::move(mirror));
+                                }
+                                if (channelHosts.size() < 2)
+                                    throw std::invalid_argument("Official model channels must use at least two independent hosts");
+                                downloadedCatalogs.push_back(catalogCandidate);
+                                {
+                                    std::lock_guard lock(modelInstallMutex_);
+                                    modelInstallState_.status = L"官方目录签名已验证：" +
+                                        wideFromUtf8(boundedString(*recommendedModel, "name", 128)) + L"；正在尝试可用镜像";
+                                }
+                                break;
+                            } catch (const NativePackageInstallCancelled&) {
+                                throw;
+                            } catch (const std::exception& error) {
+                                mirrors.clear();
+                                if (!catalogFailures.empty()) catalogFailures += L"；";
+                                catalogFailures += L"来源 " + std::to_wstring(sourceIndex + 1) + L"：" + wideFromUtf8(error.what());
+                            }
+                        }
+                        if (mirrors.empty())
+                            throw std::runtime_error("Official model catalog could not be verified from any source: " + nativeModelUtf8(catalogFailures));
+                    }
                     std::wstring mirrorFailures;
                     for (std::size_t mirrorIndex = 0; mirrorIndex < mirrors.size(); ++mirrorIndex) {
                         auto archiveUrl = mirrors[mirrorIndex].archiveUrl;
@@ -3644,24 +3804,39 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
                                 archiveUrl = std::move(baseUrl);
                             }
                             const auto manifestCandidate = downloadsRoot / (L"mirror-" + std::to_wstring(mirrorIndex) + L".distribution.json");
+                            const auto& mirror = mirrors[mirrorIndex];
                             {
                                 std::lock_guard lock(modelInstallMutex_);
                                 modelInstallState_.completedBytes = 0;
                                 modelInstallState_.totalBytes = 0;
-                                modelInstallState_.status = L"正在获取镜像 " + std::to_wstring(mirrorIndex + 1) + L" 的模型清单";
+                                modelInstallState_.status = L"正在获取" +
+                                    (mirror.channelName.empty() ? L"镜像 " + std::to_wstring(mirrorIndex + 1) : mirror.channelName) +
+                                    L"的模型清单";
                             }
-                            const auto reportProgress = [this, mirrorIndex](NativeModelDownloadProgress value) {
+                            const auto reportProgress = [this, mirrorIndex, channelName = mirror.channelName](NativeModelDownloadProgress value) {
                                 std::lock_guard lock(modelInstallMutex_);
                                 modelInstallState_.completedBytes = value.completedBytes;
                                 modelInstallState_.totalBytes = value.totalBytes;
-                                modelInstallState_.status = L"正在下载镜像 " + std::to_wstring(mirrorIndex + 1) + L" 的 ZIP 或校验清单";
+                                modelInstallState_.status = L"正在下载" +
+                                    (channelName.empty() ? L"镜像 " + std::to_wstring(mirrorIndex + 1) : channelName) + L" 的 ZIP";
                             };
-                            downloadNativeModelFile(manifestUrl, manifestCandidate, 0, {}, 1024 * 1024,
+                            downloadNativeModelFile(manifestUrl, manifestCandidate, mirror.expectedManifestSizeBytes,
+                                mirror.expectedManifestSha256, 1024 * 1024,
                                 stopToken, reportProgress);
                             downloadedManifests.push_back(manifestCandidate);
                             const auto manifestBytes = inference::readLocalFile(manifestCandidate, 1024 * 1024);
                             const std::string manifestText(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size());
                             const auto mirrorManifest = nlohmann::json::parse(manifestText);
+                            if (!mirrorManifest.is_object() || mirrorManifest.at("schemaVersion") != 1)
+                                throw std::invalid_argument("Unsupported model distribution manifest version");
+                            if (!mirror.expectedPackageId.empty()) {
+                                const auto& model = mirrorManifest.at("model");
+                                if (boundedString(mirrorManifest, "packageId", 128) != mirror.expectedPackageId ||
+                                    boundedString(model, "id", 128) != mirror.expectedModelId ||
+                                    boundedString(model, "version", 128) != mirror.expectedModelVersion ||
+                                    boundedString(model, "modelSha256", 64) != mirror.expectedModelSha256)
+                                    throw std::invalid_argument("Downloaded distribution manifest does not match its signed catalog entry");
+                            }
                             const auto& artifact = mirrorManifest.at("artifact");
                             const auto fileName = artifact.at("fileName").get<std::string>();
                             const auto archiveSize = artifact.at("sizeBytes").get<std::uint64_t>();
@@ -3703,6 +3878,7 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
                                 1024ULL * 1024 * 1024, stopToken, reportProgress);
                             resolvedArchive = candidateArchive;
                             resolvedManifestPath = manifestCandidate;
+                            selectedMirror = mirror;
                             break;
                         } catch (const NativePackageInstallCancelled&) {
                             throw;
@@ -3726,29 +3902,6 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
                 if (!manifest.is_object() || manifest.at("schemaVersion") != 1)
                     throw std::invalid_argument("Unsupported model distribution manifest version");
 
-                const auto boundedString = [](const nlohmann::json& object, const char* name, std::size_t limit) {
-                    const auto& value = object.at(name);
-                    if (!value.is_string()) throw std::invalid_argument(std::string("Invalid model distribution field: ") + name);
-                    const auto text = value.get<std::string>();
-                    if (text.empty() || text.size() > limit || text.find('\0') != std::string::npos)
-                        throw std::invalid_argument(std::string("Invalid model distribution field: ") + name);
-                    return text;
-                };
-                const auto safeComponent = [](const std::string& value) {
-                    if (value.empty() || value.size() > 128 ||
-                        !((value.front() >= 'a' && value.front() <= 'z') || (value.front() >= 'A' && value.front() <= 'Z') ||
-                          (value.front() >= '0' && value.front() <= '9'))) return false;
-                    return value != "." && value != ".." && std::all_of(value.begin(), value.end(), [](char ch) {
-                        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-                            (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.';
-                    });
-                };
-                const auto validHash = [](const std::string& value) {
-                    return value.size() == 64 && std::all_of(value.begin(), value.end(), [](char ch) {
-                        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
-                    });
-                };
-
                 const auto packageId = boundedString(manifest, "packageId", 128);
                 if (!safeComponent(packageId)) throw std::invalid_argument("Invalid model package identity");
                 const auto& modelMetadata = manifest.at("model");
@@ -3759,6 +3912,10 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
                 const auto modelSha256 = boundedString(modelMetadata, "modelSha256", 64);
                 if (modelFamily != "rife" || !safeComponent(modelId) || !safeComponent(modelVersion) || !validHash(modelSha256))
                     throw std::invalid_argument("This Model Center installer accepts only a declared RIFE model pack");
+                if (selectedMirror && (!selectedMirror->expectedPackageId.empty()) &&
+                    (packageId != selectedMirror->expectedPackageId || modelId != selectedMirror->expectedModelId ||
+                     modelVersion != selectedMirror->expectedModelVersion || modelSha256 != selectedMirror->expectedModelSha256))
+                    throw std::invalid_argument("The distribution manifest changed after its signed catalog check");
 
                 const auto& artifact = manifest.at("artifact");
                 const auto archiveName = boundedString(artifact, "fileName", 256);
@@ -3835,19 +3992,23 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
                     if (installedPack.sha256 != verified.sha256 || installedPack.id != verified.id || installedPack.version != verified.version)
                         throw std::runtime_error("A different model already occupies the managed version directory");
                     installed = destination;
-                    status = mirrors.empty() ? L"此模型版本已安装；已重新校验现有文件。" : L"镜像下载包已校验；此模型版本已安装。";
+                    status = fetchOfficialCatalog ? L"官方签名目录和模型包均已校验；此模型版本已安装。" :
+                        mirrors.empty() ? L"此模型版本已安装；已重新校验现有文件。" : L"镜像下载包已校验；此模型版本已安装。";
                 } else {
                     if (stopToken.stop_requested()) throw NativePackageInstallCancelled();
                     if (!MoveFileExW(modelDirectory.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH))
                         throw std::runtime_error("Cannot atomically publish the verified model into the managed directory");
                     installed = destination;
-                    status = mirrors.empty() ? L"模型包已验证并原子安装。" : L"模型包已下载、校验并原子安装。";
+                    status = fetchOfficialCatalog ? L"官方签名目录和模型包均已校验并原子安装。" :
+                        mirrors.empty() ? L"模型包已验证并原子安装。" : L"模型包已下载、校验并原子安装。";
                 }
                 if (!mirrors.empty()) {
                     std::error_code cleanupError;
                     std::filesystem::remove(resolvedArchive, cleanupError);
                     for (const auto& downloadedManifest : downloadedManifests)
                         std::filesystem::remove(downloadedManifest, cleanupError);
+                    for (const auto& downloadedCatalog : downloadedCatalogs)
+                        std::filesystem::remove(downloadedCatalog, cleanupError);
                 }
             } catch (const NativePackageInstallCancelled&) {
                 failure = L"安装已取消；暂存文件已清理，现有模型未更改。";
@@ -3871,7 +4032,9 @@ void NativeApp::startModelPackageInstall(const std::filesystem::path& archive, s
             modelInstallActive_.store(false);
             throw std::runtime_error("Cannot start the model installation progress timer");
         }
-        modelCenterNotice_ = !downloading
+        modelCenterNotice_ = fetchOfficialCatalog
+            ? L"正在获取并验签官方模型目录；确认后会自动尝试至少两个独立模型下载渠道。"
+            : !downloading
             ? L"正在后台校验模型包；取消不会影响已安装模型。"
             : L"正在后台下载并验证模型包；中断后可从同一镜像续传。";
         updateModelDetails();

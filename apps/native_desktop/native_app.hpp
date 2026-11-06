@@ -182,6 +182,7 @@ private:
     static constexpr int kModelListHeading = 1212;
     static constexpr int kModelDetailsHeading = 1213;
     static constexpr int kModelSearch = 1214;
+    static constexpr int kModelOfficial = 1215;
     static constexpr int kHistoryList = 1208;
     static constexpr int kHistoryRetry = 1209;
     static constexpr int kHistoryResume = 1210;
@@ -326,8 +327,16 @@ private:
     struct ModelPackageMirror final {
         std::wstring archiveUrl;
         std::wstring manifestUrl;
+        std::wstring channelName;
+        std::uint64_t expectedManifestSizeBytes = 0;
+        std::string expectedManifestSha256;
+        std::string expectedPackageId;
+        std::string expectedModelId;
+        std::string expectedModelVersion;
+        std::string expectedModelSha256;
     };
-    void startModelPackageInstall(const std::filesystem::path& archive, std::vector<ModelPackageMirror> mirrors = {});
+    void startModelPackageInstall(const std::filesystem::path& archive, std::vector<ModelPackageMirror> mirrors = {},
+        bool fetchOfficialCatalog = false);
     void cancelModelPackageInstall();
     void pollModelPackageInstall();
     void showTaskHistory();

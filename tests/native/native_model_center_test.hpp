@@ -192,8 +192,9 @@ void checkLocalModelCenter(Check check) {
             const auto buttonStyle = [&](int id) { return GetWindowLongPtrW(GetDlgItem(center, id), GWL_STYLE); };
             check((buttonStyle(1203) & BS_OWNERDRAW) != 0 && (buttonStyle(1204) & BS_OWNERDRAW) != 0 &&
                 (buttonStyle(1207) & BS_OWNERDRAW) != 0 && (buttonStyle(1208) & BS_OWNERDRAW) != 0 &&
-                (buttonStyle(1209) & BS_OWNERDRAW) != 0 && IsWindowVisible(GetDlgItem(center, 1208)) &&
-                IsWindowVisible(GetDlgItem(center, 1209)),
+                (buttonStyle(1209) & BS_OWNERDRAW) != 0 && (buttonStyle(1210) & BS_OWNERDRAW) != 0 &&
+                (buttonStyle(1215) & BS_OWNERDRAW) != 0 && IsWindowVisible(GetDlgItem(center, 1208)) &&
+                IsWindowVisible(GetDlgItem(center, 1209)) && IsWindowVisible(GetDlgItem(center, 1215)),
                 "model-center actions use accessible native buttons with Material-style drawing");
             HDC colorDc = GetDC(center);
             if (colorDc) {
