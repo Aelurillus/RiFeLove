@@ -178,6 +178,7 @@ private:
     static constexpr int kModelDownloadUrl = 1211;
     static constexpr int kModelListHeading = 1212;
     static constexpr int kModelDetailsHeading = 1213;
+    static constexpr int kModelSearch = 1214;
     static constexpr int kHistoryList = 1208;
     static constexpr int kHistoryRetry = 1209;
     static constexpr int kHistoryResume = 1210;
@@ -442,12 +443,14 @@ private:
     HWND modelDetails_ = nullptr;
     HWND modelCenterStatus_ = nullptr;
     HWND modelDownloadUrl_ = nullptr;
+    HWND modelSearch_ = nullptr;
     HWND modelListHeading_ = nullptr;
     HWND modelDetailsHeading_ = nullptr;
     HFONT modelCenterFont_ = nullptr;
     HFONT modelCenterHeadingFont_ = nullptr;
     HBRUSH modelCenterBackgroundBrush_ = nullptr;
     HBRUSH modelCenterSurfaceBrush_ = nullptr;
+    std::vector<std::size_t> modelCenterVisibleIndexes_;
     std::filesystem::path modelCenterSelectedPath_;
     struct ModelPackageInstallState final {
         std::uint64_t completedBytes = 0;
