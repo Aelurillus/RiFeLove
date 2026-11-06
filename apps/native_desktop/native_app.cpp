@@ -1743,7 +1743,8 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         SendMessageW(app->modelDownloadUrl_, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(L"ZIP 地址 | 清单地址；多个镜像用分号分隔"));
         control(L"BUTTON", L"下载并安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
-        app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, kModelList);
+        app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT |
+            LBS_OWNERDRAWVARIABLE | LBS_HASSTRINGS, kModelList);
         app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
         app->modelListHeading_ = control(L"STATIC", L"已安装与可用模型", SS_LEFT | SS_NOPREFIX, kModelListHeading);
         app->modelDetailsHeading_ = control(L"STATIC", L"模型详情", SS_LEFT | SS_NOPREFIX, kModelDetailsHeading);
@@ -1779,9 +1780,114 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         const auto brush = surface ? app->modelCenterSurfaceBrush_ : app->modelCenterBackgroundBrush_;
         return reinterpret_cast<LRESULT>(brush ? brush : GetSysColorBrush(COLOR_WINDOW));
     }
+    case WM_MEASUREITEM: {
+        auto* item = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+        if (item && item->CtlType == ODT_LISTBOX && item->CtlID == kModelList) {
+            const int dpi = static_cast<int>(GetDpiForWindow(window));
+            item->itemHeight = static_cast<UINT>(MulDiv(82, dpi ? dpi : 96, 96));
+            return TRUE;
+        }
+        break;
+    }
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
-        if (!item || item->CtlType != ODT_BUTTON) break;
+        if (!item) break;
+        if (item->CtlType == ODT_LISTBOX && item->CtlID == kModelList) {
+            const int dpi = static_cast<int>(GetDpiForWindow(window));
+            const auto px = [&](int value) { return MulDiv(value, dpi ? dpi : 96, 96); };
+            if (item->itemID == static_cast<UINT>(-1) || item->itemID >= app->localModels_.size()) {
+                FillRect(item->hDC, &item->rcItem, app->modelCenterSurfaceBrush_);
+                return TRUE;
+            }
+
+            const auto& model = app->localModels_[item->itemID];
+            const bool selected = (item->itemState & ODS_SELECTED) != 0;
+            const bool focused = (item->itemState & ODS_FOCUS) != 0;
+            const bool selectedDefault = model.kind >= 0 &&
+                !app->modelPreferences_.defaults[static_cast<std::size_t>(model.kind)].empty() &&
+                NativeModelPreferences::key(model.directory) ==
+                    NativeModelPreferences::key(app->modelPreferences_.defaults[static_cast<std::size_t>(model.kind)]);
+            const wchar_t* category = model.kind == 0 ? L"RIFE 插帧" : model.kind == 1 ? L"超分辨率" :
+                model.kind == 2 ? L"时域降噪" : model.kind == 3 ? L"压缩修复 · STDF" :
+                model.kind == 4 ? L"实验性去模糊" : L"其他模型";
+            const wchar_t* badge = selectedDefault ? L"默认" : model.usable ? L"可用" :
+                model.verified ? L"能力未支持" : L"校验失败";
+            const COLORREF badgeFill = model.usable ? RGB(28, 54, 44) : model.verified
+                ? RGB(55, 49, 34) : RGB(58, 38, 42);
+            const COLORREF badgeText = model.usable ? RGB(162, 231, 203) : model.verified
+                ? RGB(244, 199, 123) : RGB(255, 155, 155);
+            const COLORREF cardFill = selected ? RGB(31, 48, 61) : RGB(19, 24, 32);
+            const COLORREF cardBorder = selected ? RGB(82, 127, 137) : RGB(37, 45, 59);
+            const int savedDc = SaveDC(item->hDC);
+            const int oldBackgroundMode = SetBkMode(item->hDC, TRANSPARENT);
+            const COLORREF oldTextColor = SetTextColor(item->hDC, RGB(238, 242, 249));
+
+            RECT card = item->rcItem;
+            InflateRect(&card, -px(4), -px(3));
+            HPEN cardPen = CreatePen(PS_SOLID, std::max(1, px(1)), cardBorder);
+            HBRUSH cardBrush = CreateSolidBrush(cardFill);
+            const auto oldPen = cardPen ? SelectObject(item->hDC, cardPen) : nullptr;
+            const auto oldBrush = cardBrush ? SelectObject(item->hDC, cardBrush) : nullptr;
+            RoundRect(item->hDC, card.left, card.top, card.right, card.bottom, px(12), px(12));
+            if (oldPen) SelectObject(item->hDC, oldPen);
+            if (oldBrush) SelectObject(item->hDC, oldBrush);
+            if (cardPen) DeleteObject(cardPen);
+            if (cardBrush) DeleteObject(cardBrush);
+
+            const int contentLeft = card.left + px(12);
+            const int contentRight = card.right - px(12);
+            RECT badgeRect{contentRight - px(model.usable ? 46 : 82), card.top + px(8),
+                contentRight, card.top + px(28)};
+            HBRUSH badgeBrush = CreateSolidBrush(badgeFill);
+            if (badgeBrush) {
+                const auto previousBrush = SelectObject(item->hDC, badgeBrush);
+                const auto previousPen = SelectObject(item->hDC, GetStockObject(NULL_PEN));
+                RoundRect(item->hDC, badgeRect.left, badgeRect.top, badgeRect.right, badgeRect.bottom, px(10), px(10));
+                if (previousPen) SelectObject(item->hDC, previousPen);
+                if (previousBrush) SelectObject(item->hDC, previousBrush);
+                DeleteObject(badgeBrush);
+            }
+            SetTextColor(item->hDC, badgeText);
+            DrawTextW(item->hDC, badge, -1, &badgeRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            RECT title{contentLeft, card.top + px(7), badgeRect.left - px(8), card.top + px(29)};
+            SetTextColor(item->hDC, RGB(238, 242, 249));
+            const auto oldTitleFont = app->modelCenterHeadingFont_
+                ? SelectObject(item->hDC, app->modelCenterHeadingFont_) : nullptr;
+            DrawTextW(item->hDC, model.name.c_str(), -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if (oldTitleFont) SelectObject(item->hDC, oldTitleFont);
+
+            std::wstring metadata = category;
+            if (!model.version.empty()) metadata += L"  ·  " + model.version;
+            RECT metadataRect{contentLeft, card.top + px(32), contentRight, card.top + px(51)};
+            SetTextColor(item->hDC, RGB(174, 188, 205));
+            const auto oldBodyFont = app->modelCenterFont_
+                ? SelectObject(item->hDC, app->modelCenterFont_) : nullptr;
+            DrawTextW(item->hDC, metadata.c_str(), -1, &metadataRect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if (oldBodyFont) SelectObject(item->hDC, oldBodyFont);
+
+            const std::wstring hashLabel = model.modelSha256.size() >= 8
+                ? L"SHA-256  " + model.modelSha256.substr(0, 8)
+                : L"SHA-256  未声明";
+            RECT hashRect{contentLeft, card.top + px(53), contentRight, card.bottom - px(5)};
+            SetTextColor(item->hDC, RGB(124, 143, 163));
+            DrawTextW(item->hDC, hashLabel.c_str(), -1, &hashRect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+            if (focused) {
+                RECT focusRect = card;
+                InflateRect(&focusRect, -px(4), -px(4));
+                DrawFocusRect(item->hDC, &focusRect);
+            }
+            if (savedDc) RestoreDC(item->hDC, savedDc);
+            else {
+                if (oldBackgroundMode) SetBkMode(item->hDC, oldBackgroundMode);
+                if (oldTextColor != CLR_INVALID) SetTextColor(item->hDC, oldTextColor);
+            }
+            return TRUE;
+        }
+        if (item->CtlType != ODT_BUTTON) break;
         const bool primary = static_cast<int>(item->CtlID) == kModelDefault || static_cast<int>(item->CtlID) == kModelDownload;
         const bool disabled = (item->itemState & ODS_DISABLED) != 0;
         const bool pressed = (item->itemState & ODS_SELECTED) != 0;
@@ -2075,9 +2181,6 @@ void NativeApp::updateModelCenter() {
     if (!modelList_) return;
     SendMessageW(modelList_, LB_RESETCONTENT, 0, 0);
     int selection = 0;
-    int extent = 0;
-    const HDC dc = GetDC(modelList_);
-    const auto oldFont = dc && modelCenterFont_ ? SelectObject(dc, modelCenterFont_) : nullptr;
     for (std::size_t index = 0; index < localModels_.size(); ++index) {
         const auto& item = localModels_[index];
         auto label = item.name + L"  " + item.version;
@@ -2087,12 +2190,9 @@ void NativeApp::updateModelCenter() {
         if (selectedDefault) label += L"  [默认]";
         label += item.usable ? L"  [可选]" : item.verified ? L"  [能力未支持]" : L"  [校验未通过]";
         SendMessageW(modelList_, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
-        if (dc) { SIZE size{}; GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &size); extent = std::max(extent, static_cast<int>(size.cx) + 24); }
         if (!modelCenterSelectedPath_.empty() && NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(modelCenterSelectedPath_))
             selection = static_cast<int>(index);
     }
-    if (dc) { if (oldFont) SelectObject(dc, oldFont); ReleaseDC(modelList_, dc); }
-    SendMessageW(modelList_, LB_SETHORIZONTALEXTENT, extent, 0);
     SendMessageW(modelList_, LB_SETCURSEL, localModels_.empty() ? -1 : selection, 0);
     updateModelDetails();
 }
