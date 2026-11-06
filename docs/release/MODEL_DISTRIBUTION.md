@@ -67,10 +67,17 @@ model verifier, and moves the verified pack into the managed user model
 directory before registration. The selected sidecar supplies the integrity
 pins; its hashes do not authenticate the publisher.
 
-The product goal still requires a signed in-app catalog, a publisher trust
-root, multiple independent public mirrors, and anonymous read-back checks that
-prove each mirror serves the same package bytes. The current direct downloader
-can fetch a user-selected URL and resume an interrupted archive, but its
-adjacent sidecar does not authenticate the publisher. Public model downloads
-and the application release remain closed pending license and release
-qualification.
+The pinned upstream Practical-RIFE README explicitly places its linked trained
+model files under the project's MIT license, and this package carries that
+pinned license and source manifest. This resolves the model-specific license
+scope question for the RIFE 4.25 pack; the missing upstream checkpoint checksum
+remains a provenance limit, not a different license grant.
+
+The product still needs a signed in-app catalog and publisher trust root, at
+least two independent public mirrors, and anonymous read-back checks proving
+each mirror serves the exact same package bytes. The direct downloader can
+fetch a user-selected URL and resume an interrupted archive, but its adjacent
+sidecar does not authenticate the publisher. No RifeLove model channel is
+published yet. The application release remains closed pending the exact
+runtime, codec, clean-machine, and installer qualification gates in
+`WINDOWS_REDISTRIBUTION_AUDIT.md`.
