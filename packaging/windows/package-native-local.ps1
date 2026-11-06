@@ -508,6 +508,8 @@ $runtimeSourceFiles = @(Get-ChildItem -LiteralPath $runtime -File -Filter "*.dll
 $runtimeSelection = Resolve-NativeInferenceRuntimeSelection -AvailableFileNames @($runtimeSourceFiles | ForEach-Object Name) -CudaOnly:$CudaOnly
 $runtimeFiles = @($runtimeSourceFiles | Where-Object { $runtimeSelection.files -contains $_.Name })
 $requiredRuntimeFiles = @($runtimeSelection.requiredFiles)
+$cudnnLockPath = Join-Path $repositoryRoot 'tools/development/cudnn-redistrib-9.8.0.lock.json'
+$cudnnProvenance = Assert-NativeCuDnnRuntimeIdentity -RuntimeDirectory $runtime -Lock (Read-Json $cudnnLockPath) -RepositoryRoot $repositoryRoot
 $compilerIdentity = Get-NativeCompilerRuntimeIdentity $dependencySelection
 Assert-NativeInferenceRuntimeIdentity $dependencySelection -RequiredFileNames @($runtimeFiles | ForEach-Object Name) -CudaOnly:$CudaOnly
 
@@ -543,6 +545,8 @@ if ($ValidateDependenciesOnly) {
         result = 'passed'; purpose = 'dependency-preflight-only'; buildDirectory = $build
         inferenceRuntimeDirectory = $runtime; inferenceRuntimeSource = $dependencySelection.inferenceRuntimeSource
         inferenceRuntimeProfile = $runtimeSelection.profile; inferenceRuntimeFiles = @($runtimeFiles | ForEach-Object Name)
+        cuDnnVersion = $cudnnProvenance.version; cuDnnArchiveSha256 = $cudnnProvenance.archiveSha256
+        cuDnnLicenseSha256 = $cudnnProvenance.licenseSha256; cuDnnRuntimeFileSha256 = $cudnnProvenance.runtimeFileSha256
         minGWBinDirectory = $mingw; minGWSource = $dependencySelection.minGWSource
         compiler = $dependencySelection.compiler; compilerIdentity = $compilerIdentity
         ffmpegLinkInputs = $ffmpegSdk.linkInputs
@@ -636,6 +640,7 @@ try {
     $licenseTarget = Join-Path $staging "licenses"
     New-Item -ItemType Directory -Path $licenseTarget | Out-Null
     Copy-FileChecked (Join-Path $repositoryRoot "LICENSE") (Join-Path $licenseTarget "RifeLove-MIT.txt")
+    Copy-FileChecked $cudnnProvenance.licenseSourcePath (Join-Path $staging $cudnnProvenance.licensePackagePath)
     $minizSource = Resolve-ExistingDirectory (Join-Path $build "_deps/miniz-src") "miniz 3.1.2 源码"
     Copy-FileChecked (Join-Path $minizSource "LICENSE") (Join-Path $licenseTarget "miniz-MIT.txt")
     $ffmpegSourceRoot = Join-Path $CodecLicenseRoot "ffmpeg-8.1.3"
@@ -691,7 +696,7 @@ try {
         nativePackageLibraries = @(@{ name = "miniz"; version = "3.1.2"; sourceCommit = "77d0dce8627735138c51770d1799a1ef48f2117d"; licensePath = "licenses/miniz-MIT.txt" })
         modelBundleMode = $modelSelection.mode
         ffmpeg = [ordered]@{ source = "local SDK selected by the native build"; root = "local-sdk:ffmpeg"; binaries = $ffmpegFiles; runtimeSha256 = $ffmpegRuntimeHashes; configuration = $ffmpegSdk.configuration; linkInputs = $ffmpegSdk.linkInputs; nvenc = "integrated in isolated SDK; H.264 NVENC and software fallback require hardware/workload validation"; x86asm = $ffmpegX86asmDescription; sdkManifest = [ordered]@{ path = $ffmpegSdk.manifestRelativePath; sha256 = $ffmpegSdk.manifestSha256; nvencApiMajor = $ffmpegSdk.nvencApiMajor; nvencApiMinor = $ffmpegSdk.nvencApiMinor; nvencMinimumWindowsDriver = $ffmpegSdk.nvencMinimumWindowsDriver } }
-        inferenceRuntime = [ordered]@{ profile = $runtimeSelection.profile; source = $runtimeSourceDescription; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = if ($runtimeSelection.includesTensorRt) { $versionLines[0] } else { $null }; sourceSha256 = if ($runtimeSelection.includesTensorRt) { $versionLines[1] } else { $null }; providers = $runtimeSelection.providers }
+        inferenceRuntime = [ordered]@{ profile = $runtimeSelection.profile; source = $runtimeSourceDescription; files = @($runtimeFiles | ForEach-Object Name); requiredFiles = $requiredRuntimeFiles; tensorRtVersion = if ($runtimeSelection.includesTensorRt) { $versionLines[0] } else { $null }; sourceSha256 = if ($runtimeSelection.includesTensorRt) { $versionLines[1] } else { $null }; providers = $runtimeSelection.providers; cuDnn = [ordered]@{ version = $cudnnProvenance.version; cudaVariant = $cudnnProvenance.cudaVariant; archiveUrl = $cudnnProvenance.archiveUrl; archiveBytes = $cudnnProvenance.archiveBytes; archiveSha256 = $cudnnProvenance.archiveSha256; sourceLicensePath = $cudnnProvenance.sourceLicensePath; licensePath = $cudnnProvenance.licensePackagePath; licenseSha256 = $cudnnProvenance.licenseSha256; filesSha256 = $cudnnProvenance.runtimeFileSha256 } }
         models = @($packs | ForEach-Object { [ordered]@{ directory = "models/$($_.destination)"; id = $_.id; family = $_.family; version = [string]$_.descriptor.version; sha256 = $_.graphHash; licenseId = if ($_.descriptor.license -is [string]) { [string]$_.descriptor.license } else { [string]$_.descriptor.license.id }; licensePath = "licenses/Model-$($_.destination)-$($_.licenseFile)"; provenancePath = if ($_.legacy) { $null } else { "models/$($_.destination)/$($_.descriptor.provenance.manifestFile)" }; validatedBackends = @($_.descriptor.validation.validatedBackends); legacy = $_.legacy; hiddenFromDefaultSelection = $_.legacy; canonicalBasename = $_.destination; role = if ($_.destination -eq "fastdvdnet-clipped-five-frame-sdr8-eval") { "experimental-optional-temporal-denoise" } elseif ($_.destination -eq "stdf-r3-y7-sdr8-local-eval") { "experimental-optional-compression-repair" } elseif ($_.destination -eq "nafnet-gopro-deblur-sdr8-fp32-eval") { "experimental-optional-deblur" } elseif ($_.destination -eq "realesrgan-x2plus-sdr8-v2") { "optional-super-resolution" } else { "default-interpolation" }; redistribution = if ($_.legacy) { "local-legacy-required-by-verified-migration-reference" } else { "local-only-until-license-review" } } })
         migration = [ordered]@{ legacyModelIncluded = $includeLegacyModel; legacyModelPathToken = $legacyReference.token; legacyModelSha256 = $legacyModelHash; evidence = @($legacyReference.evidence); cleanPackageOmitsUnreferencedLegacy = $true }
         defaults = "config/defaults.json"; updatePolicy = "transactional; refuse running target; preserve data"; storage = "local-only; no Alibaba OSS"

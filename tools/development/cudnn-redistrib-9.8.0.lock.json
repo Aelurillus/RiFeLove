@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "component": "cuDNN",
+  "version": "9.8.0.87",
+  "cudaVariant": "CUDA 12",
+  "manifestUrl": "https://developer.download.nvidia.com/compute/cudnn/redist/redistrib_9.8.0.json",
+  "archive": {
+    "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.8.0.87_cuda12-archive.zip",
+    "bytes": 675349654,
+    "sha256": "d8a23705e3884b137b7e05449fb2b61bfa524e7cfc3fda80743d633f423c6ce4"
+  },
+  "license": {
+    "sourcePath": "cudnn/LICENSE.txt",
+    "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/LICENSE.txt",
+    "repositoryPath": "packaging/windows/licenses/NVIDIA-cuDNN-9.8.0.87-LICENSE.txt",
+    "packagePath": "licenses/NVIDIA-cuDNN-9.8.0.87-LICENSE.txt",
+    "bytes": 29879,
+    "sha256": "7936e1f9f2a6d9deea237aee6aa7f1abd032d34bcc1c35de1e6516b223d09487"
+  },
+  "redistributionFiles": [
+    {
+      "name": "cudnn64_9.dll",
+      "sha256": "0edb24306db36121137a3150ac55015aee174d4582d5b807bd3220180a7a57db"
+    },
+    {
+      "name": "cudnn_adv64_9.dll",
+      "sha256": "631af1130b27b4d14683c7da690dddec8e25ffe3097d498fbba7129faba1601c"
+    },
+    {
+      "name": "cudnn_cnn64_9.dll",
+      "sha256": "68c9f6bf98a5620a0bb0519c3997800ef2c7cb8979f17a60afcf82d341629c73"
+    },
+    {
+      "name": "cudnn_engines_precompiled64_9.dll",
+      "sha256": "59e71b3adae62186d3336ccbda6d0c8b14a3a0ef21694757e2b32e84fa840152"
+    },
+    {
+      "name": "cudnn_engines_runtime_compiled64_9.dll",
+      "sha256": "8671c24fc0debbd99c3dca57bfdf657f4c9490e2a009f641cfc2fcf7a1256180"
+    },
+    {
+      "name": "cudnn_graph64_9.dll",
+      "sha256": "22c21907fb2108259cb25738156f4459c12c0a001715bbb6d5aafac150060e85"
+    },
+    {
+      "name": "cudnn_heuristic64_9.dll",
+      "sha256": "5378e50729665245fa5abe89c729b782de686675e9bd6319cda1a3165d9492e6"
+    },
+    {
+      "name": "cudnn_ops64_9.dll",
+      "sha256": "080c2bb37e9d1fdd585cdd53fdbb23c0478b99610a19f8bba512b596b1e302fe"
+    }
+  ]
+}

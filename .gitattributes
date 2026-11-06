@@ -9,3 +9,4 @@
 *.yml text eol=lf
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
+packaging/windows/licenses/NVIDIA-cuDNN-9.8.0.87-LICENSE.txt -text whitespace=-blank-at-eol,-blank-at-eof
