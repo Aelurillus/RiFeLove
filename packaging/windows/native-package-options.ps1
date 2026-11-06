@@ -152,6 +152,74 @@ function Resolve-NativeInferenceRuntimeSelection {
     }
 }
 
+function Assert-NativeCuDnnRuntimeIdentity {
+    param(
+        [Parameter(Mandatory=$true)][string]$RuntimeDirectory,
+        [Parameter(Mandatory=$true)][object]$Lock,
+        [Parameter(Mandatory=$true)][string]$RepositoryRoot
+    )
+    if ([int]$Lock.schemaVersion -ne 1 -or [string]$Lock.component -cne 'cuDNN' -or
+        [string]::IsNullOrWhiteSpace([string]$Lock.version) -or [string]$Lock.cudaVariant -cne 'CUDA 12') {
+        throw 'The cuDNN redistribution lock has an unsupported schema or runtime identity.'
+    }
+    if ($Lock.archive.bytes -le 0 -or [string]$Lock.archive.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+        [string]::IsNullOrWhiteSpace([string]$Lock.archive.url) -or
+        [string]$Lock.archive.url -notmatch '^https://developer\.download\.nvidia\.com/compute/cudnn/redist/') {
+        throw 'The cuDNN redistribution lock is missing its pinned NVIDIA archive identity.'
+    }
+    if ([string]$Lock.license.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+        [string]$Lock.license.packagePath -notmatch '^licenses/[A-Za-z0-9._-]+$' -or
+        [string]$Lock.license.repositoryPath -notmatch '^packaging/windows/licenses/[A-Za-z0-9._-]+$') {
+        throw 'The cuDNN redistribution lock is missing its canonical license identity.'
+    }
+
+    $lockedFiles = @($Lock.redistributionFiles)
+    $expectedNames = @(
+        'cudnn64_9.dll','cudnn_adv64_9.dll','cudnn_cnn64_9.dll','cudnn_engines_precompiled64_9.dll',
+        'cudnn_engines_runtime_compiled64_9.dll','cudnn_graph64_9.dll','cudnn_heuristic64_9.dll','cudnn_ops64_9.dll'
+    )
+    $lockedNames = @($lockedFiles | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    if ($lockedFiles.Count -ne $expectedNames.Count -or
+        (Compare-Object ($expectedNames | Sort-Object) $lockedNames).Count -ne 0) {
+        throw 'The cuDNN redistribution lock does not cover the exact expected cuDNN DLL set.'
+    }
+
+    $hashes = [ordered]@{}
+    foreach ($entry in $lockedFiles) {
+        $name = [string]$entry.name
+        $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
+        if ($expectedHash -notmatch '^[0-9a-f]{64}$') { throw "The cuDNN lock has an invalid SHA-256 for $name." }
+        $path = Join-Path $RuntimeDirectory $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "The selected cuDNN runtime is missing $name." }
+        $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -cne $expectedHash) { throw "The selected cuDNN runtime does not match the pinned NVIDIA $($Lock.version) archive: $name." }
+        $hashes["runtime/$name"] = $actualHash
+    }
+
+    $licensePath = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot ([string]$Lock.license.repositoryPath)))
+    if (-not (Test-Path -LiteralPath $licensePath -PathType Leaf)) { throw "The pinned NVIDIA cuDNN license file is missing: $licensePath" }
+    if ((Get-Item -LiteralPath $licensePath).Length -ne [long]$Lock.license.bytes) {
+        throw 'The checked-in NVIDIA cuDNN license size does not match the pinned redistribution archive.'
+    }
+    $licenseHash = (Get-FileHash -LiteralPath $licensePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($licenseHash -cne ([string]$Lock.license.sha256).ToLowerInvariant()) {
+        throw 'The checked-in NVIDIA cuDNN license does not match the pinned redistribution archive.'
+    }
+
+    [pscustomobject]@{
+        version = [string]$Lock.version
+        cudaVariant = [string]$Lock.cudaVariant
+        archiveUrl = [string]$Lock.archive.url
+        archiveBytes = [long]$Lock.archive.bytes
+        archiveSha256 = ([string]$Lock.archive.sha256).ToLowerInvariant()
+        sourceLicensePath = [string]$Lock.license.sourcePath
+        licenseSourcePath = $licensePath
+        licensePackagePath = [string]$Lock.license.packagePath
+        licenseSha256 = $licenseHash
+        runtimeFileSha256 = $hashes
+    }
+}
+
 function Get-NativeExcludedModelRoots {
     param([Parameter(Mandatory=$true)][object]$Selection)
     $roots = @()
