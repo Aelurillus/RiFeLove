@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cwchar>
+#include <cwctype>
 #include <cstring>
 #include <cstdlib>
 #include <dwmapi.h>
@@ -1733,7 +1734,7 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelCenterBackgroundBrush_ = CreateSolidBrush(RGB(12, 15, 21));
         app->modelCenterSurfaceBrush_ = CreateSolidBrush(RGB(19, 24, 32));
         const auto control = [&](const wchar_t* cls, const wchar_t* label, DWORD style, int id) {
-            return CreateWindowExW((id == kModelList || id == kModelDetails) ? WS_EX_CLIENTEDGE : 0,
+            return CreateWindowExW((id == kModelList || id == kModelDetails || id == kModelSearch) ? WS_EX_CLIENTEDGE : 0,
                 cls, label, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, window,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), app->instance_, nullptr);
         };
@@ -1743,10 +1744,14 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         SendMessageW(app->modelDownloadUrl_, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(L"ZIP 地址 | 清单地址；多个镜像用分号分隔"));
         control(L"BUTTON", L"下载并安装", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelDownload);
+        app->modelSearch_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, kModelSearch);
+        SendMessageW(app->modelSearch_, EM_SETLIMITTEXT, 256, 0);
+        SendMessageW(app->modelSearch_, EM_SETCUEBANNER, TRUE,
+            reinterpret_cast<LPARAM>(L"筛选名称、类别、版本或能力"));
         app->modelList_ = control(L"LISTBOX", L"", WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT |
             LBS_OWNERDRAWVARIABLE | LBS_HASSTRINGS, kModelList);
         app->modelDetails_ = control(L"EDIT", L"", WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, kModelDetails);
-        app->modelListHeading_ = control(L"STATIC", L"已安装与可用模型", SS_LEFT | SS_NOPREFIX, kModelListHeading);
+        app->modelListHeading_ = control(L"STATIC", L"已登记模型", SS_LEFT | SS_NOPREFIX, kModelListHeading);
         app->modelDetailsHeading_ = control(L"STATIC", L"模型详情", SS_LEFT | SS_NOPREFIX, kModelDetailsHeading);
         SendMessageW(app->modelDetails_, EM_SETLIMITTEXT, 128 * 1024, 0);
         control(L"BUTTON", L"登记本地目录…", WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW, kModelRegister);
@@ -1795,12 +1800,12 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         if (item->CtlType == ODT_LISTBOX && item->CtlID == kModelList) {
             const int dpi = static_cast<int>(GetDpiForWindow(window));
             const auto px = [&](int value) { return MulDiv(value, dpi ? dpi : 96, 96); };
-            if (item->itemID == static_cast<UINT>(-1) || item->itemID >= app->localModels_.size()) {
+            if (item->itemID == static_cast<UINT>(-1) || item->itemID >= app->modelCenterVisibleIndexes_.size()) {
                 FillRect(item->hDC, &item->rcItem, app->modelCenterSurfaceBrush_);
                 return TRUE;
             }
 
-            const auto& model = app->localModels_[item->itemID];
+            const auto& model = app->localModels_[app->modelCenterVisibleIndexes_[item->itemID]];
             const bool selected = (item->itemState & ODS_SELECTED) != 0;
             const bool focused = (item->itemState & ODS_FOCUS) != 0;
             const bool selectedDefault = model.kind >= 0 &&
@@ -1959,12 +1964,19 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
     }
     case WM_COMMAND: {
         const int id = LOWORD(wParam);
+        if (id == kModelSearch && HIWORD(wParam) == EN_CHANGE) {
+            app->updateModelCenter();
+            return 0;
+        }
         if (id == kModelList && HIWORD(wParam) == LBN_SELCHANGE) {
             app->updateModelDetails();
             return 0;
         }
         if (HIWORD(wParam) != BN_CLICKED) break;
-        const auto index = static_cast<std::size_t>(SendMessageW(app->modelList_, LB_GETCURSEL, 0, 0));
+        const auto selectedIndex = SendMessageW(app->modelList_, LB_GETCURSEL, 0, 0);
+        const auto visibleIndex = selectedIndex < 0 ? app->modelCenterVisibleIndexes_.size() : static_cast<std::size_t>(selectedIndex);
+        const auto index = visibleIndex < app->modelCenterVisibleIndexes_.size()
+            ? app->modelCenterVisibleIndexes_[visibleIndex] : app->localModels_.size();
         if (id == kModelClose || id == IDCANCEL) {
             if (app->modelInstallThread_.joinable()) {
                 app->closeModelCenterWhenInstallEnds_ = true;
@@ -2067,8 +2079,10 @@ LRESULT CALLBACK NativeApp::modelCenterWindowProcedure(HWND window, UINT message
         app->modelDetails_ = nullptr;
         app->modelCenterStatus_ = nullptr;
         app->modelDownloadUrl_ = nullptr;
+        app->modelSearch_ = nullptr;
         app->modelListHeading_ = nullptr;
         app->modelDetailsHeading_ = nullptr;
+        app->modelCenterVisibleIndexes_.clear();
         if (app->modelCenterFont_) { DeleteObject(app->modelCenterFont_); app->modelCenterFont_ = nullptr; }
         if (app->modelCenterHeadingFont_) { DeleteObject(app->modelCenterHeadingFont_); app->modelCenterHeadingFont_ = nullptr; }
         if (app->modelCenterBackgroundBrush_) { DeleteObject(app->modelCenterBackgroundBrush_); app->modelCenterBackgroundBrush_ = nullptr; }
@@ -2090,7 +2104,7 @@ void NativeApp::layoutModelCenter() {
     if (!modelCenterHeadingFont_) modelCenterHeadingFont_ = CreateFontW(-MulDiv(11, dpi ? dpi : 96, 72), 0, 0, 0, FW_SEMIBOLD,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    for (int id = 1200; id <= kModelDetailsHeading; ++id) {
+    for (int id = 1200; id <= kModelSearch; ++id) {
         const auto child = GetDlgItem(modelCenterWindow_, id);
         const bool heading = id == kModelListHeading || id == kModelDetailsHeading;
         const auto font = heading && modelCenterHeadingFont_ ? modelCenterHeadingFont_ : modelCenterFont_;
@@ -2120,13 +2134,17 @@ void NativeApp::layoutModelCenter() {
         const int listHeight = std::max(px(48), contentHeight * 2 / 5);
         const int detailsHeadingTop = contentTop + listHeight + gap;
         const int detailsTop = detailsHeadingTop + headingHeight + px(4);
-        move(modelListHeading_, margin, headingTop, width, headingHeight);
+        const int labelWidth = px(112);
+        move(modelListHeading_, margin, headingTop, labelWidth, headingHeight);
+        move(modelSearch_, margin + labelWidth + px(8), headingTop - px(4), width - labelWidth - px(8), px(28));
         move(modelList_, margin, contentTop, width, listHeight);
         move(modelDetailsHeading_, margin, detailsHeadingTop, width, headingHeight);
         move(modelDetails_, margin, detailsTop, width, contentBottom - detailsTop);
     } else {
         const int listWidth = width * 38 / 100;
-        move(modelListHeading_, margin, headingTop, listWidth, headingHeight);
+        const int labelWidth = px(112);
+        move(modelListHeading_, margin, headingTop, labelWidth, headingHeight);
+        move(modelSearch_, margin + labelWidth + gap, headingTop - px(4), listWidth - labelWidth - gap, px(28));
         move(modelDetailsHeading_, margin + listWidth + gap, headingTop, width - listWidth - gap, headingHeight);
         move(modelList_, margin, contentTop, listWidth, contentHeight);
         move(modelDetails_, margin + listWidth + gap, contentTop, width - listWidth - gap, contentHeight);
@@ -2180,9 +2198,31 @@ void NativeApp::showModelCenter() {
 void NativeApp::updateModelCenter() {
     if (!modelList_) return;
     SendMessageW(modelList_, LB_RESETCONTENT, 0, 0);
-    int selection = 0;
+    modelCenterVisibleIndexes_.clear();
+    const auto query = controlText(modelSearch_);
+    const auto contains = [](std::wstring_view value, std::wstring_view needle) {
+        if (needle.empty()) return true;
+        return std::search(value.begin(), value.end(), needle.begin(), needle.end(), [](wchar_t left, wchar_t right) {
+            return std::towlower(left) == std::towlower(right);
+        }) != value.end();
+    };
+    const auto categoryFor = [](int kind) -> std::wstring_view {
+        switch (kind) {
+        case 0: return L"RIFE 插帧";
+        case 1: return L"超分辨率";
+        case 2: return L"时域降噪";
+        case 3: return L"压缩修复 STDF";
+        case 4: return L"实验性去模糊";
+        default: return L"其他模型";
+        }
+    };
+    int selection = modelCenterSelectedPath_.empty() && query.empty() && !localModels_.empty() ? 0 : -1;
     for (std::size_t index = 0; index < localModels_.size(); ++index) {
         const auto& item = localModels_[index];
+        if (!contains(item.name, query) && !contains(item.version, query) &&
+            !contains(categoryFor(item.kind), query) && !contains(item.capabilities, query)) continue;
+        const auto visibleIndex = modelCenterVisibleIndexes_.size();
+        modelCenterVisibleIndexes_.push_back(index);
         auto label = item.name + L"  " + item.version;
         if (item.modelSha256.size() >= 8) label += L"  [SHA " + item.modelSha256.substr(0, 8) + L"]";
         const bool selectedDefault = item.kind >= 0 && !modelPreferences_.defaults[static_cast<std::size_t>(item.kind)].empty() &&
@@ -2191,16 +2231,20 @@ void NativeApp::updateModelCenter() {
         label += item.usable ? L"  [可选]" : item.verified ? L"  [能力未支持]" : L"  [校验未通过]";
         SendMessageW(modelList_, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
         if (!modelCenterSelectedPath_.empty() && NativeModelPreferences::key(item.directory) == NativeModelPreferences::key(modelCenterSelectedPath_))
-            selection = static_cast<int>(index);
+            selection = static_cast<int>(visibleIndex);
     }
-    SendMessageW(modelList_, LB_SETCURSEL, localModels_.empty() ? -1 : selection, 0);
+    if (selection < 0 && query.empty() && !modelCenterVisibleIndexes_.empty()) selection = 0;
+    SendMessageW(modelList_, LB_SETCURSEL, selection, 0);
     updateModelDetails();
 }
 
 void NativeApp::updateModelDetails() {
     if (!modelCenterWindow_ || !modelList_) return;
-    const auto index = static_cast<std::size_t>(SendMessageW(modelList_, LB_GETCURSEL, 0, 0));
-    const LocalModel* item = index < localModels_.size() ? &localModels_[index] : nullptr;
+    const auto selectedIndex = SendMessageW(modelList_, LB_GETCURSEL, 0, 0);
+    const auto visibleIndex = selectedIndex < 0 ? modelCenterVisibleIndexes_.size() : static_cast<std::size_t>(selectedIndex);
+    const auto modelIndex = visibleIndex < modelCenterVisibleIndexes_.size()
+        ? modelCenterVisibleIndexes_[visibleIndex] : localModels_.size();
+    const LocalModel* item = modelIndex < localModels_.size() ? &localModels_[modelIndex] : nullptr;
     const bool editable = modelPreferencesWritable_ && modelChangesAllowed();
     const bool installing = modelInstallActive_.load();
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelRegister), editable && !installing);
@@ -2211,7 +2255,11 @@ void NativeApp::updateModelDetails() {
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelDefault), editable && item && item->usable);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelUnregister), editable && item);
     EnableWindow(GetDlgItem(modelCenterWindow_, kModelRefresh), modelChangesAllowed());
-    std::wstring status = std::to_wstring(localModels_.size()) + L" 个模型。支持本地安装与 HTTPS 镜像下载。\r\n";
+    const auto query = controlText(modelSearch_);
+    std::wstring status = query.empty()
+        ? std::to_wstring(localModels_.size()) + L" 个已登记模型；支持本地安装与 HTTPS 镜像下载。\r\n"
+        : std::to_wstring(modelCenterVisibleIndexes_.size()) + L" / " + std::to_wstring(localModels_.size()) +
+            L" 个已登记模型匹配筛选条件。\r\n";
     status += L"SHA-256 检查文件完整性，不认证发布者或画质。\r\n";
     if (installing) {
         std::lock_guard lock(modelInstallMutex_);
@@ -2222,7 +2270,11 @@ void NativeApp::updateModelDetails() {
         }
     } else status += modelChangesAllowed() ? modelCenterNotice_ : L"正在检查视频或运行任务；模型更改暂不可用。";
     SetWindowTextW(modelCenterStatus_, status.c_str());
-    std::wstring details = L"暂无已登记模型。\r\n\r\n可在上方填入最多 5 个 HTTPS 镜像并选择“下载并安装”。镜像可写成 ZIP 地址 | 清单地址；同路径模型可只填 ZIP 地址。多个镜像用分号分隔；中断下载会保留可续传数据。也可安装本地 ZIP 或登记已解压的本机目录。";
+    std::wstring details = localModels_.empty()
+        ? L"暂无已登记模型。\r\n\r\n可在上方填入最多 5 个 HTTPS 镜像并选择“下载并安装”。镜像可写成 ZIP 地址 | 清单地址；同路径模型可只填 ZIP 地址。多个镜像用分号分隔；中断下载会保留可续传数据。也可安装本地 ZIP 或登记已解压的本机目录。"
+        : modelCenterVisibleIndexes_.empty()
+            ? L"没有符合筛选条件的模型。\r\n\r\n清空上方筛选框以显示所有已登记模型，或使用“安装验证包…”添加模型。"
+            : L"选择左侧模型卡片，查看版本、校验、许可和来源信息。";
     if (item) {
         modelCenterSelectedPath_ = item->directory;
         const wchar_t* kind = item->kind == 0 ? L"RIFE 插帧" : item->kind == 1 ? L"超分辨率" : item->kind == 2 ? L"时域降噪" : item->kind == 3 ? L"压缩修复 · STDF 本机评估" : item->kind == 4 ? L"实验性独立去模糊" : L"其他 / 尚未支持";
