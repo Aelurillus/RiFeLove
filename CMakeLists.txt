@@ -79,7 +79,8 @@ if(RIFELOVE_BUILD_NATIVE_DESKTOP AND WIN32)
   endif()
   add_library(rifelove_native_package STATIC
     apps/native_desktop/native_package_archive.cpp
-    apps/native_desktop/native_model_download.cpp)
+    apps/native_desktop/native_model_download.cpp
+    apps/native_desktop/native_model_catalog.cpp)
   target_include_directories(rifelove_native_package PUBLIC apps/native_desktop)
   target_link_libraries(rifelove_native_package PUBLIC miniz PRIVATE bcrypt winhttp)
   target_compile_definitions(rifelove_native_package PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
