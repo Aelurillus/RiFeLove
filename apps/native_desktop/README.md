@@ -18,8 +18,10 @@ DirectWrite for high-DPI Chinese text. It has no Qt or QML dependency.
 - Model Center verifies and registers local packs, installs local ZIP packages,
   and downloads packages from user-supplied HTTPS mirrors. Network downloads
   have progress, cancellation, byte-range resume and archive SHA-256 checks;
-  both local and downloaded packages continue through per-file hashes,
-  schema-v2 validation and atomic placement in the managed user model directory.
+  mirrors may provide ZIP and manifest URLs separately when the host does not
+  support adjacent filenames. Both local and downloaded packages continue
+  through per-file hashes, schema-v2 validation and atomic placement in the
+  managed user model directory.
   The current UI does not ship a trusted catalog or publisher-signature root;
   a sidecar hash does not authenticate its publisher.
 - Comparison opens local source and output frames for timestamp-based

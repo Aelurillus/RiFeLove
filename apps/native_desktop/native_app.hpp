@@ -318,7 +318,11 @@ private:
     void layoutModelCenter();
     void updateModelCenter();
     void updateModelDetails();
-    void startModelPackageInstall(const std::filesystem::path& archive, std::vector<std::wstring> mirrorUrls = {});
+    struct ModelPackageMirror final {
+        std::wstring archiveUrl;
+        std::wstring manifestUrl;
+    };
+    void startModelPackageInstall(const std::filesystem::path& archive, std::vector<ModelPackageMirror> mirrors = {});
     void cancelModelPackageInstall();
     void pollModelPackageInstall();
     void showTaskHistory();
