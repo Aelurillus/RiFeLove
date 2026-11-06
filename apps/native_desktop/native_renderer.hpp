@@ -117,7 +117,14 @@ struct NativeLayout {
         value.side = value.singleColumn ? 64.0F : width < 1100 ? 164.0F : 188.0F;
         value.left = value.side + (value.singleColumn ? 16.0F : 24.0F);
         value.right = width - (value.singleColumn ? 16.0F : 24.0F);
-        value.split = value.singleColumn ? value.right : value.left + (value.right - value.left - 20.0F) * 0.55F;
+        // Narrow windows need more room for the output path and encoder labels.
+        // Keep the source column wide enough for its compact import controls,
+        // then smoothly restore the standard source-first balance as the
+        // available window width grows.
+        const float wideWindowMix = std::clamp((width - 760.0F) / 340.0F, 0.0F, 1.0F);
+        const float sourceShare = 0.48F + 0.07F * wideWindowMix;
+        value.split = value.singleColumn ? value.right :
+            value.left + (value.right - value.left - 20.0F) * sourceShare;
         value.exportOffset = value.singleColumn ?
             (qualityExpanded ? 690.0F + qualityControlsHeight + qualityDisclosureHeight : 406.0F) : 0.0F;
         value.contentEnd = std::max(qualityExpanded ?
