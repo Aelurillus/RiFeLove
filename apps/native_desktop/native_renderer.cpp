@@ -274,16 +274,29 @@ bool NativeRenderer::draw(HWND window, const NativeRenderState& state) {
                 runtimeDetail, state.runtimeReady);
         }
         if (l.height >= 640.0F) {
-            cardAt(l.left, 548, bodyWidth, 120, D2D1::ColorF(0x111720), 14);
-            text(L"从视频到成片", l.left + 20, 566, 170, 22, 12, white, true);
-            const float stepLeft = l.left + 205;
-            const float stepWidth = std::max(90.0F, (bodyWidth - 225.0F) / 3.0F);
-            const std::array<std::wstring, 3> steps{L"01  导入视频", L"02  选择帧率与编码", L"03  预览并导出"};
-            for (std::size_t i = 0; i < steps.size(); ++i) {
-                const float x = stepLeft + (stepWidth + 8.0F) * static_cast<float>(i);
-                text(steps[i], x, 570, stepWidth, 26, 11, i == 0 ? accent : muted, i == 0, true);
+            // The old fixed card extended below shorter client areas and its
+            // three-column labels overflowed the compact Home layout. Fit its
+            // height and use a single concise flow line when space is tight.
+            const float stepsHeight = std::min(120.0F, l.height - 548.0F);
+            cardAt(l.left, 548, bodyWidth, stepsHeight, D2D1::ColorF(0x111720), 14);
+            if (l.compactHome) {
+                text(L"从视频到成片", l.left + 20, 556, bodyWidth - 40, 18, 11, white, true);
+                text(L"导入视频  →  选择帧率与编码  →  预览并导出",
+                    l.left + 20, 579, bodyWidth - 40, 22, 10, accent, true);
+                text(L"导出前会再次检查目标路径、帧数与媒体时间轴。",
+                    l.left + 20, 604, bodyWidth - 40, 32, 9, muted, false, true);
+            } else {
+                text(L"从视频到成片", l.left + 20, 566, 170, 22, 12, white, true);
+                const float stepLeft = l.left + 205;
+                const float stepWidth = std::max(90.0F, (bodyWidth - 225.0F) / 3.0F);
+                const std::array<std::wstring, 3> steps{L"01  导入视频", L"02  选择帧率与编码", L"03  预览并导出"};
+                for (std::size_t i = 0; i < steps.size(); ++i) {
+                    const float x = stepLeft + (stepWidth + 8.0F) * static_cast<float>(i);
+                    text(steps[i], x, 570, stepWidth, 26, 11, i == 0 ? accent : muted, i == 0, true);
+                }
+                text(L"导出前会再次检查目标路径、帧数与媒体时间轴。",
+                    l.left + 205, 603, bodyWidth - 225, 36, 10, muted, false, true);
             }
-            text(L"导出前会再次检查目标路径、帧数与媒体时间轴。", l.left + 205, 603, bodyWidth - 225, 36, 10, muted, false, true);
         }
         const HRESULT result = renderTarget_->EndDraw();
         if (result == D2DERR_RECREATE_TARGET) discardTarget();
