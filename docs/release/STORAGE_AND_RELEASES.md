@@ -1,76 +1,59 @@
-# Release storage and update log
+# Windows releases and distribution
 
-RifeLove is currently operated in **local-only mode**. Video processing, models, settings, task databases, logs, checkpoints, release archives and update metadata stay on the local filesystem. The application does not upload source videos or task data.
+RifeLove is a local-first Windows desktop application. Video input, output, model inference, settings, task history and logs remain on the user's computer. The release and model download channels distribute application and model files only; they do not receive user videos or task data.
 
-## Current storage policy
+## Public distribution channels
 
-- Aliyun OSS is disabled for this checkout. There is no OSS bucket, region or endpoint default in `release-site/storage.json`.
-- The release scripts fail closed before loading credentials or constructing a network client. Environment variables cannot re-enable Aliyun publishing locally.
-- Storj is retained only as a future, separately reviewed major-release backup option. It is disabled in `release-site/storage.json`, has no configured bucket, and is not contacted by the local workflow.
-- `release-site/releases.json` remains a local metadata/history file. `release-site/dist` and the worker bundle are generated local artifacts; building them does not publish anything.
-- No cloud credentials are stored in the repository. A workspace scan found no configured access-key or secret-key values.
+| Content | Channel | Purpose |
+| --- | --- | --- |
+| Windows application | GitHub Releases | Versioned official Release with the portable ZIP and SHA-256 sidecar |
+| RIFE models | GitHub Releases | Primary model archive and distribution manifest |
+| RIFE models | Cloudflare Pages | Independent HTTPS mirror and signed model catalog |
+| Release history | Cloudflare Pages | Public update log pointing to verified GitHub Release assets |
 
-The authoritative local setting is:
+The current model channel contract requires two to five distinct HTTPS hosts, including the configured Cloudflare Pages host. The signed catalog, distribution manifest, archive size and SHA-256 must agree before the application can offer a model download. GitHub Release links use versioned release tags, while the release object carries the user-facing notes and downloadable assets.
 
-```json
-{
-  "mode": "local-only",
-  "primary": null,
-  "backup": {
-    "provider": "storj",
-    "enabled": false,
-    "endpoint": "",
-    "storjBucket": ""
-  }
-}
-```
+## Application release procedure
 
-## Local update-log workflow
+The repository release metadata is authoritative for readiness. A package cannot be published unless its metadata sets `releaseReady` to `true` after all Windows distribution checks pass. Current historical preview entries remain non-downloadable until a real package qualifies.
 
-From `release-site`, the following commands only build and test local files:
+Build and inspect a candidate first:
 
 ```powershell
-npm ci
-npm test
-npm run build
-npm run build:worker
+npm --prefix release-site run publish:release -- --archive <path-to-RifeLove-version-win-x64.zip> --release <path-to-reviewed-release.json> --dry-run
 ```
 
-The static site reads the local `releases.json`. A generated worker source is written under `out/release-worker/worker.js`; deployment is a separate action and is outside the local-only workflow.
+The dry run validates package privacy, release metadata, the exact archive name, its SHA-256, the release manifest and GitHub's per-asset size limit. It does not contact GitHub or change the local release log.
 
-The following legacy commands are deliberately disabled and fail before any storage client or credential is read:
+After qualification, run the same command without `--dry-run` with `GH_TOKEN` or `GITHUB_TOKEN` set to a credential that can write repository contents. The publisher:
 
-```powershell
-npm run publish
-npm run upload:preview:oss
-npm run configure:oss-updatelog
-npm run deploy:oss
-```
+1. Creates or resumes a draft GitHub Release for `v<version>`.
+2. Uploads the Windows ZIP and a SHA-256 sidecar without replacing existing assets.
+3. Confirms the GitHub API asset digests and sizes, publishes the Release, then checks anonymous HTTPS availability and size.
+4. Updates `release-site/releases.json` only after those checks pass. A failed local manifest write can be safely retried; a published asset with different contents is rejected.
 
-They report that Aliyun OSS publishing is disabled in local-only mode. The direct entry points under `tools/release/` contain the same guard for stale scripts or shells.
+Each GitHub release asset must be smaller than 2 GiB. Older published releases remain available; the publisher does not prune or overwrite their assets. The user-facing Release is a published GitHub Release object with notes and assets, not only a Git tag.
 
-## Local release archive procedure
+## Update log deployment
 
-1. Build a Windows package with real local copies of the runtime DLLs and selected model files.
-2. Keep the archive under `out/release-candidates/<version>/` and retain its SHA-256, byte count and package manifest locally.
-3. Run the release archive safety checks, CTest and the packaged smoke tests before marking metadata as ready.
-4. Update `release-site/releases.json` only with reviewed local metadata. Keep `downloadAvailable` false until a future distribution workflow is explicitly enabled and reviewed.
-5. Do not place user settings, task history, logs or videos in a release archive.
+`npm --prefix release-site run deploy` builds the current update log before deploying the generated `release-site/dist` directory to the configured Cloudflare Pages project. This action is separate from publishing a GitHub Release. Review the manifest and rendered page before deploying. Wrangler must already be authenticated for the intended Cloudflare account.
 
-### Inference runtime package profiles
+## Release gates
 
-The full native package continues to include the TensorRT provider and builder for users who want its runtime engine optimization. `package-native-local.ps1 -CudaOnly` creates a separate package that keeps ONNX Runtime CUDA, CUDA and cuDNN, while excluding the TensorRT provider and its builder/runtime DLLs. The CUDA-only output directory must include `cuda-only` in its name. The package manifest and README identify the selected profile; the existing full TensorRT package remains the default.
+Do not set `releaseReady` to `true` or publish a public application package until the exact candidate passes these checks:
 
-For the CUDA-only profile, dependency preflight checks the selected CUDA DLLs against the hashes recorded by the configured build. It does not require or copy the `tensorrt-runtime.version` sidecar or TensorRT DLLs from the package input directory. The full TensorRT profile keeps its complete DLL-inventory and version-sidecar checks. This changes packaging inputs only; it does not change the build's configured inference dependencies or qualify a public runtime distribution.
+- Complete package inventory with source, version and redistribution terms for every DLL and bundled runtime.
+- Review of NVIDIA/CUDA/cuDNN/TensorRT terms, FFmpeg codec patent exposure, and Microsoft runtime redistribution requirements.
+- Signed installer and portable packages, with clean-machine installation, model acquisition, GPU inference and export, update/rollback, uninstall, security and supported-device checks.
+- Native Win32 user-interface acceptance at supported DPI and window sizes. Qt and a bundled CLI are outside the shipped product boundary.
+- Verified model provenance and redistribution terms, signed catalog, and exact anonymous size/SHA-256 readbacks from both model hosts.
+- A realistic real-footage quality review across supported models and representative motion, scene cuts, animation, film grain and low-light footage.
 
-This split addresses the size of the current workstation candidate: 4,956,322,954 bytes total, with 4,876,478,684 bytes under `runtime/`; `nvinfer_builder_resource_10.dll` alone is 1,971,797,024 bytes. These are local package measurements, not a published artifact size. A development-only end-to-end smoke has now exercised the CUDA-only package runtime and model on a 720p synthetic clip; the results and limits are recorded in [CUDA-only 720p pipeline evidence](CUDA_ONLY_720P_PIPELINE_EVIDENCE_2026-11-06.md). Native GUI acceptance, clean-machine install, redistribution-license review, real-footage quality and public-release acceptance remain open. Do not advertise either profile as release-ready until those gates pass.
+The current RIFE-only and CUDA-only outputs are qualification candidates. Synthetic throughput or a successful local inference run does not establish clean-machine installation, legal redistribution, broad hardware compatibility or real-footage quality.
 
-The current RIFE-only Windows candidate has an exact package and runtime
-inventory in the [Windows redistribution audit](WINDOWS_REDISTRIBUTION_AUDIT.md).
-It remains a local qualification artifact: its included model and third-party
-runtime do not have completed public redistribution approval.
+## Local cleanup
 
-Local cleanup tools remain available for generated packages:
+Generated package cleanup scripts remain available for local work. They are separate from release publishing and do not remove model datasets, user task state or source files:
 
 ```powershell
 .\tools\release\dedupe-local-builds.ps1
@@ -78,17 +61,3 @@ Local cleanup tools remain available for generated packages:
 .\tools\release\prune-generated-builds.ps1
 .\tools\release\prune-generated-builds.ps1 -Apply
 ```
-
-They operate on generated `out` packages and preserve package `data/` directories, user files and local task state. No cloud verification is a prerequisite for local cleanup.
-
-## Public repository boundary
-
-The public source contains the current local-only policy and fail-closed upload guards. It excludes private storage identifiers, object keys, archive hashes and private upload records. Storj stays disabled in the local configuration until a separate release workflow is explicitly reviewed.
-
-## Verification performed for this change
-
-- `release-site/storage.json` has no Aliyun provider, bucket, region or endpoint.
-- The local release policy no longer describes an OSS retention budget or automatic remote backup.
-- All four legacy Aliyun package commands fail closed through `tools/release/oss-disabled.mjs`.
-- Repository scans found no literal cloud access keys or secret values in tracked project files.
-- No Aliyun OSS, Storj or other cloud endpoint was contacted.

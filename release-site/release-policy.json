@@ -1,5 +1,5 @@
 {
-  "retainedDownloads": 0,
-  "releaseStorageBudgetBytes": 0,
-  "notes": "Local-only mode: retain release metadata indefinitely and keep release archives on the local filesystem. Any future Storj backup requires a separate explicit enablement and review."
+  "maxGitHubReleaseAssetBytesExclusive": 2147483648,
+  "retainPublishedReleases": true,
+  "notes": "Keep every published application release and its assets. Never replace a published asset; verify its API digest and anonymous download before updating the Cloudflare Pages release log."
 }

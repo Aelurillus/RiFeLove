@@ -1,10 +1,9 @@
 {
-  "mode": "local-only",
-  "primary": null,
-  "backup": {
-    "provider": "storj",
-    "enabled": false,
-    "endpoint": "",
-    "storjBucket": ""
-  }
+  "mode": "local-first",
+  "applicationReleases": "github-releases",
+  "updateLog": "cloudflare-pages",
+  "modelDistribution": [
+    "github-releases",
+    "cloudflare-pages"
+  ]
 }
