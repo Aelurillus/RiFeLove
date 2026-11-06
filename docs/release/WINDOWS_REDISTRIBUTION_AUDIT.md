@@ -2,9 +2,9 @@
 
 **Status: the current native package is still a local qualification candidate, not a public release.** This inventory records exact package evidence and upstream terms; it is not a legal opinion or an authorization to distribute.
 
-## Current local candidate
+## Most recent historical package candidate
 
-The latest package candidate is `RifeLoveNative-local-cuda-only-rife-only-2026-11-06-main-96a51b4`. It was built on 2026-11-06 from a tracked source tree matching `main` at `96a51b4b4eca8010d298c67d2ed01fc5321e965d`.
+The most recently recorded package is `RifeLoveNative-local-cuda-only-rife-only-2026-11-06-main-96a51b4`. It was built on 2026-11-06 from a tracked source tree matching `main` at `96a51b4b4eca8010d298c67d2ed01fc5321e965d`. Current `main` is `2eca63beaa364010b610ad80816e05db0ade9184`, so this package does not match the current source tree and must not be used as the release package. Rebuild and requalify a package from the final release commit before distribution.
 
 - Package kind: `local-native-windows-x64`; runtime profile: `cuda-only`; model bundle: `rife-only`.
 - 89 files, 2,492,044,028 bytes; no Qt, CLI, user media, or user data.
