@@ -1269,7 +1269,13 @@ void NativeApp::layoutControls() {
     move(advancedButton_, layout.split - 110, 684 + finalQualityOffset, 90, 32, qualityExpanded_);
     const bool blurEnabled = SendMessageW(motionBlurCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     move(shutterEdit_, left + 68, 732 + finalQualityOffset, 64, 30, qualityExpanded_ && advancedExpanded_);
-    move(samplesEdit_, left + (leftWidth < 280 ? 194 : 218), 732 + finalQualityOffset, leftWidth < 280 ? 50 : 54, 30, qualityExpanded_ && advancedExpanded_);
+    const bool compactExposureLayout = leftWidth < 244.0F;
+    const float samplesLeft = compactExposureLayout ? left + 175.0F :
+        left + (leftWidth < 280 ? 194.0F : 218.0F);
+    const float samplesWidth = compactExposureLayout ? std::min(50.0F, leftWidth - 175.0F) :
+        (leftWidth < 280 ? 50.0F : 54.0F);
+    move(samplesEdit_, samplesLeft, 732 + finalQualityOffset, samplesWidth, 30,
+        qualityExpanded_ && advancedExpanded_);
     EnableWindow(shutterEdit_, blurEnabled);
     EnableWindow(samplesEdit_, blurEnabled);
     const float exportY = layout.exportOffset;
