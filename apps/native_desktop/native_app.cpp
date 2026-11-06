@@ -1224,7 +1224,8 @@ void NativeApp::layoutControls() {
         move(runtimeButton_, layout.singleColumn ? 8 : 18, layout.resourceButtonsTop + 40,
             layout.side - (layout.singleColumn ? 16 : 36), 32, true, true);
         SetWindowTextW(homeStartButton_, L"进入插帧工作室");
-        move(homeStartButton_, layout.left + 28, 266, std::min(220.0F, layout.right - layout.left - 56), 46, true, true);
+        move(homeStartButton_, layout.left + 28, layout.homeStartTop,
+            std::min(220.0F, layout.right - layout.left - 56), layout.homeStartHeight, true, true);
         ShowScrollBar(window_, SB_VERT, FALSE);
         return;
     }

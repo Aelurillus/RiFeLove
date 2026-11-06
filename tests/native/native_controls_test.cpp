@@ -1818,6 +1818,31 @@ int wmain(int argc, wchar_t** argv) {
                   "scaled narrow import geometry keeps the title, actions and input separate");
     }
 
+    // Home uses full-width readiness rows before three columns would make
+    // their descriptions unreadable. Exercise the responsive geometry at the
+    // minimum window size, across the breakpoint, and at larger DPI-scaled
+    // client sizes without relying on a screenshot capture service.
+    for (const float width : {480.0F, 620.0F, 700.0F, 759.0F, 760.0F, 800.0F, 832.0F, 1024.0F, 1366.0F}) {
+        for (const float height : {480.0F, 530.0F, 640.0F, 768.0F}) {
+            const auto layout = NativeLayout::from(width, height);
+            check(layout.homeStartTop + layout.homeStartHeight <= 104.0F + layout.homeHeroHeight - 8.0F,
+                "Home primary action remains inside its hero card");
+            check(layout.homeReadinessTop >= 104.0F + layout.homeHeroHeight + 10.0F,
+                "Home readiness cards remain separated from the hero");
+            const float readinessBottom = layout.homeReadinessTop + layout.homeReadinessHeight *
+                (layout.compactHome ? 3.0F : 1.0F) + layout.homeReadinessGap * (layout.compactHome ? 2.0F : 0.0F);
+            check(readinessBottom <= height - 16.0F,
+                "Home readiness cards fit the minimum vertical client area");
+            if (layout.compactHome) {
+                check(layout.homeReadinessWidth == layout.right - layout.left && layout.homeReadinessHeight >= 44.0F,
+                    "Compact Home stacks readable full-width readiness rows");
+            } else {
+                check(layout.homeReadinessWidth * 3.0F + layout.homeReadinessGap * 2.0F <= layout.right - layout.left + 0.01F,
+                    "Wide Home keeps all three readiness cards inside the content column");
+            }
+        }
+    }
+
     SetThreadDesktop(original);
     CloseDesktop(isolated);
     if (failures) return 1;
