@@ -8,7 +8,7 @@ const manifest = {
   updatedAt: "2026-10-26T00:00:00.000Z",
   releases: [{
     version: "0.1.2", date: "2026-10-26", channel: "Preview", releaseReady: false,
-    downloadAvailable: false, storjBackup: false, title: "RifeLove preview",
+    downloadAvailable: false, title: "RifeLove preview",
     summary: "A local-only preview.", highlights: ["Public downloads remain disabled."], artifact: null,
   }],
 };

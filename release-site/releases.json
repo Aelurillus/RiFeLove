@@ -9,7 +9,6 @@
       "channel": "开发预览",
       "releaseReady": false,
       "downloadAvailable": false,
-      "storjBackup": false,
       "title": "可独立运行的本地推理包与四套 RIFE 模型",
       "summary": "0.1.3 Windows x64 本机预览包包含桌面程序、CLI、四套已校验的 RIFE 模型，以及复制到包内的 ONNX Runtime CUDA、TensorRT、CUDA 与 cuDNN 运行库，不依赖开发机 SDK 路径。已在 GTX 1660 SUPER 上完成本机 TensorRT 数值资格检查，并用包内 CLI 生成 12 帧测试视频。离线候选 ZIP 已本地校验，不含任务库、日志、个人设置或用户视频；公开下载仍关闭。干净系统验证、完整许可证/再分发审查、超分质量验收及全产品范围仍未完成。",
       "highlights": [
@@ -27,7 +26,6 @@
       "channel": "开发预览",
       "releaseReady": false,
       "downloadAvailable": false,
-      "storjBackup": false,
       "title": "四套本地 RIFE 模型与稳定性修复",
       "summary": "2026-10-26 构建的 Windows x64 本机预览版，新增 RIFE 4.22 Lite 候选模型，修复模型目录迁移后的旧路径残留，并加固 TensorRT DLL 隔离与打包后检查。视频、模型运行、任务和设置仍留在本机；恢复推理、跨电脑安装验证和第三方再分发审核仍未完成，公开下载保持关闭。",
       "highlights": [
@@ -45,7 +43,6 @@
       "channel": "开发预览",
       "releaseReady": false,
       "downloadAvailable": false,
-      "storjBackup": false,
       "title": "本地模型中心与恢复模型目录",
       "summary": "2026-10-26 构建的 Windows x64 离线预览包，内含 RifeLove 0.1.1、命令行工具及三套 RIFE 模型；视频、设置、队列、历史和日志都留在本机。模型中心现可离线登记并校验视频恢复模型包，但尚无已验证的恢复推理后端。跨电脑兼容性和第三方再分发审核仍待完成，公开下载保持关闭。",
       "highlights": [
@@ -63,7 +60,6 @@
       "channel": "开发预览",
       "releaseReady": false,
       "downloadAvailable": false,
-      "storjBackup": false,
       "title": "工作室界面更新与三模型离线包",
       "summary": "2026-10-26 构建的 Windows x64 本地预览版，更新了工作室界面和应用图标，并提供包含完整推理运行库的离线包。视频、设置和任务记录仍留在本机。公开下载暂未开放：目前只在 GTX 1660 SUPER 上完成验证，跨电脑兼容性和第三方再分发审查仍待完成。",
       "highlights": [

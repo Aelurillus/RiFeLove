@@ -1,223 +1,232 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { lstat, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mergePublishedRelease, validateVersion } from "./release-manifest.mjs";
-import { assertPublicObjectAccessAllowed } from "./oss-public-access.mjs";
-import { verifyAnonymousObject } from "./anonymous-object-verification.mjs";
+import { mergePublishedRelease, validateReleaseManifest, validateVersion } from "./release-manifest.mjs";
+import {
+  assertGitHubReleaseAsset,
+  buildReleaseBody,
+  createReleaseArtifact,
+  createUploadUrl,
+  MAX_GITHUB_RELEASE_ASSET_BYTES,
+  verifyAnonymousReleaseAsset,
+} from "./github-release-client.mjs";
 import { validateReleaseArchive } from "./release-archive-safety.mjs";
-import { failAliyunOssDisabled } from "./oss-disabled.mjs";
 
-failAliyunOssDisabled();
-
+const API_ROOT = "https://api.github.com";
+const API_VERSION = "2022-11-28";
+const OFFICIAL_REPOSITORY = "Aelurillus/RiFeLove";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteRoot = path.join(repoRoot, "release-site");
-const requireFromReleaseSite = createRequire(path.join(siteRoot, "package.json"));
-const OSS = requireFromReleaseSite("ali-oss");
-const { HeadObjectCommand, S3Client } = requireFromReleaseSite("@aws-sdk/client-s3");
-const { Upload } = requireFromReleaseSite("@aws-sdk/lib-storage");
 const manifestPath = path.join(siteRoot, "releases.json");
 const policyPath = path.join(siteRoot, "release-policy.json");
-const storagePath = path.join(siteRoot, "storage.json");
 const options = parseArguments(process.argv.slice(2));
+
 if (!options.archive || !options.release) {
-  throw new Error("Usage: node tools/release/publish-release.mjs --archive <zip> --release <metadata.json>");
+  throw new Error("Usage: node tools/release/publish-release.mjs --archive <zip> --release <metadata.json> [--dry-run]");
 }
 
 const archivePath = path.resolve(options.archive);
 const releaseMetadataPath = path.resolve(options.release);
-const archiveInfo = await stat(archivePath);
-if (!archiveInfo.isFile() || archiveInfo.size <= 0) throw new Error("Release archive must be a non-empty file");
+const archiveInfo = await lstat(archivePath);
+if (!archiveInfo.isFile() || archiveInfo.isSymbolicLink() || archiveInfo.size <= 0 || archiveInfo.size >= MAX_GITHUB_RELEASE_ASSET_BYTES) {
+  throw new Error("The Windows release archive must be a non-empty regular file smaller than 2 GiB");
+}
 const archiveSafety = await validateReleaseArchive(archivePath);
 console.log(`Release archive privacy inspection passed (${archiveSafety.entryCount} entries).`);
+
 const release = JSON.parse(await readFile(releaseMetadataPath, "utf8"));
 validateRelease(release);
+const releasePolicy = JSON.parse(await readFile(policyPath, "utf8"));
+if (releasePolicy.maxGitHubReleaseAssetBytesExclusive !== MAX_GITHUB_RELEASE_ASSET_BYTES ||
+    releasePolicy.retainPublishedReleases !== true) {
+  throw new Error("The release policy must match GitHub's asset limit and retain published versions");
+}
 const version = validateVersion(release.version);
-const fileName = `RifeLove-${version}-win-x64.zip`;
-if (path.basename(archivePath) !== fileName) throw new Error(`Archive must be named ${fileName}`);
-
-const storage = JSON.parse(await readFile(storagePath, "utf8"));
-const bucket = process.env.OSS_BUCKET || storage.primary?.bucket;
-const region = process.env.OSS_REGION || storage.primary?.region;
-const endpoint = process.env.OSS_ENDPOINT || storage.primary?.endpoint || `https://${region}.aliyuncs.com`;
-const accessKeyId = process.env.OSS_ACCESS_KEY_ID;
-const accessKeySecret = process.env.OSS_ACCESS_KEY_SECRET;
-if (!bucket || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) || !region || !/^oss-[a-z0-9-]+$/.test(region) || !accessKeyId || !accessKeySecret) {
-  throw new Error("Set OSS_BUCKET, OSS_REGION, OSS_ACCESS_KEY_ID, and OSS_ACCESS_KEY_SECRET in this shell first");
-}
-if (!/^https:\/\/[a-z0-9.-]+$/.test(endpoint) || !endpoint.endsWith(".aliyuncs.com")) {
-  throw new Error("OSS_ENDPOINT must be an HTTPS Aliyun OSS endpoint");
-}
-
-const key = `releases/${version}/${fileName}`;
-const sha256 = await hashFile(archivePath);
-const downloadUrl = makePublicObjectUrl(bucket, region, key);
-const artifact = { fileName, key, sha256, sizeBytes: archiveInfo.size, downloadUrl };
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const policy = JSON.parse(await readFile(policyPath, "utf8"));
-const publishedAt = release.publishedAt || `${release.date}T12:00:00.000Z`;
-const metadata = { ...release, storjBackup: release.storjBackup === true };
-const merged = mergePublishedRelease(manifest, metadata, artifact, publishedAt, policy);
-
-const oss = new OSS({
-  region,
-  bucket,
-  accessKeyId,
-  accessKeySecret,
-  authorizationV4: true,
-  endpoint,
-  secure: true,
-  timeout: 120_000,
+const artifact = createReleaseArtifact(version, {
+  repository: OFFICIAL_REPOSITORY,
+  sha256: await hashFile(archivePath),
+  sizeBytes: archiveInfo.size,
 });
+if (path.basename(archivePath) !== artifact.fileName) throw new Error(`Archive must be named ${artifact.fileName}`);
+const releaseBody = buildReleaseBody(release, artifact);
+const checksumName = `${artifact.fileName}.sha256`;
+const checksumBody = Buffer.from(`${artifact.sha256}  ${artifact.fileName}\n`, "utf8");
+const checksumHash = hashBuffer(checksumBody);
 
-await assertPublicObjectAccessAllowed(oss, bucket);
-
-const existingOss = await headOssObject(oss, key);
-if (existingOss) {
-  verifyObject(existingOss.sizeBytes, existingOss.sha256, archiveInfo.size, sha256, "OSS");
-  await oss.putACL(key, "public-read");
-} else {
-  await uploadToOss(oss, archivePath, key, fileName, archiveInfo.size, sha256);
+if (options.dryRun) {
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  validateReleaseManifest(manifest);
+  mergePublishedRelease(manifest, release, artifact, `${release.date}T12:00:00.000Z`);
+  console.log(`Dry run only: ${artifact.releaseTag} would publish ${artifact.fileName} (${artifact.sizeBytes} bytes, SHA-256 ${artifact.sha256}).`);
+  console.log(`Download URL: ${artifact.downloadUrl}`);
+  process.exit(0);
 }
-await verifyAnonymousObject(downloadUrl, archiveInfo.size, sha256);
 
-if (metadata.storjBackup) {
-  const storjBucket = process.env.STORJ_BUCKET || storage.backup?.storjBucket;
-  const storjAccessKeyId = process.env.STORJ_UPLOAD_ACCESS_KEY;
-  const storjSecretAccessKey = process.env.STORJ_UPLOAD_SECRET_KEY;
-  if (!storjBucket || !storjAccessKeyId || !storjSecretAccessKey) {
-    throw new Error("This release is marked for Storj backup; set STORJ_BUCKET and Storj upload credentials first");
-  }
-  await uploadToStorj({
-    archivePath,
-    key,
-    fileName,
-    sizeBytes: archiveInfo.size,
-    sha256,
-    bucket: storjBucket,
-    accessKeyId: storjAccessKeyId,
-    secretAccessKey: storjSecretAccessKey,
-    endpoint: process.env.STORJ_ENDPOINT || "https://gateway.storjshare.io",
+const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+if (!token) throw new Error("Set GH_TOKEN or GITHUB_TOKEN with contents:write access to publish a GitHub Release");
+const repository = process.env.GITHUB_REPOSITORY || OFFICIAL_REPOSITORY;
+if (repository !== OFFICIAL_REPOSITORY) throw new Error(`This publisher is restricted to ${OFFICIAL_REPOSITORY}`);
+const repositoryPath = repository.split("/").map(encodeURIComponent).join("/");
+const prerelease = release.channel.toLowerCase() !== "stable";
+const tag = artifact.releaseTag;
+const releaseEndpoint = `/repos/${repositoryPath}/releases/tags/${encodeURIComponent(tag)}`;
+const existingRelease = await githubRequest(releaseEndpoint, { token, allowNotFound: true });
+let remoteRelease = existingRelease;
+
+if (!remoteRelease) {
+  remoteRelease = await githubRequest(`/repos/${repositoryPath}/releases`, {
+    token,
+    method: "POST",
+    body: {
+      tag_name: tag,
+      target_commitish: "main",
+      name: release.title,
+      body: releaseBody,
+      draft: true,
+      prerelease,
+    },
+  });
+} else if (remoteRelease.tag_name !== tag) {
+  throw new Error("GitHub returned a release for a different tag");
+}
+
+if (!Number.isSafeInteger(remoteRelease.id) || remoteRelease.id <= 0 || !Array.isArray(remoteRelease.assets)) {
+  throw new Error("GitHub returned an incomplete release record");
+}
+if (!remoteRelease.draft && (remoteRelease.name !== release.title || remoteRelease.body !== releaseBody || remoteRelease.prerelease !== prerelease)) {
+  throw new Error("A published release with this version already exists but has different release notes");
+}
+if (remoteRelease.draft) {
+  remoteRelease = await githubRequest(`/repos/${repositoryPath}/releases/${remoteRelease.id}`, {
+    token,
+    method: "PATCH",
+    body: { name: release.title, body: releaseBody, prerelease, draft: true },
   });
 }
 
+const expectedArchiveAsset = {
+  name: artifact.fileName,
+  sizeBytes: artifact.sizeBytes,
+  sha256: artifact.sha256,
+  downloadUrl: artifact.downloadUrl,
+};
+const expectedChecksumAsset = {
+  name: checksumName,
+  sizeBytes: checksumBody.length,
+  sha256: checksumHash,
+  downloadUrl: `${artifact.downloadUrl}.sha256`,
+};
+let assets = remoteRelease.assets;
+assets = await ensureReleaseAsset(remoteRelease, assets, expectedArchiveAsset, archivePath, "application/zip", token, repository);
+assets = await ensureReleaseAsset(remoteRelease, assets, expectedChecksumAsset, checksumBody, "text/plain; charset=utf-8", token, repository);
+
+if (remoteRelease.draft) {
+  remoteRelease = await githubRequest(`/repos/${repositoryPath}/releases/${remoteRelease.id}`, {
+    token,
+    method: "PATCH",
+    body: { draft: false, prerelease },
+  });
+}
+remoteRelease = await githubRequest(releaseEndpoint, { token });
+if (remoteRelease.draft || remoteRelease.tag_name !== tag) {
+  throw new Error("GitHub did not publish the expected release");
+}
+
+const publishedAssets = remoteRelease.assets || assets;
+assertGitHubReleaseAsset(findAsset(publishedAssets, artifact.fileName), expectedArchiveAsset);
+assertGitHubReleaseAsset(findAsset(publishedAssets, checksumName), expectedChecksumAsset);
+await verifyAnonymousReleaseAsset(artifact.downloadUrl, { sizeBytes: artifact.sizeBytes });
+await verifyAnonymousReleaseAsset(expectedChecksumAsset.downloadUrl, { sizeBytes: checksumBody.length });
+
+const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+const publishedAt = remoteRelease.published_at;
+const merged = mergePublishedRelease(manifest, release, artifact, publishedAt);
+const manifestInfo = await lstat(manifestPath);
+if (!manifestInfo.isFile() || manifestInfo.isSymbolicLink()) throw new Error("The release manifest must remain a regular, non-linked file");
 const temporaryPath = `${manifestPath}.${process.pid}.tmp`;
 await writeFile(temporaryPath, `${JSON.stringify(merged.manifest, null, 2)}\n`, { flag: "wx" });
 try {
   await rename(temporaryPath, manifestPath);
 } catch (error) {
-  throw new Error(`The package is stored, but the local release log could not be updated (${error?.code || "file error"})`);
+  throw new Error(`The GitHub Release is published, but the local update log could not be updated (${error?.code || "file error"})`);
 }
 
-console.log(`Published ${fileName} to OSS (${archiveInfo.size} bytes, SHA-256 ${sha256}).`);
-if (metadata.storjBackup) console.log("Verified a private Storj backup for this major release.");
-console.log(`Updated ${path.relative(repoRoot, manifestPath)}. Review it, then deploy the update log.`);
-if (merged.removedKeys.length) {
-  console.log(`${merged.removedKeys.length} older archive(s) are now marked unavailable; delete them only after deploying the updated page.`);
-}
+console.log(`Published GitHub Release ${tag}: ${artifact.downloadUrl}`);
+console.log(`Verified archive and SHA-256 sidecar anonymously; updated ${path.relative(repoRoot, manifestPath)}.`);
+console.log("Build and deploy the Cloudflare Pages update log separately after reviewing the generated manifest.");
 
-async function uploadToOss(client, filePath, objectKey, objectFileName, sizeBytes, fileHash) {
-  try {
-    const options = {
-      parallel: 2,
-      partSize: 64 * 1024 * 1024,
-      mime: "application/zip",
-      meta: { sha256: fileHash, product: "RifeLove", "size-bytes": String(sizeBytes) },
-      headers: {
-        "Content-Disposition": `attachment; filename="${objectFileName}"`,
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "x-oss-object-acl": "public-read",
-      },
-      progress: async percentage => {
-        const step = Math.floor(percentage * 10);
-        if (step > (uploadToOss.lastProgress || 0)) {
-          uploadToOss.lastProgress = step;
-          console.log(`OSS upload: ${Math.min(step * 10, 100)}%`);
-        }
-      },
-    };
-    await client.multipartUpload(objectKey, filePath, options);
-    const uploaded = await headOssObject(client, objectKey);
-    if (!uploaded) throw new Error("OSS object did not appear after upload");
-    verifyObject(uploaded.sizeBytes, uploaded.sha256, sizeBytes, fileHash, "OSS");
-    await client.putACL(objectKey, "public-read");
-  } catch (error) {
-    throw new Error(`OSS upload or verification failed (${error?.name || "storage error"}); the update log was not changed`);
+async function ensureReleaseAsset(releaseRecord, existingAssets, expected, source, contentType, accessToken, fullRepository) {
+  const matches = existingAssets.filter(asset => asset.name === expected.name);
+  if (matches.length > 1) throw new Error(`GitHub release contains duplicate assets named ${expected.name}`);
+  if (matches.length === 1) {
+    assertGitHubReleaseAsset(matches[0], expected);
+    return existingAssets;
   }
+  if (!releaseRecord.draft) throw new Error(`The published GitHub Release is missing ${expected.name}`);
+  const uploaded = await uploadReleaseAsset(releaseRecord, expected, source, contentType, accessToken, fullRepository);
+  assertGitHubReleaseAsset(uploaded, expected);
+  return [...existingAssets, uploaded];
 }
 
-async function uploadToStorj({ archivePath: filePath, key: objectKey, fileName: objectFileName, sizeBytes, sha256: fileHash, bucket: targetBucket, accessKeyId: targetAccessKey, secretAccessKey: targetSecret, endpoint }) {
-  const client = new S3Client({
-    endpoint,
-    region: "us-east-1",
-    forcePathStyle: true,
-    credentials: { accessKeyId: targetAccessKey, secretAccessKey: targetSecret },
-    requestChecksumCalculation: "WHEN_REQUIRED",
-    responseChecksumValidation: "WHEN_REQUIRED",
+async function uploadReleaseAsset(releaseRecord, expected, source, contentType, accessToken, fullRepository) {
+  const url = createUploadUrl(releaseRecord.upload_url, {
+    repository: fullRepository,
+    releaseId: releaseRecord.id,
+    fileName: expected.name,
   });
-  const existing = await headStorjObject(client, targetBucket, objectKey);
-  if (existing) {
-    verifyObject(existing.ContentLength, existing.Metadata?.sha256, sizeBytes, fileHash, "Storj");
-    return;
-  }
-  try {
-    const upload = new Upload({
-      client,
-      params: {
-        Bucket: targetBucket,
-        Key: objectKey,
-        Body: createReadStream(filePath),
-        ContentLength: sizeBytes,
-        ContentType: "application/zip",
-        ContentDisposition: `attachment; filename="${objectFileName}"`,
-        Metadata: { sha256: fileHash },
-      },
-      partSize: 64 * 1024 * 1024,
-      queueSize: 2,
-      leavePartsOnError: false,
-    });
-    await upload.done();
-    const uploaded = await client.send(new HeadObjectCommand({ Bucket: targetBucket, Key: objectKey }));
-    verifyObject(uploaded.ContentLength, uploaded.Metadata?.sha256, sizeBytes, fileHash, "Storj");
-  } catch (error) {
-    throw new Error(`Storj backup failed (${error?.name || "storage error"}); the release log was not changed`);
-  }
+  const sizeBytes = expected.sizeBytes;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-GitHub-Api-Version": API_VERSION,
+      "Content-Type": contentType,
+      "Content-Length": String(sizeBytes),
+      "User-Agent": "RifeLove-Release-Publisher",
+    },
+    body: typeof source === "string" ? createReadStream(source) : source,
+    ...(typeof source === "string" ? { duplex: "half" } : {}),
+  });
+  const payload = await parseResponse(response);
+  if (!response.ok) throw new Error(`GitHub asset upload failed with HTTP ${response.status}: ${payload.message || "request failed"}`);
+  return payload;
 }
 
-async function headOssObject(client, objectKey) {
-  try {
-    const result = await client.head(objectKey);
-    const headers = result?.res?.headers || {};
-    return {
-      sizeBytes: Number(headers["content-length"]),
-      sha256: headers["x-oss-meta-sha256"],
-    };
-  } catch (error) {
-    if (error?.status === 404 || error?.code === "NoSuchKey" || error?.code === "NotFound") return null;
-    throw new Error(`Could not safely check the OSS release object (${error?.code || "storage error"})`);
-  }
+async function githubRequest(endpoint, { token: accessToken, method = "GET", body, allowNotFound = false } = {}) {
+  const response = await fetch(new URL(endpoint, API_ROOT), {
+    method,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-GitHub-Api-Version": API_VERSION,
+      "User-Agent": "RifeLove-Release-Publisher",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const payload = await parseResponse(response);
+  if (allowNotFound && response.status === 404) return null;
+  if (!response.ok) throw new Error(`GitHub API ${method} ${endpoint} failed with HTTP ${response.status}: ${payload.message || "request failed"}`);
+  return payload;
 }
 
-async function headStorjObject(client, targetBucket, objectKey) {
-  try {
-    return await client.send(new HeadObjectCommand({ Bucket: targetBucket, Key: objectKey }));
-  } catch (error) {
-    if (error?.name === "NotFound" || error?.$metadata?.httpStatusCode === 404) return null;
-    throw new Error("Could not safely check the Storj backup object; verify bucket and permissions");
-  }
+async function parseResponse(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { throw new Error(`GitHub returned an invalid JSON response (HTTP ${response.status})`); }
 }
 
-function verifyObject(actualSize, actualHash, expectedSize, expectedHash, provider) {
-  if (Number(actualSize) !== expectedSize || actualHash !== expectedHash) {
-    throw new Error(`${provider} already has an object at this release key with different contents`);
-  }
+function findAsset(assets, name) {
+  const matches = assets.filter(asset => asset.name === name);
+  if (matches.length !== 1) throw new Error(`GitHub release must contain exactly one ${name} asset`);
+  return matches[0];
 }
 
-function makePublicObjectUrl(targetBucket, targetRegion, objectKey) {
-  const encodedKey = objectKey.split("/").map(encodeURIComponent).join("/");
-  return `https://${targetBucket}.${targetRegion}.aliyuncs.com/${encodedKey}`;
+function hashBuffer(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function hashFile(filePath) {
@@ -226,35 +235,46 @@ async function hashFile(filePath) {
   return hash.digest("hex");
 }
 
-function validateRelease(release) {
-  if (!release || release.releaseReady !== true) {
+function validateRelease(value) {
+  if (!value || value.releaseReady !== true) {
     throw new Error("Release metadata must set releaseReady to true only after Windows distribution checks pass");
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(release.date || "") || Number.isNaN(Date.parse(`${release.date}T00:00:00Z`))) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value.date || "") || Number.isNaN(Date.parse(`${value.date}T00:00:00Z`))) {
     throw new Error("Release metadata needs an exact YYYY-MM-DD release date");
   }
+  const parsedDate = new Date(`${value.date}T00:00:00.000Z`);
+  if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== value.date) {
+    throw new Error("Release metadata date must be a real calendar date");
+  }
   for (const field of ["channel", "title", "summary"]) {
-    if (typeof release[field] !== "string" || !release[field].trim()) throw new Error(`Release metadata needs ${field}`);
+    if (typeof value[field] !== "string" || !value[field].trim()) throw new Error(`Release metadata needs ${field}`);
   }
-  if (!Array.isArray(release.highlights) || release.highlights.length === 0 ||
-      release.highlights.some(item => typeof item !== "string" || !item.trim())) {
+  if (!new Set(["stable", "preview"]).has(value.channel.toLowerCase())) {
+    throw new Error("Release channel must be Stable or Preview");
+  }
+  if (!Array.isArray(value.highlights) || value.highlights.length === 0 ||
+      value.highlights.some(item => typeof item !== "string" || !item.trim())) {
     throw new Error("Release metadata needs a non-empty highlights list");
-  }
-  if (release.storjBackup !== undefined && typeof release.storjBackup !== "boolean") {
-    throw new Error("storjBackup must be true or false");
   }
 }
 
 function parseArguments(args) {
-  const result = {};
+  const result = { dryRun: false };
+  const seen = new Set();
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index];
-    if (!new Set(["--archive", "--release"]).has(key) || !args[index + 1]) {
-      throw new Error("Usage: node tools/release/publish-release.mjs --archive <zip> --release <metadata.json>");
+    if (key === "--dry-run") {
+      if (seen.has(key)) throw new Error(`Specify ${key} only once`);
+      seen.add(key);
+      result.dryRun = true;
+      continue;
     }
-    if (result[key.slice(2)]) throw new Error(`Specify ${key} only once`);
+    if (!new Set(["--archive", "--release"]).has(key) || !args[index + 1] || args[index + 1].startsWith("--")) {
+      throw new Error("Usage: node tools/release/publish-release.mjs --archive <zip> --release <metadata.json> [--dry-run]");
+    }
+    if (seen.has(key)) throw new Error(`Specify ${key} only once`);
+    seen.add(key);
     result[key.slice(2)] = args[++index];
   }
-  if (Object.keys(result).length !== 2) throw new Error("Specify exactly one --archive and one --release");
   return result;
 }

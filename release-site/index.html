@@ -203,7 +203,6 @@
           const sizeMiB = (release.artifact.sizeBytes / (1024 * 1024)).toFixed(1)
           appendText(download, "p", "download-detail", `文件大小：${sizeMiB} MiB`)
         }
-        if (release.storjBackup) appendText(download, "p", "download-detail", "大版本备份：Storj")
         body.append(download)
         card.append(body)
         list.append(card)
